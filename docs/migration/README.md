@@ -17,9 +17,11 @@ Documentação de contexto e plano de migração para unificar 4 produtos num ú
 | 04 | [`04-insight-ai-patch-analysis.md`](./04-insight-ai-patch-analysis.md) | Análise do patch InsightAI MVP, problemas encontrados e correções |
 | 05 | [`05-known-risks.md`](./05-known-risks.md) | Riscos técnicos (PII, OpenAI sync, auth, etc) |
 | 06 | [`06-next-actions.md`](./06-next-actions.md) | Próximas decisões pendentes e ordem de execução |
+| 07 | [`07-import-taticaofc-plan.md`](./07-import-taticaofc-plan.md) | Plano do próximo passo: importar backend + frontend do `taticaofc` em `apps/` |
 
 ## Como usar
 
+- **Antes de importar o código do `taticaofc` no monorepo:** siga [`07-import-taticaofc-plan.md`](./07-import-taticaofc-plan.md).
 - **Antes de começar a executar:** leia `00`, `01` e `06` na ordem.
 - **Antes de aplicar o patch InsightAI:** leia `04` inteiro — tem 3 bloqueios reais que precisam ser resolvidos.
 - **Para revisar a arquitetura proposta:** veja `02`.

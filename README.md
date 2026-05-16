@@ -57,25 +57,30 @@ omniconnect-pro/
 
 ```bash
 # 1. Clonar
-git clone https://github.com/<org>/omniconnect-pro.git
+git clone https://github.com/guilhermebertolaccini/omniconnect-pro.git
 cd omniconnect-pro
 
-# 2. Instalar
+# 2. Instalar (use pnpm 9; se não estiver globalmente: npx pnpm@9.12.0 install)
 pnpm install
+# O pacote omniconnect-backend roda postinstall: prisma generate usando prisma/generate.ci.env
+# (stub de DATABASE_URL apenas para gerar o client; em dev use .env real em apps/omniconnect-backend)
 
 # 3. Subir infra local
 docker compose up -d
 
 # 4. Env
-cp .env.example .env
-# editar valores
+cp apps/omniconnect-backend/.env.example apps/omniconnect-backend/.env
+# editar valores (DATABASE_URL etc.)
 
-# 5. Migrate
-pnpm --filter omniconnect-backend prisma migrate dev
+# 5. Migrate (com DB de pé)
+pnpm prisma:migrate
 
-# 6. Dev
-pnpm --filter omniconnect-backend run start:dev      # backend
-pnpm --filter omniconnect-frontend run dev           # frontend
+# 6. Build (raiz: gera Prisma client + build backend + frontend)
+pnpm run build
+
+# 7. Dev
+pnpm dev:backend
+pnpm dev:frontend
 ```
 
 ## Status
