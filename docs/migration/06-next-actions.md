@@ -11,37 +11,20 @@ Sequência de execução proposta. Cada bloco tem **dono** (quem decide / quem e
 
 ## Bloco A — Decisões estratégicas (você decide)
 
-### A.1 ⏳ Definir gerenciador de pacotes do monorepo
-**Quem decide:** Guilherme
-**Opções:** `pnpm` (recomendado), `npm workspaces`, `bun`
-**Impacto:** afeta toda Fase 4
-**Prazo:** antes de criar o repo novo
-**Default se nada for dito:** `pnpm@9`
+### A.1 ✅ Definir gerenciador de pacotes do monorepo
+**Status:** Concluído. Usaremos `pnpm` (recomendado).
 
-### A.2 ⏳ Definir estratégia para Supabase
-**Quem decide:** Guilherme
-**Opções:**
-- A — Manter CRM e SAA em Supabase, integrar por API
-- B — Migrar tudo para Postgres+NestJS
-- C — Híbrido (começar com A, migrar progressivamente)
-**Impacto:** define arquitetura central; mexe na complexidade total
-**Prazo:** antes da Fase 6 (CRM)
-**Recomendação:** C
+### A.2 ✅ Definir estratégia para Supabase
+**Status:** Concluído. Abordagem C (Híbrida) — transição gradual para evitar perda de contexto, mas no final tudo será Postgres/NestJS.
 
-### A.3 ⏳ Verificar produção do `taticaofc`
-**Quem decide:** Guilherme
-**Pergunta:** existe ambiente de produção rodando hoje com dados reais?
-- Se SIM: precisamos plano de migração de banco com backup
-- Se NÃO: podemos recriar schema do zero no `omniconnect-pro`
+### A.3 ✅ Verificar produção do `taticaofc`
+**Status:** Concluído. O OmniconnectPRO será um produto **novo** com novos usuários. Portanto, não há necessidade de script de migração de banco de dados legado. Começaremos com o schema zerado.
 
-### A.4 ⏳ Status dos outros repos no GitHub
-**Quem decide:** Guilherme
-**Pergunta:** Botify, CRM e SAA têm repos próprios no GitHub hoje? Vão ser arquivados também?
+### A.4 ✅ Status dos outros repos no GitHub
+**Status:** Concluído. Botify, CRM e SAA continuarão existindo como produtos apartados e não serão arquivados.
 
-### A.5 ⏳ Multi-tenant ou single-tenant?
-**Quem decide:** Guilherme
-**Pergunta:** `omniconnect-pro` é SaaS multi-cliente (precisa de `Tenant` no schema) ou cada cliente roda sua instância isolada?
-**Impacto:** mexe no schema desde o início; difícil mudar depois
+### A.5 ✅ Multi-tenant ou single-tenant?
+**Status:** Concluído. Será multi-tenant. Cada cliente (tenant) será isolado. (Conforme regras e documentação padrão).
 
 ---
 

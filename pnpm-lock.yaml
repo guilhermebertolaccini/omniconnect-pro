@@ -59,6 +59,9 @@ importers:
       '@prisma/client':
         specifier: ^7.2.0
         version: 7.8.0(prisma@7.8.0(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@5.9.3))(typescript@5.9.3)
+      '@types/form-data':
+        specifier: ^2.5.2
+        version: 2.5.2
       '@types/multer':
         specifier: ^2.0.0
         version: 2.1.0
@@ -177,9 +180,6 @@ importers:
       '@types/supertest':
         specifier: ^6.0.3
         version: 6.0.3
-      dotenv-cli:
-        specifier: ^11.0.0
-        version: 11.0.0
       jest:
         specifier: ^30.2.0
         version: 30.4.2(@types/node@25.8.0)(ts-node@10.9.2(@swc/core@1.15.33)(@types/node@25.8.0)(typescript@5.9.3))
@@ -2689,6 +2689,10 @@ packages:
   '@types/express@5.0.6':
     resolution: {integrity: sha512-sKYVuV7Sv9fbPIt/442koC7+IIwK5olP1KWeD88e/idgoJqDm3JV/YUiPwkoKK92ylff2MGxSz1CSjsXelx0YA==}
 
+  '@types/form-data@2.5.2':
+    resolution: {integrity: sha512-tfmcyHn1Pp9YHAO5r40+UuZUPAZbUEgqTel3EuEKpmF9hPkXgR4l41853raliXnb4gwyPNoQOfvgGGlHN5WSog==}
+    deprecated: This is a stub types definition. form-data provides its own type definitions, so you do not need this installed.
+
   '@types/http-errors@2.0.5':
     resolution: {integrity: sha512-r8Tayk8HJnX0FztbZN7oVqGccWgw98T/0neJphO91KkmOzug1KkofZURD4UaD5uH8AqcFLfdPErnBod0u71/qg==}
 
@@ -3678,10 +3682,6 @@ packages:
 
   dom-helpers@5.2.1:
     resolution: {integrity: sha512-nRCa7CK3VTrM2NmGkIy4cbK7IZlgBE/PYMn55rrXefr5xXDP0LdtfPnblFDoVdcAfslJ7or6iqAUnx0CCGIWQA==}
-
-  dotenv-cli@11.0.0:
-    resolution: {integrity: sha512-r5pA8idbk7GFWuHEU7trSTflWcdBpQEK+Aw17UrSHjS6CReuhrrPcyC3zcQBPQvhArRHnBo/h6eLH1fkCvNlww==}
-    hasBin: true
 
   dotenv-expand@12.0.3:
     resolution: {integrity: sha512-uc47g4b+4k/M/SeaW1y4OApx+mtLWl92l5LMPP0GNXctZqELk+YGgOPIIC5elYmUH4OuoK3JLhuRUYegeySiFA==}
@@ -8379,6 +8379,10 @@ snapshots:
       '@types/express-serve-static-core': 5.1.1
       '@types/serve-static': 2.2.0
 
+  '@types/form-data@2.5.2':
+    dependencies:
+      form-data: 4.0.5
+
   '@types/http-errors@2.0.5': {}
 
   '@types/istanbul-lib-coverage@2.0.6': {}
@@ -9412,13 +9416,6 @@ snapshots:
     dependencies:
       '@babel/runtime': 7.29.2
       csstype: 3.2.3
-
-  dotenv-cli@11.0.0:
-    dependencies:
-      cross-spawn: 7.0.6
-      dotenv: 17.4.2
-      dotenv-expand: 12.0.3
-      minimist: 1.2.8
 
   dotenv-expand@12.0.3:
     dependencies:

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma.service';
+import { UnauthorizedException } from '@nestjs/common';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -11,7 +12,6 @@ describe('AuthService', () => {
   const mockPrismaService = {
     user: {
       findUnique: jest.fn(),
-      update: jest.fn(),
     },
   };
 
@@ -55,7 +55,8 @@ describe('AuthService', () => {
       };
 
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-      jest.spyOn(require('argon2'), 'verify').mockResolvedValue(true);
+      // Mock bcrypt compare
+      jest.spyOn(require('bcrypt'), 'compare').mockResolvedValue(true);
 
       const result = await service.validateUser('test@example.com', 'password');
 
@@ -67,14 +68,15 @@ describe('AuthService', () => {
       });
     });
 
-    it('deve retornar null quando usuário não existe', async () => {
+    it('deve lançar UnauthorizedException quando usuário não existe', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
 
-      const result = await service.validateUser('invalid@example.com', 'password');
-      expect(result).toBeNull();
+      await expect(
+        service.validateUser('invalid@example.com', 'password'),
+      ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('deve retornar null quando senha é inválida', async () => {
+    it('deve lançar UnauthorizedException quando senha é inválida', async () => {
       const mockUser = {
         id: 1,
         email: 'test@example.com',
@@ -82,10 +84,11 @@ describe('AuthService', () => {
       };
 
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-      jest.spyOn(require('argon2'), 'verify').mockResolvedValue(false);
+      jest.spyOn(require('bcrypt'), 'compare').mockResolvedValue(false);
 
-      const result = await service.validateUser('test@example.com', 'wrongpassword');
-      expect(result).toBeNull();
+      await expect(
+        service.validateUser('test@example.com', 'wrongpassword'),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 
@@ -96,33 +99,19 @@ describe('AuthService', () => {
         email: 'test@example.com',
         name: 'Test User',
         role: 'operator',
-        segment: 1,
-        line: null,
-        status: 'Offline',
-        oneToOneActive: false,
       };
 
-      mockPrismaService.user.update.mockResolvedValue({ ...mockUser, status: 'Online' });
       mockJwtService.sign.mockReturnValue('mock-jwt-token');
 
       const result = await service.login(mockUser);
 
       expect(result).toEqual({
         access_token: 'mock-jwt-token',
-        user: {
-          id: mockUser.id,
-          name: mockUser.name,
-          email: mockUser.email,
-          role: mockUser.role,
-          segment: mockUser.segment,
-          line: mockUser.line,
-          status: 'Online',
-          oneToOneActive: mockUser.oneToOneActive,
-        },
+        user: mockUser,
       });
       expect(mockJwtService.sign).toHaveBeenCalledWith({
-        email: mockUser.email,
         sub: mockUser.id,
+        email: mockUser.email,
         role: mockUser.role,
       });
     });

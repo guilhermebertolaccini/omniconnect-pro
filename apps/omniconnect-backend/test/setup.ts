@@ -1,12 +1,22 @@
-/**
- * Setup global dos testes unitários.
- * Não instancie PrismaClient aqui: produção usa `PrismaService` + adapter `@prisma/adapter-pg`;
- * cada spec deve mockar `PrismaService` conforme necessário.
- */
-beforeAll(async () => {});
+import { PrismaClient } from '@prisma/client';
 
-afterAll(async () => {});
+const prisma = new PrismaClient();
 
-beforeEach(async () => {});
+beforeAll(async () => {
+  // Setup antes de todos os testes
+});
 
-afterEach(async () => {});
+afterAll(async () => {
+  // Cleanup após todos os testes
+  await prisma.$disconnect();
+});
+
+beforeEach(async () => {
+  // Setup antes de cada teste
+});
+
+afterEach(async () => {
+  // Cleanup após cada teste
+});
+
+
