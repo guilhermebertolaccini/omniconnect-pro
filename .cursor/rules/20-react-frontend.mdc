@@ -1,0 +1,114 @@
+---
+description: React frontend conventions — Vite, shadcn-ui, TanStack Query, structure, typed APIs
+globs: apps/*/src/**/*.tsx,apps/*/src/**/*.ts
+alwaysApply: false
+---
+
+# React Frontend Conventions
+
+Aplica-se aos frontends: `omniconnect-frontend`, `botify`, `crm-imobiliario`, `smart-ad-automator`.
+
+## Stack padrão (alinhada ao taticaofc)
+
+- **Vite** 5+ como bundler
+- **React 19** functional + hooks (sem classes)
+- **TypeScript** estrito (`strict: true`)
+- **Tailwind** + **shadcn-ui** + **Radix UI** primitives
+- **TanStack Query 5** para data fetching
+- **React Hook Form 7 + Zod 3** para forms (`@hookform/resolvers/zod`)
+- **react-router-dom 6** para roteamento
+- **socket.io-client** para tempo real (recebimento de mensagens, eventos)
+- **recharts** para gráficos / dashboards
+- **sonner** para toasts
+- **lucide-react** para ícones
+- **date-fns** para datas
+- **Vitest** para unit, **Playwright** para E2E (frontend; backend usa **Jest**)
+
+## Estrutura de pastas
+
+```
+src/
+├── components/               # UI reusável (botões, cards, modais)
+├── pages/                    # rotas
+├── hooks/                    # custom hooks
+├── lib/                      # utils, configs
+├── services/                 # API clients (TanStack Query)
+├── contexts/                 # contexts globais (auth, tenant)
+├── types/                    # tipos compartilhados (ou importar de @omniconnect-pro/*)
+└── test/
+```
+
+## Componentes
+
+- **Functional only** — sem classes
+- **Props tipadas** — sem `any`
+- **shadcn-ui primitives** primeiro, custom só quando justificado
+- Componente >150 linhas → quebrar
+
+## Data fetching
+
+```typescript
+// services/leads.service.ts
+export function useLeads(filters: LeadFilters) {
+  return useQuery({
+    queryKey: ['leads', filters],
+    queryFn: () => apiClient.get('/leads', { params: filters }).then(r => r.data),
+  });
+}
+```
+
+Nunca `fetch` direto em componente. Sempre via service + hook.
+
+## Real-time (socket.io)
+
+Para mensagens em tempo real, status de envio e eventos do sistema, usar **socket.io-client** (já é a stack do taticaofc):
+
+```typescript
+// lib/socket.ts
+import { io } from 'socket.io-client';
+export const socket = io(import.meta.env.VITE_API_URL, {
+  withCredentials: true,
+  auth: { token: getToken() },
+});
+
+// hooks/useConversationMessages.ts
+useEffect(() => {
+  socket.on('message:received', (msg) => qc.invalidateQueries(['messages', msg.conversationId]));
+  return () => { socket.off('message:received'); };
+}, []);
+```
+
+Pareie socket.io com TanStack Query: socket invalida cache, query refetcha.
+
+## Tipos do backend
+
+Importar tipos compartilhados de `packages/*`:
+
+```typescript
+// ✅ GOOD
+import { LeadIntent, ConversationAIResult } from '@omniconnect-pro/ai-contracts';
+
+// ❌ BAD — duplicar tipos locais
+type LeadIntent = 'high' | 'medium' | 'low';
+```
+
+## Auth e tenant
+
+- Token nunca em `localStorage` se cookie httpOnly for opção
+- Toda request inclui contexto tenant (cookie/header)
+- Refresh token rotaciona automaticamente
+
+## Acessibilidade
+
+- Tudo interativo tem keyboard support (Radix primitives ajudam)
+- `aria-label` em ícones sem texto
+- Contraste WCAG AA mínimo
+
+## Não fazer
+
+- ❌ Inline styles (use Tailwind)
+- ❌ CSS modules (use Tailwind + shadcn)
+- ❌ Imports de outros apps (apps comunicam via API)
+- ❌ Lógica de negócio no componente (move pra service/hook)
+
+See also: skill `frontend-react`.

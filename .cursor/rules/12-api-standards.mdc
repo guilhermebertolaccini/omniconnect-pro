@@ -1,0 +1,95 @@
+---
+description: REST API standards — endpoint naming, pagination, response shape, error shape, webhooks
+globs: apps/omniconnect-backend/src/**/*.controller.ts,apps/omniconnect-backend/src/**/dto/*.ts
+alwaysApply: false
+---
+
+# API Standards
+
+## Endpoint naming
+
+Plural nouns, kebab-case, REST-friendly. **Sem prefixo global `/api`** (decisão atual do taticaofc — endpoints servem na raiz). Swagger fica em `/api/docs`.
+
+```
+GET    /leads                              # listar
+POST   /leads                              # criar
+GET    /leads/:id                          # detalhe
+PATCH  /leads/:id                          # atualizar
+DELETE /leads/:id                          # remover
+
+GET    /conversations/:id/messages         # nested
+POST   /insight-ai/conversations/:id/analyze
+GET    /insight-ai/analyses
+GET    /dashboards/executive-summary
+
+GET    /api/docs                           # Swagger UI (apenas namespace especial)
+```
+
+## Response shape (sucesso)
+
+```json
+{
+  "data": { /* DTO */ },
+  "meta": { "page": 1, "pageSize": 25, "total": 142 }
+}
+```
+
+## Response shape (erro)
+
+```json
+{
+  "error": {
+    "code": "RESOURCE_NOT_FOUND",
+    "message": "Lead not found",
+    "details": { "leadId": "..." }
+  }
+}
+```
+
+Nunca expor stack trace, query SQL ou path interno. Códigos de erro são string-enum estável (`RESOURCE_NOT_FOUND`, `VALIDATION_FAILED`, `TENANT_FORBIDDEN`, `RATE_LIMITED`, `INTEGRATION_ERROR`).
+
+## Paginação
+
+```
+GET /leads?page=0&pageSize=25
+```
+
+Para feeds de alto volume (mensagens): **cursor pagination** com `?cursor=<id>&limit=50`.
+
+`pageSize` máximo: 200 (config no service).
+
+## Filtros e ordenação
+
+```
+GET /leads?status=qualified&source=whatsapp&sortBy=createdAt&sortDir=desc
+```
+
+DTOs validam cada filtro. Filtros desconhecidos → 400.
+
+## DTOs
+
+Toda entrada: `class-validator` + `@ApiProperty()` no DTO. Toda saída: DTO explícito, **não retornar entidade Prisma crua**.
+
+## Webhooks
+
+Padrão de referência no projeto: `webhooks/cloud-api-webhook.controller.ts` (WhatsApp Cloud API).
+
+```typescript
+@Post('webhooks/whatsapp')
+@HttpCode(200)                              // 200 imediato, processa async
+async receiveWebhook(@Body() payload: unknown, @Headers() headers: Record<string, string>) {
+  this.webhookService.verifySignature(payload, headers);    // 🔒
+  const tenantId = await this.webhookService.resolveTenant(payload);  // não confiar no body
+  await this.webhookQueue.add('process', { tenantId, payload }, {
+    jobId: payload.eventId,                  // idempotência
+  });
+}
+```
+
+Sempre: assinar, resolver tenant, enfileirar (BullMQ), responder 200. Processar **async**.
+
+## Idempotência
+
+Use header `Idempotency-Key` em endpoints sensíveis (envio, billing, broadcast). Persistir chave → resposta por 24h.
+
+See also: `docs/06-api-standards.md`.

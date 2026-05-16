@@ -1,0 +1,96 @@
+---
+description: AI governance rules — prompt versioning, output validation, PII redaction, cost tracking
+globs: apps/omniconnect-backend/src/insight-ai/**/*.ts,**/*ai*.ts,**/*llm*.ts,**/*openai*.ts
+alwaysApply: false
+---
+
+# AI Governance
+
+AI outputs são **recomendações inferidas**, nunca verdade absoluta. Decisão comercial → revisão humana.
+
+## Output obrigatório
+
+Toda análise IA persistida **deve** ter:
+
+```typescript
+{
+  tenantId: string;             // 🔒
+  conversationId?: string;
+  leadId?: string;
+  modelProvider: 'openai' | 'anthropic' | 'heuristic';
+  modelName: string;            // 'gpt-4o-mini', 'heuristic-v1'
+  promptVersion: string;        // 'insight-ai-v3'
+  outputSchemaVersion: string;  // 'v1'
+  inputMessageCount: number;
+  inputDateRange: { from: string; to: string };
+  output: unknown;              // JSON normalizado
+  confidence?: number;          // 0..1
+  promptTokens?: number;        // tracking de custo
+  completionTokens?: number;
+  estimatedCost?: number;       // BRL/USD
+  createdAt: Date;
+}
+```
+
+## Prompt versioning
+
+Prompts ficam em arquivos separados, **versionados** explicitamente:
+
+```typescript
+// insight-ai/prompts/conversation-analysis-v3.ts
+export const PROMPT_VERSION = 'insight-ai-conversation-analysis-v3';
+export function buildPrompt(messages: NormalizedMessage[]): string { ... }
+```
+
+Mudou prompt? **Cria nova versão**, não sobrescreve. Persistir `promptVersion` em cada análise permite A/B e debug.
+
+## Validação de output
+
+```typescript
+const raw = await openai.chat.completions.create({ response_format: { type: 'json_object' }, ... });
+const parsed = JSON.parse(raw.choices[0].message.content);
+
+// ✅ Validar SEMPRE — schema, enums, ranges
+const validated = ConversationAIResultSchema.parse(parsed);  // Zod
+
+await prisma.aIAnalysis.create({ data: { ..., output: validated } });
+```
+
+Output inválido → fallback heurístico + log de falha, **nunca** salvar lixo.
+
+## PII / LGPD
+
+Antes de mandar transcript pro LLM:
+- Redação: CPF, RG, telefones de terceiros, e-mails → `[REDACTED]`
+- Flag de consentimento por tenant: `tenant.aiConsent === true`
+- Documentar no DPA/política de privacidade
+
+```typescript
+// ✅ GOOD
+const safeTranscript = redactPII(rawMessages);
+const result = await analyze(safeTranscript);
+```
+
+## Custo e rate limit
+
+- Endpoints IA: usar o módulo interno `rate-limiting/` (não `@nestjs/throttler`)
+- Não chamar LLM síncrono em loop — usar **fila BullMQ** (preferir BullMQ; legado Bull continua funcionando)
+- Cache: se conversa não mudou em 24h, retornar análise anterior (módulo `cache/` já existe)
+- Tracking diário por tenant → expor em `/billing-usage` + métricas Prometheus via `prom-client`
+
+## Human in the loop
+
+❌ IA muda CRM stage automaticamente
+✅ IA **sugere** mudança, humano aprova (ou workflow explícito com fallback de reversão)
+
+## Fallback
+
+LLM provider falhou (timeout, 429, 500) →
+1. Retry com backoff (BullMQ)
+2. Após N falhas: análise heurística local (sem LLM)
+3. Job marcado como `degraded`, exposto no admin
+4. Circuit breaker: reutilizar módulo `circuit-breaker/` (opossum) já existente para isolar provider externo
+
+Nunca quebrar a UX do usuário por causa de falha de IA.
+
+See also: `docs/05-ai-governance.md`, skill `insight-ai`.

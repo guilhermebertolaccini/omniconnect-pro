@@ -1,0 +1,79 @@
+---
+description: Testing standards — Vitest unit, Playwright E2E, mandatory tenant isolation tests
+globs: **/*.test.ts,**/*.spec.ts,**/*.test.tsx,**/*.spec.tsx
+alwaysApply: false
+---
+
+# Testing Standards
+
+Não tem PR sem teste em código crítico.
+
+## Stack (alinhada ao taticaofc)
+
+- **Backend = Jest** (já configurado em `apps/omniconnect-backend`, scripts `test`, `test:watch`, `test:cov`, `test:e2e`)
+- **Frontends = Vitest** (já configurado em todos os 4 frontends)
+- **Supertest** — integration HTTP NestJS (vem com `@nestjs/testing`)
+- **Playwright** — E2E nos frontends (CRM já tem, replicar nos demais)
+- **Prisma test DB** — Postgres separado para integration tests
+
+## Áreas críticas (teste obrigatório)
+
+1. **Tenant isolation** — Tenant A não acessa Tenant B
+2. **Autenticação** — token inválido, expirado, ausente → 401
+3. **Autorização** — papel insuficiente → 403
+4. **Validação DTO** — input inválido → 400 com mensagem clara
+5. **Webhook signature** — assinatura inválida → 401
+6. **AI output validation** — JSON inválido → fallback, não crash
+7. **CRM stage transitions** — transições proibidas bloqueadas
+8. **Billing/usage tracking** — contador incrementa corretamente
+9. **Campaign sending** — limites de broadcast respeitados
+10. **Idempotência** — webhook duplicado processa 1x só
+
+## Pirâmide
+
+```
+        E2E (Playwright)                          # poucos, fluxos críticos (frontends)
+       ─────────────
+      Integration (Supertest no backend)          # médio, por módulo
+     ─────────────────
+    Unit (Jest no backend / Vitest no frontend)   # muitos, services e helpers
+   ─────────────────────
+```
+
+## Template de teste de tenant isolation
+
+```typescript
+describe('LeadsController — tenant isolation', () => {
+  it('rejects request when token tenant differs from resource tenant', async () => {
+    const lead = await createLead({ tenantId: 'tenant-a' });
+    const tokenB = signToken({ tenantId: 'tenant-b' });
+
+    const res = await request(app).get(`/leads/${lead.id}`).set('Authorization', `Bearer ${tokenB}`);
+
+    expect(res.status).toBe(404);  // 404 (não 403) — não revela existência
+  });
+});
+```
+
+## Anti-padrões
+
+- ❌ Teste que faz mock do Prisma e nunca toca DB real (passa fácil, esconde bug de query)
+- ❌ Teste que depende de ordem (`it.only`, `beforeAll` com state global)
+- ❌ Snapshot test de UI complexa sem revisão (vira lixo aceito)
+- ❌ Skipar teste com `it.skip` sem ticket de débito
+
+## Naming
+
+```typescript
+describe('LeadsService.create', () => {
+  it('creates lead with tenantId from auth context', ...);
+  it('rejects when source is unknown', ...);
+  it('emits lead.created event', ...);
+});
+```
+
+## Cobertura
+
+Meta inicial: **80%** em services e controllers. 100% em código de tenant isolation e auth.
+
+See also: `docs/08-development-workflow.md`.

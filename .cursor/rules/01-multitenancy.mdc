@@ -1,0 +1,58 @@
+---
+description: Multi-tenancy isolation rules — every tenant-owned entity must include tenantId and never leak across tenants
+alwaysApply: true
+---
+
+# Multi-Tenancy — Non-Negotiable
+
+Every tenant-owned entity **must** include `tenantId`. Every query for tenant-owned data **must** filter by `tenantId`.
+
+## Tenant-owned entities (mandatory `tenantId`)
+
+`User membership`, `Lead`, `Contact`, `Conversation`, `Message`, `Campaign`, `Channel connection`, `BotFlow`, `CRMDeal`, `Proposal`, `RealEstateUnit`, `AIAnalysis`, `Event`, `AuditLog`, `DashboardMetric`, `Integration`, `Webhook`.
+
+## Tenant context resolution
+
+Resolve `tenantId` from (in priority order):
+1. Authenticated user/session (most trusted)
+2. Selected workspace
+3. Subdomain
+4. API key / integration token
+5. Webhook signature → integration → tenant mapping
+
+**Never** trust `tenantId` from request body when it can be derived from auth.
+
+## Query patterns
+
+```typescript
+// ❌ BAD — leaks across tenants
+await prisma.lead.findMany();
+
+// ❌ BAD — trusts body
+const { tenantId } = req.body;
+await prisma.lead.findMany({ where: { tenantId } });
+
+// ✅ GOOD — tenantId from authenticated context
+const tenantId = req.user.tenantId;
+await prisma.lead.findMany({ where: { tenantId } });
+```
+
+For nested relations, the parent's `tenantId` must match before mutating children.
+
+## Background jobs
+
+Every Bull job payload **must** include `tenantId`. Worker code re-validates it before any DB write.
+
+## Webhooks
+
+Resolve `tenantId` from **trusted** integration credentials (channel connection id, provider token, webhook secret, phone number mapping). Never from untrusted payload fields.
+
+## Required tests
+
+For every new tenant-owned module:
+- Tenant A cannot read Tenant B
+- Tenant A cannot update Tenant B
+- Webhook for Tenant A cannot mutate Tenant B
+- Dashboard aggregations are tenant-scoped
+
+See also: `docs/03-multitenancy.md`, skill `multitenancy-review`.

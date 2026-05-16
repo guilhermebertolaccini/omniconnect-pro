@@ -1,0 +1,31 @@
+{
+  "name": "omniconnect-pro",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Multi-tenant Growth Operations platform — omnichannel conversations, CRM, automation, AI analytics and executive dashboards.",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "pnpm -r --parallel run build",
+    "lint": "pnpm -r --parallel run lint",
+    "test": "pnpm -r --parallel run test",
+    "dev:backend": "pnpm --filter omniconnect-backend run start:dev",
+    "dev:frontend": "pnpm --filter omniconnect-frontend run dev",
+    "dev:botify": "pnpm --filter botify run dev",
+    "dev:crm": "pnpm --filter crm-imobiliario run dev",
+    "dev:saa": "pnpm --filter smart-ad-automator run dev",
+    "prisma:migrate": "pnpm --filter omniconnect-backend prisma migrate dev",
+    "prisma:generate": "pnpm --filter omniconnect-backend prisma generate",
+    "prisma:studio": "pnpm --filter omniconnect-backend prisma studio",
+    "clean": "pnpm -r exec rm -rf dist build .turbo node_modules && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

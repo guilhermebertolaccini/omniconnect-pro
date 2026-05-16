@@ -1,0 +1,82 @@
+---
+description: Event-driven conventions — internal event emission, payload shape, persistence
+globs: apps/omniconnect-backend/src/**/*.service.ts,apps/omniconnect-backend/src/events/**/*.ts
+alwaysApply: false
+---
+
+# Event-Driven Conventions
+
+Ações comerciais importantes emitem eventos internos. Eventos alimentam dashboards, audit trails, IA e integrações futuras.
+
+## Canonical event list
+
+```
+lead.created
+lead.assigned
+lead.lost
+message.received
+message.sent
+conversation.started
+conversation.closed
+conversation.analyzed
+bot.handoff
+crm.stage_changed
+proposal.created
+visit.scheduled
+followup.created
+sale.closed
+campaign.launched
+campaign.completed
+webhook.received
+ai.analysis.created
+ai.analysis.failed
+user.role_changed
+integration.connected
+```
+
+Naming: `<domain>.<past_tense_verb>` em snake_case.
+
+## Payload obrigatório
+
+```typescript
+interface DomainEvent<TMeta = unknown> {
+  eventType: string;          // 'lead.created'
+  tenantId: string;           // 🔒 sempre
+  entityType: string;         // 'Lead'
+  entityId: string;
+  actorId?: string;           // userId que originou (se humano)
+  metadata: TMeta;            // payload tipado por evento
+  occurredAt: string;         // ISO 8601
+}
+```
+
+## Emissão
+
+```typescript
+// Dentro do service, após mutar estado
+await this.events.emit({
+  eventType: 'lead.created',
+  tenantId,
+  entityType: 'Lead',
+  entityId: lead.id,
+  actorId: req.user?.id,
+  metadata: { source: lead.source, campaignId: lead.campaignId },
+  occurredAt: new Date().toISOString(),
+});
+```
+
+## Persistência
+
+Eventos são persistidos na tabela `Event` (Prisma). Tabela alimenta:
+- Dashboards (agregações temporais)
+- Audit logs (subset filtrado)
+- Outbox para integrações externas (webhook out, IA pipeline)
+
+## Anti-padrões
+
+- ❌ Emitir evento sem `tenantId`
+- ❌ Usar eventos para fluxo síncrono crítico (evento é "fire-and-forget", retry no consumidor)
+- ❌ Eventos com payload >10KB (referenciar IDs, não duplicar dados)
+- ❌ Renomear evento sem versionar (`lead.created.v2`)
+
+See also: `docs/02-architecture.md` (event strategy).

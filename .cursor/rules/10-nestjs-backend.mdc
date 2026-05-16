@@ -1,0 +1,117 @@
+---
+description: NestJS backend conventions — module structure, controllers, services, DTOs, guards
+globs: apps/omniconnect-backend/**/*.ts
+alwaysApply: false
+---
+
+# NestJS Backend Conventions
+
+## Module structure
+
+Every domain module has:
+
+```
+src/<module>/
+├── <module>.module.ts        # imports + providers + controllers
+├── <module>.controller.ts    # thin: validate + auth + delegate
+├── <module>.service.ts       # business logic + tenant scope
+├── dto/
+│   ├── create-<entity>.dto.ts
+│   ├── update-<entity>.dto.ts
+│   └── list-<entity>.dto.ts
+├── entities/                 # se necessário (mappers Prisma → DTO)
+└── <module>.spec.ts          # unit tests do service
+```
+
+## Backend modules (real, from taticaofc)
+
+Módulos **já existentes** no `apps/omniconnect-backend/src/` (40+), agrupados por papel:
+
+**Core / Identity**
+- `auth` (JWT, Passport strategies), `users`, `apps`
+
+**Channels & Messaging**
+- `whatsapp-cloud`, `meta-business`, `webhooks` (+ `cloud-api-webhook`), `websocket`, `media`
+
+**Operations / Domain**
+- `contacts`, `conversations`, `campaigns`, `tabulations`, `segments`, `lines`, `templates`, `tags`, `blocklist`, `control-panel`
+
+**Messaging pipeline**
+- `message-queue`, `message-sending`, `message-validation`, `humanization`, `spintax`, `phone-validation`, `line-reputation`
+
+**Infrastructure / Cross-cutting**
+- `logger`, `cache`, `archiving`, `health`, `health-check-cache`, `circuit-breaker` (opossum), `rate-limiting` (próprio, não @nestjs/throttler), `system-events`, `api-logs`, `api-messages`, `reports`
+
+**A criar para o produto OmniconnectPRO**
+- `tenants` (Tenant CRUD — multi-tenant retrofit)
+- `insight-ai` (vem do patch)
+- `dashboards`, `events`, `audit-logs`, `billing-usage`
+- `bot-bridge`, `crm-bridge`, `ads-bridge`
+
+> Botify / CRM / SAA são **apps frontend separados**, não módulos NestJS. Os `*-bridge` são adaptadores no backend que conversam com esses apps.
+
+> **Princípio:** não invente módulos novos quando algo já existe. Reuse `rate-limiting`, `humanization`, `circuit-breaker`, etc.
+
+## Controllers — thin
+
+Padrão idiomático do projeto: usar `@CurrentUser()` decorator (em `common/decorators/`) para obter o usuário autenticado e os papéis reais do enum `Role` (em `@prisma/client`):
+
+```typescript
+import { Role } from '@prisma/client';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+
+@ApiTags('Leads')
+@Controller('leads')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class LeadsController {
+  constructor(private readonly leadsService: LeadsService) {}
+
+  @Get()
+  @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
+  list(@CurrentUser() user, @Query() dto: ListLeadsDto) {
+    return this.leadsService.list(user.tenantId, user, dto);
+  }
+}
+```
+
+> Papéis reais do schema: `admin`, `operator`, `supervisor`, `ativador`, `digital`. **Não inventar** `manager` / `seller` / `viewer` — não existem.
+
+> `ValidationPipe` é **global** em `main.ts` (`whitelist + forbidNonWhitelisted + transform`). Não precisa adicionar pipe por controller.
+
+Controllers fazem: validação (via DTO), autenticação, contexto via `@CurrentUser()`, delegação ao service. Sem regra de negócio.
+
+## Services — fat
+
+```typescript
+@Injectable()
+export class LeadsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async list(tenantId: string, dto: ListLeadsDto) {
+    return this.prisma.lead.findMany({
+      where: { tenantId, ...dto.filters() },
+      take: dto.pageSize,
+      skip: dto.page * dto.pageSize,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+}
+```
+
+Services: regra de negócio, enforcement de tenant, coordenação de repositories/integrações.
+
+## Heurísticas
+
+- Tudo I/O lento (LLM, email, broadcast, import) → fila **BullMQ** (preferir BullMQ para código novo; legado em Bull continua funcionando)
+- Audit logs em ações sensíveis (mudança de role, stage CRM, integração conectada)
+- Eventos internos: usar o módulo `system-events` existente para eventos de domínio
+- Métricas: expor via `prom-client` (Prometheus) — já instalado
+- Logs: `winston` + `nest-winston` (já configurados em `logger/`)
+- `any` proibido em código novo — usar tipos explícitos
+- **Funções <50 linhas é a meta** (aspiracional). Services legados maiores (`conversations.service.ts` tem 660 linhas) são dívida técnica conhecida — refatorar oportunisticamente, não em massa
+- Swagger documentado em `/api/docs` (já configurado em `main.ts`)
+
+See also: `docs/02-architecture.md`, skill `backend-nestjs`.

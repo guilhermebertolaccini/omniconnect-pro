@@ -1,0 +1,58 @@
+---
+description: Monorepo structure conventions — apps/ and packages/ layout, workspace imports, build scope
+alwaysApply: true
+---
+
+# Monorepo Structure
+
+OmniconnectPRO is a **pnpm workspace monorepo**. Code lives in `apps/*` or `packages/*` — never at the root.
+
+## Layout
+
+```
+apps/
+├── omniconnect-backend/      # NestJS + Prisma + Postgres + Bull (core)
+├── omniconnect-frontend/     # React (operação, atendentes)
+├── botify/                   # Vite + React (bot/triagem)
+├── crm-imobiliario/          # Vite + React + Supabase
+└── smart-ad-automator/       # Vite + React + Supabase
+
+packages/
+├── ai-contracts/             # Tipos do InsightAI (LeadIntent, ConversationAIResult, ...)
+├── shared-types/             # DTOs comuns entre apps
+├── ui/                       # Componentes shadcn reutilizáveis (futuro)
+├── eslint-config/            # ESLint base
+├── tsconfig/                 # tsconfig base
+└── api-client/               # SDK TypeScript do backend (futuro)
+```
+
+## Rules
+
+- **Backend modules** (NestJS): apenas dentro de `apps/omniconnect-backend/src/`. Botify, CRM, SAA são **frontends separados**, não módulos NestJS.
+- **Tipos compartilhados** entre apps: ficam em `packages/ai-contracts` ou `packages/shared-types`, nunca duplicados.
+- **Imports entre apps são proibidos.** Apps comunicam via API HTTP/eventos, não via import direto.
+- **Imports de `packages/*`** usam alias workspace: `import { LeadIntent } from '@omniconnect-pro/ai-contracts';`
+- **Cada app/pacote** tem seu próprio `package.json`, `tsconfig.json` (estendendo `packages/tsconfig`).
+
+## Scripts no root
+
+```bash
+pnpm install                  # instala tudo
+pnpm -r run build             # build em todos os pacotes
+pnpm --filter omniconnect-backend run start:dev
+pnpm --filter crm-imobiliario run dev
+```
+
+## Adicionando nova dependência
+
+```bash
+# No app específico (preferido)
+pnpm --filter omniconnect-backend add @nestjs/swagger
+
+# Compartilhada (raiz)
+pnpm add -w typescript@^5.6.0
+```
+
+Nunca rode `pnpm add` na raiz para deps de um app específico — polui o workspace.
+
+See also: `docs/02-architecture.md`, skill `migrate-product-to-monorepo`.

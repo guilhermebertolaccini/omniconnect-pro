@@ -1,0 +1,38 @@
+---
+description: Core product principles for OmniconnectPRO — multi-tenant Growth Operations platform
+alwaysApply: true
+---
+
+# OmniconnectPRO — Core Principles
+
+OmniconnectPRO is a **multi-tenant Growth Operations platform** combining omnichannel conversations, CRM, automation, AI analytics and executive dashboards. Never build features as if there's a single client.
+
+## Non-negotiable principles
+
+1. **Multi-tenant by default** — every operational entity belongs to a tenant
+2. **Tenant isolation** — never cross-tenant data access (see `01-multitenancy.mdc`)
+3. **Security by default** — validate inputs, check permissions, never trust client data (see `02-security.mdc`)
+4. **API-first** — every capability exposed as a documented endpoint
+5. **Event-driven** — important actions emit internal events (see `13-events.mdc`)
+6. **Human-in-the-loop AI** — AI outputs are recommendations, never absolute truth (see `30-ai-governance.mdc`)
+7. **Modular boundaries** — clear domain modules, no giant services
+8. **Observability** — structured logging, audit trails for sensitive actions
+9. **LGPD-aware** — minimize personal data exposure, especially in LLM prompts
+10. **Documentation as delivery** — new endpoint/module = doc update
+
+## Feature filter
+
+Before building anything, ask:
+> "Does this help transform conversations into opportunities and opportunities into predictable sales?"
+
+If the answer isn't clear, reconsider scope.
+
+## Decision hierarchy
+
+When rules conflict, this is the order:
+1. Security & tenant isolation (always wins)
+2. Data integrity (Prisma migrations, no manual SQL)
+3. Product goals (see `docs/01-product-vision.md`)
+4. Code style / convenience
+
+See also: `AGENTS.md`, `docs/01-product-vision.md`, `docs/02-architecture.md`.

@@ -1,0 +1,77 @@
+---
+description: Prisma schema and migration conventions — tenantId, indexes, naming, migrations
+globs: **/schema.prisma,**/migrations/**,**/prisma/**/*.ts
+alwaysApply: false
+---
+
+# Prisma Conventions
+
+## Migrations — always
+
+```bash
+# ✅ GOOD — versioned, tracked, rollback-friendly
+pnpm prisma migrate dev --name add_conversation_ai_analysis
+```
+
+```bash
+# ❌ BAD — desincroniza _prisma_migrations, sem rollback
+psql -f migrations/manual_thing.sql
+```
+
+**Nunca** rodar SQL manual fora do Prisma. **Nunca** sobrescrever `schema.prisma` inteiro.
+
+## Tenant-owned model template
+
+Todo model que pertence a um cliente:
+
+```prisma
+model Lead {
+  id        String   @id @default(cuid())
+  tenantId  String                           // 🔒 obrigatório
+  // ... campos do domínio
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])                        // 🔒 obrigatório
+  @@index([tenantId, createdAt])             // alto volume
+  @@index([tenantId, status])                // filtros comuns
+}
+```
+
+## Indexes obrigatórios
+
+- `@@index([tenantId])` em **todo** tenant-owned model
+- `@@index([tenantId, createdAt])` em tabelas de alto volume
+- Indexes em campos de filtro frequente (`status`, `source`, `type`)
+- Indexes em FKs sem `@relation` implícito
+
+## Naming
+
+| Bom | Ruim |
+|---|---|
+| `ConversationAIAnalysis` | `Data`, `Info`, `Misc` |
+| `LeadSource` | `Source` (genérico demais) |
+| `SellerPerformanceSnapshot` | `Snapshot` |
+
+Singular para models, camelCase para campos, snake_case nunca.
+
+## Tipos
+
+- IDs: `String @id @default(cuid())` (não `Int autoincrement()` em modelos novos)
+- Datas: `DateTime` sempre com timezone (UTC no DB)
+- JSON: `Json` para payloads não estruturados; texto longo: `String @db.Text`
+- Enums: usar enum Prisma, não string solta
+
+## Geração de cliente
+
+Após qualquer mudança no schema:
+
+```bash
+pnpm prisma generate
+```
+
+Remover qualquer cast `(this.prisma as any).novoModelo` após gerar.
+
+See also: `docs/07-database-standards.md`, skill `add-prisma-model-multitenant`.

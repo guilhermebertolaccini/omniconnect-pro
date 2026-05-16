@@ -1,0 +1,91 @@
+---
+description: Commit message and branch naming conventions — Conventional Commits, PR checklist
+alwaysApply: true
+---
+
+# Commit & Branch Conventions
+
+## Conventional Commits
+
+```
+<type>(<scope>): <imperative description>
+
+[optional body]
+
+[optional footer]
+```
+
+### Types
+
+| Type | Quando |
+|---|---|
+| `feat` | Funcionalidade nova |
+| `fix` | Correção de bug |
+| `refactor` | Refatoração sem mudar comportamento |
+| `chore` | Tooling, deps, configs |
+| `docs` | Documentação |
+| `test` | Adicionar/ajustar testes |
+| `perf` | Performance |
+| `security` | Correção/melhoria de segurança |
+| `migration` | Mudança de schema/DB |
+
+### Scopes principais
+
+`backend`, `frontend`, `crm`, `botify`, `saa`, `insight-ai`, `auth`, `monorepo`, `prisma`, `docs`.
+
+### Exemplos
+
+```
+feat(insight-ai): add MVP module for conversation analytics
+fix(auth): reject expired refresh tokens
+migration(prisma): add tenantId to all operational tables
+security(webhooks): verify whatsapp signature before processing
+chore(monorepo): bump pnpm to 9.12
+```
+
+## Branches
+
+```
+feature/<scope>-<short-name>      # feature/insight-ai-mvp
+fix/<scope>-<short-name>          # fix/tenant-isolation-leads
+security/<scope>-<short-name>     # security/webhook-signature-validation
+chore/<short-name>                # chore/bump-deps
+```
+
+Sem espaços, sem CamelCase, kebab-case.
+
+## PR checklist (no description)
+
+```markdown
+## Summary
+- (1-3 bullets, what changed)
+
+## Type
+- [ ] feat
+- [ ] fix
+- [ ] refactor
+- [ ] migration
+- [ ] security
+
+## Affected modules
+- backend/insight-ai
+- frontend/dashboard
+
+## Risk review
+- [ ] Tenant isolation preserved (queries scoped by tenantId)
+- [ ] Auth/permissions added or unchanged
+- [ ] No new secrets/PII exposure
+- [ ] Migration tested locally
+- [ ] Tests added/updated
+- [ ] Docs updated
+
+## Test plan
+- (passo a passo de como testar)
+```
+
+## NÃO
+
+- ❌ Commits "wip", "fix stuff", "asdf"
+- ❌ Commits gigantes (>500 linhas alterando 10 escopos)
+- ❌ `git push --force` em `main`/`develop`
+- ❌ Skipar pre-commit hook com `--no-verify`

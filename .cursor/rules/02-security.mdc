@@ -1,0 +1,67 @@
+---
+description: Security baseline for all code — auth, validation, secrets, logging, webhooks, dependencies
+alwaysApply: true
+---
+
+# Security Baseline
+
+Security is a product requirement, not a nice-to-have.
+
+## Always
+
+- Validate **every** input via `class-validator` DTOs (global `ValidationPipe` already configured in `main.ts` with `whitelist + forbidNonWhitelisted + transform`)
+- Enforce `JwtAuthGuard` + `RolesGuard` on every authenticated endpoint
+- Use parameterized queries (Prisma ORM); raw SQL requires review
+- Verify webhook signatures when provider supports it
+- Implement idempotency on webhooks and payment-like operations
+- Apply rate limiting via the project's own `rate-limiting/` module (NOT `@nestjs/throttler`) on auth-sensitive and AI endpoints
+- Use strict CORS allowlist (no `*` in production) — configured in `main.ts` via `CORS_ORIGINS` env
+- Paginate every list endpoint (no unbounded results)
+- Log via `winston` + `nest-winston` (structured): request id, tenant id, actor id, event type, error code — never secrets
+- Hash passwords with `argon2` (already installed; not bcrypt)
+- Track metrics via `prom-client` (Prometheus); already installed
+
+## Never
+
+- ❌ Commit secrets (`.env`, keys, tokens) — use env vars + secret manager
+- ❌ Trust frontend data (re-validate server-side)
+- ❌ Trust `tenantId` from body when derivable from auth
+- ❌ Concatenate user input into SQL strings
+- ❌ Put API tokens in `localStorage` if cookies are an option
+- ❌ Return raw Prisma entities with internal/sensitive fields
+- ❌ Log: passwords, tokens, full API keys, CPF, raw AI prompts with PII
+- ❌ Expose stack traces in production responses
+- ❌ Create cross-tenant queries
+
+## Examples
+
+```typescript
+// ❌ BAD
+const user = await prisma.$queryRawUnsafe(`SELECT * FROM users WHERE email='${email}'`);
+
+// ✅ GOOD
+const user = await prisma.user.findUnique({ where: { email } });
+
+// ✅ GOOD (raw with parameters when unavoidable)
+const rows = await prisma.$queryRaw`SELECT * FROM users WHERE email = ${email}`;
+```
+
+```typescript
+// ❌ BAD — leaks role/password hash
+return user;
+
+// ✅ GOOD — DTO with explicit fields
+return { id: user.id, name: user.name, email: user.email };
+```
+
+## Dependency hygiene
+
+Before merge: `pnpm audit`. Update vulnerable packages. Avoid abandoned packages.
+
+## Roadmap (to add — not blockers today)
+
+- **Helmet** — security headers middleware (not installed in `taticaofc` today; add when convenient)
+- **Refresh token rotation** — verify current strategy in `auth/strategies/`
+- **MFA** — architecture-ready; implement when contracts require
+
+See also: `docs/04-security.md`, skill `security-review`.
