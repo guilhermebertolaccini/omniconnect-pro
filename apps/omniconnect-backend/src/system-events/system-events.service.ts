@@ -45,6 +45,11 @@ export enum EventType {
   AD_PLATFORM_OAUTH_COMPLETED = 'ad_platform_oauth_completed',
   AD_PLATFORM_OAUTH_FAILED = 'ad_platform_oauth_failed',
   AUTH_REFRESH_REUSE_DETECTED = 'auth_refresh_reuse_detected',
+
+  // CRM Imobiliário (Sprint 3)
+  CRM_SIGNATURE_ENVELOPE_CREATED = 'crm_signature_envelope_created',
+  CRM_SIGNATURE_WEBHOOK_RECEIVED = 'crm_signature_webhook_received',
+  CRM_CONTRACT_SIGNED = 'crm_contract_signed',
 }
 
 export enum EventSeverity {
@@ -67,6 +72,7 @@ export enum EventModule {
   TENANT_INVITATIONS = 'tenant_invitations',
   AD_PLATFORM_OAUTH = 'ad_platform_oauth',
   AUTH = 'auth',
+  CRM_SIGNATURES = 'crm_signatures',
 }
 
 interface EventFilters {

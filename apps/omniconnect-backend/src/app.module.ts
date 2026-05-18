@@ -43,6 +43,7 @@ import { AdPlatformTokensModule } from './ad-platform-tokens/ad-platform-tokens.
 import { TenantInvitationsModule } from './tenant-invitations/tenant-invitations.module';
 import { OAuthModule } from './oauth/oauth.module';
 import { CrmModule } from './crm/crm.module';
+import { CrmSignaturesModule } from './crm-signatures/crm-signatures.module';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { CrmModule } from './crm/crm.module';
     TenantInvitationsModule,
     OAuthModule,
     CrmModule,
+    CrmSignaturesModule,
   ],
   controllers: [HealthController],
   providers: [PrismaService],
