@@ -1,95 +1,100 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, CheckCircle2, XCircle, RefreshCw, ExternalLink } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import {
-  getPlatformConfig,
-  savePlatformConfig,
+  connectViaOAuth,
+  getPlatformConnection,
+  listAdvertiserCompanies,
+  removePlatformConnection,
   testPlatformConnection,
-  getOAuthUrl,
-  type PlatformConfig,
+  type AdvertiserCompany,
+  type PlatformConnection,
 } from '@/services/platformConfigService';
+
+type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
 export function GoogleAdsConfigPanel() {
   const { toast } = useToast();
-  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+  const [companies, setCompanies] = useState<AdvertiserCompany[]>([]);
   const [selectedCompany, setSelectedCompany] = useState('');
-  const [config, setConfig] = useState<PlatformConfig | null>(null);
+  const [connection, setConnection] = useState<PlatformConnection | null>(null);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  const [developerToken, setDeveloperToken] = useState('');
-  const [loginCustomerId, setLoginCustomerId] = useState('');
-  const [accountId, setAccountId] = useState('');
+  const [status, setStatus] = useState<ConnectionStatus>('idle');
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   useEffect(() => {
-    supabase.from('companies').select('id, name').then(({ data }) => data && setCompanies(data));
-  }, []);
+    listAdvertiserCompanies()
+      .then(setCompanies)
+      .catch((err) =>
+        toast({
+          title: 'Erro ao carregar empresas',
+          description: err instanceof Error ? err.message : 'Falha desconhecida',
+          variant: 'destructive',
+        }),
+      );
+  }, [toast]);
 
   useEffect(() => {
-    if (!selectedCompany) return;
+    if (!selectedCompany) {
+      setConnection(null);
+      setStatus('idle');
+      setResult(null);
+      return;
+    }
     setLoading(true);
-    getPlatformConfig('google_ads', selectedCompany)
-      .then((c) => {
-        setConfig(c);
-        setDeveloperToken(c?.extra?.developer_token || '');
-        setLoginCustomerId(c?.extra?.login_customer_id || '');
-        setAccountId(c?.account_id || '');
-        setTestResult(null);
-      })
+    getPlatformConnection('google_ads', selectedCompany)
+      .then(setConnection)
       .finally(() => setLoading(false));
   }, [selectedCompany]);
 
-  async function handleSave() {
+  async function handleConnect() {
     if (!selectedCompany) return;
-    setSaving(true);
     try {
-      await savePlatformConfig('google_ads', selectedCompany, {
-        developer_token: developerToken.trim() || undefined,
-        login_customer_id: loginCustomerId.trim() || undefined,
-        account_id: accountId.trim() || undefined,
+      await connectViaOAuth('google_ads', selectedCompany, '/settings');
+    } catch (err) {
+      toast({
+        title: 'OAuth indisponível',
+        description: err instanceof Error ? err.message : 'Falha desconhecida',
+        variant: 'destructive',
       });
-      toast({ title: 'Configuração Google Ads salva' });
-      const c = await getPlatformConfig('google_ads', selectedCompany);
-      setConfig(c);
-    } catch (err: any) {
-      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleConnectOAuth() {
-    if (!selectedCompany) return;
-    try {
-      const url = await getOAuthUrl('google_ads', selectedCompany);
-      window.open(url, '_blank', 'width=600,height=700');
-    } catch (err: any) {
-      toast({ title: 'OAuth indisponível', description: err.message, variant: 'destructive' });
     }
   }
 
   async function handleTest() {
-    if (!selectedCompany) return;
-    setTesting(true);
-    setTestResult(null);
+    if (!connection) return;
+    setStatus('testing');
+    setResult(null);
+    const r = await testPlatformConnection(connection.id);
+    setStatus(r.success ? 'success' : 'error');
+    setResult({
+      ok: r.success,
+      msg: r.success
+        ? r.accounts && r.accounts.length
+          ? `${r.accounts.length} conta(s) acessível(is)`
+          : 'Conexão OK'
+        : r.error ?? 'Falha na conexão',
+    });
+  }
+
+  async function handleDisconnect() {
+    if (!connection) return;
     try {
-      const r = await testPlatformConnection('google_ads', selectedCompany);
-      if (r.success) setTestResult({ ok: true, msg: `${r.accounts_count} conta(s) encontrada(s)` });
-      else setTestResult({ ok: false, msg: r.error || 'Falha na conexão' });
-    } catch (err: any) {
-      setTestResult({ ok: false, msg: err.message });
-    } finally {
-      setTesting(false);
+      await removePlatformConnection(connection.id);
+      toast({ title: 'Conexão removida' });
+      setConnection(null);
+      setStatus('idle');
+      setResult(null);
+    } catch (err) {
+      toast({
+        title: 'Erro ao desconectar',
+        description: err instanceof Error ? err.message : 'Falha desconhecida',
+        variant: 'destructive',
+      });
     }
   }
 
@@ -98,15 +103,17 @@ export function GoogleAdsConfigPanel() {
       <CardHeader>
         <CardTitle className="text-base">Integração Google Ads</CardTitle>
         <CardDescription>
-          Conecte via OAuth ou configure manualmente o developer token e login customer ID.
-          Veja <code>docs/CREDENCIAIS_PLATAFORMAS.md</code> para obter as credenciais.
+          Conecte cada empresa via OAuth. O backend pede os scopes
+          <code> adwords openid email </code>e gerencia refresh automaticamente.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label>Empresa</Label>
+          <label className="text-sm font-medium">Empresa</label>
           <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-            <SelectTrigger><SelectValue placeholder="Selecione uma empresa" /></SelectTrigger>
+            <SelectTrigger>
+              <SelectValue placeholder="Selecione uma empresa" />
+            </SelectTrigger>
             <SelectContent>
               {companies.map((c) => (
                 <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
@@ -117,69 +124,48 @@ export function GoogleAdsConfigPanel() {
 
         {selectedCompany && !loading && (
           <>
-            {config?.access_token && (
-              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
-                Conectado — token: {config.access_token}
-              </Badge>
-            )}
-
             <Separator />
 
-            <div className="space-y-2">
-              <Label>Developer Token</Label>
-              <Input
-                type="password"
-                placeholder="Token aprovado no API Center"
-                value={developerToken}
-                onChange={(e) => setDeveloperToken(e.target.value)}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Login Customer ID</Label>
-                <Input
-                  placeholder="123-456-7890"
-                  value={loginCustomerId}
-                  onChange={(e) => setLoginCustomerId(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Customer ID (conta)</Label>
-                <Input
-                  placeholder="1234567890"
-                  value={accountId}
-                  onChange={(e) => setAccountId(e.target.value)}
-                />
-              </div>
-            </div>
+            {connection ? (
+              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                Conectado — token: ••••{connection.accessTokenHint ?? '????'}
+                {connection.tokenExpiresAt
+                  ? ` · expira ${new Date(connection.tokenExpiresAt).toLocaleDateString()}`
+                  : ''}
+              </Badge>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Esta empresa ainda não tem uma conexão Google Ads ativa.
+              </p>
+            )}
 
             <div className="flex flex-wrap items-center gap-2 pt-2">
-              <Button onClick={handleSave} disabled={saving}>
-                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Salvar
-              </Button>
-              <Button variant="secondary" onClick={handleConnectOAuth}>
+              <Button onClick={handleConnect}>
                 <ExternalLink className="mr-2 h-4 w-4" />
-                Conectar via OAuth
+                {connection ? 'Reconectar Google Ads' : 'Conectar com Google Ads'}
               </Button>
-              <Button variant="outline" onClick={handleTest} disabled={testing || !config}>
-                {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              <Button variant="outline" onClick={handleTest} disabled={status === 'testing' || !connection}>
+                {status === 'testing' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                 Testar Conexão
               </Button>
+              {connection && (
+                <Button variant="ghost" onClick={handleDisconnect}>
+                  Desconectar
+                </Button>
+              )}
             </div>
 
-            {testResult && (
+            {result && (
               <Badge
                 variant="outline"
                 className={
-                  testResult.ok
+                  result.ok
                     ? 'border-primary/30 bg-primary/10 text-primary gap-1'
                     : 'border-destructive/30 bg-destructive/10 text-destructive gap-1'
                 }
               >
-                {testResult.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                {testResult.msg}
+                {result.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                {result.msg}
               </Badge>
             )}
           </>

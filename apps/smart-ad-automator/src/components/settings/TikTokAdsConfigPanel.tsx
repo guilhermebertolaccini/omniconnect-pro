@@ -1,93 +1,100 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, CheckCircle2, XCircle, RefreshCw, ExternalLink } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import {
-  getPlatformConfig,
-  savePlatformConfig,
+  connectViaOAuth,
+  getPlatformConnection,
+  listAdvertiserCompanies,
+  removePlatformConnection,
   testPlatformConnection,
-  getOAuthUrl,
-  type PlatformConfig,
+  type AdvertiserCompany,
+  type PlatformConnection,
 } from '@/services/platformConfigService';
+
+type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
 export function TikTokAdsConfigPanel() {
   const { toast } = useToast();
-  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+  const [companies, setCompanies] = useState<AdvertiserCompany[]>([]);
   const [selectedCompany, setSelectedCompany] = useState('');
-  const [config, setConfig] = useState<PlatformConfig | null>(null);
+  const [connection, setConnection] = useState<PlatformConnection | null>(null);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  const [accessToken, setAccessToken] = useState('');
-  const [advertiserId, setAdvertiserId] = useState('');
+  const [status, setStatus] = useState<ConnectionStatus>('idle');
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   useEffect(() => {
-    supabase.from('companies').select('id, name').then(({ data }) => data && setCompanies(data));
-  }, []);
+    listAdvertiserCompanies()
+      .then(setCompanies)
+      .catch((err) =>
+        toast({
+          title: 'Erro ao carregar empresas',
+          description: err instanceof Error ? err.message : 'Falha desconhecida',
+          variant: 'destructive',
+        }),
+      );
+  }, [toast]);
 
   useEffect(() => {
-    if (!selectedCompany) return;
+    if (!selectedCompany) {
+      setConnection(null);
+      setStatus('idle');
+      setResult(null);
+      return;
+    }
     setLoading(true);
-    getPlatformConfig('tiktok_ads', selectedCompany)
-      .then((c) => {
-        setConfig(c);
-        setAccessToken('');
-        setAdvertiserId(c?.account_id || '');
-        setTestResult(null);
-      })
+    getPlatformConnection('tiktok_ads', selectedCompany)
+      .then(setConnection)
       .finally(() => setLoading(false));
   }, [selectedCompany]);
 
-  async function handleSave() {
+  async function handleConnect() {
     if (!selectedCompany) return;
-    setSaving(true);
     try {
-      await savePlatformConfig('tiktok_ads', selectedCompany, {
-        access_token: accessToken.trim() || undefined,
-        account_id: advertiserId.trim() || undefined,
+      await connectViaOAuth('tiktok_ads', selectedCompany, '/settings');
+    } catch (err) {
+      toast({
+        title: 'OAuth indisponível',
+        description: err instanceof Error ? err.message : 'Falha desconhecida',
+        variant: 'destructive',
       });
-      toast({ title: 'Configuração TikTok Ads salva' });
-      const c = await getPlatformConfig('tiktok_ads', selectedCompany);
-      setConfig(c);
-      setAccessToken('');
-    } catch (err: any) {
-      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleConnectOAuth() {
-    if (!selectedCompany) return;
-    try {
-      const url = await getOAuthUrl('tiktok_ads', selectedCompany);
-      window.open(url, '_blank', 'width=600,height=700');
-    } catch (err: any) {
-      toast({ title: 'OAuth indisponível', description: err.message, variant: 'destructive' });
     }
   }
 
   async function handleTest() {
-    if (!selectedCompany) return;
-    setTesting(true);
-    setTestResult(null);
+    if (!connection) return;
+    setStatus('testing');
+    setResult(null);
+    const r = await testPlatformConnection(connection.id);
+    setStatus(r.success ? 'success' : 'error');
+    setResult({
+      ok: r.success,
+      msg: r.success
+        ? r.accounts && r.accounts.length
+          ? `${r.accounts.length} advertiser(s) acessível(is)`
+          : 'Conexão OK'
+        : r.error ?? 'Falha na conexão',
+    });
+  }
+
+  async function handleDisconnect() {
+    if (!connection) return;
     try {
-      const r = await testPlatformConnection('tiktok_ads', selectedCompany);
-      if (r.success) setTestResult({ ok: true, msg: `${r.accounts_count} advertiser(s) encontrado(s)` });
-      else setTestResult({ ok: false, msg: r.error || 'Falha na conexão' });
-    } catch (err: any) {
-      setTestResult({ ok: false, msg: err.message });
-    } finally {
-      setTesting(false);
+      await removePlatformConnection(connection.id);
+      toast({ title: 'Conexão removida' });
+      setConnection(null);
+      setStatus('idle');
+      setResult(null);
+    } catch (err) {
+      toast({
+        title: 'Erro ao desconectar',
+        description: err instanceof Error ? err.message : 'Falha desconhecida',
+        variant: 'destructive',
+      });
     }
   }
 
@@ -96,12 +103,13 @@ export function TikTokAdsConfigPanel() {
       <CardHeader>
         <CardTitle className="text-base">Integração TikTok Ads</CardTitle>
         <CardDescription>
-          Conecte via OAuth ou cole manualmente o Access Token e Advertiser ID obtidos no TikTok Business.
+          Conecte cada empresa via OAuth. O backend faz o handshake com TikTok
+          Business API e cifra os tokens server-side.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label>Empresa</Label>
+          <label className="text-sm font-medium">Empresa</label>
           <Select value={selectedCompany} onValueChange={setSelectedCompany}>
             <SelectTrigger><SelectValue placeholder="Selecione uma empresa" /></SelectTrigger>
             <SelectContent>
@@ -114,59 +122,48 @@ export function TikTokAdsConfigPanel() {
 
         {selectedCompany && !loading && (
           <>
-            {config?.access_token && (
-              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
-                Conectado — token: {config.access_token}
-              </Badge>
-            )}
-
             <Separator />
 
-            <div className="space-y-2">
-              <Label>Access Token</Label>
-              <Input
-                type="password"
-                placeholder={config ? 'Insira novo token para atualizar' : 'Cole o long-lived token'}
-                value={accessToken}
-                onChange={(e) => setAccessToken(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Advertiser ID</Label>
-              <Input
-                placeholder="Ex: 7123456789012345678"
-                value={advertiserId}
-                onChange={(e) => setAdvertiserId(e.target.value)}
-              />
-            </div>
+            {connection ? (
+              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                Conectado — token: ••••{connection.accessTokenHint ?? '????'}
+                {connection.tokenExpiresAt
+                  ? ` · expira ${new Date(connection.tokenExpiresAt).toLocaleDateString()}`
+                  : ''}
+              </Badge>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Esta empresa ainda não tem uma conexão TikTok Ads ativa.
+              </p>
+            )}
 
             <div className="flex flex-wrap items-center gap-2 pt-2">
-              <Button onClick={handleSave} disabled={saving}>
-                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Salvar
-              </Button>
-              <Button variant="secondary" onClick={handleConnectOAuth}>
+              <Button onClick={handleConnect}>
                 <ExternalLink className="mr-2 h-4 w-4" />
-                Conectar via OAuth
+                {connection ? 'Reconectar TikTok' : 'Conectar com TikTok'}
               </Button>
-              <Button variant="outline" onClick={handleTest} disabled={testing || !config}>
-                {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              <Button variant="outline" onClick={handleTest} disabled={status === 'testing' || !connection}>
+                {status === 'testing' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                 Testar Conexão
               </Button>
+              {connection && (
+                <Button variant="ghost" onClick={handleDisconnect}>
+                  Desconectar
+                </Button>
+              )}
             </div>
 
-            {testResult && (
+            {result && (
               <Badge
                 variant="outline"
                 className={
-                  testResult.ok
+                  result.ok
                     ? 'border-primary/30 bg-primary/10 text-primary gap-1'
                     : 'border-destructive/30 bg-destructive/10 text-destructive gap-1'
                 }
               >
-                {testResult.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                {testResult.msg}
+                {result.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                {result.msg}
               </Badge>
             )}
           </>

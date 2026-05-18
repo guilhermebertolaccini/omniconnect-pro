@@ -1,138 +1,121 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Key, Loader2, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
+import { Key, Loader2, CheckCircle2, XCircle, RefreshCw, ExternalLink } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
-import { saveMetaConfig, getMetaConfig, testMetaConnection, type MetaConfig, type TestConnectionResult } from '@/services/metaConfigService';
+import {
+  connectViaOAuth,
+  listAdvertiserCompanies,
+  removePlatformConnection,
+  testPlatformConnection,
+  type AdvertiserCompany,
+  type PlatformConnection,
+} from '@/services/platformConfigService';
+import { getPlatformConnection } from '@/services/platformConfigService';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
+/**
+ * Sprint 2.4 — Bloco E. Configuração da integração Meta agora é OAuth-first:
+ *   1. Operador escolhe a AdvertiserCompany.
+ *   2. Clica em "Conectar com Meta" — redireciona para o backend
+ *      /oauth/meta/start, que assina state e leva ao Facebook.
+ *   3. Após callback, o backend cifra os tokens e devolve o usuário a
+ *      /settings/?platform=meta&status=success&connectionId=...
+ *   4. O painel mostra o estado da conexão e permite testar / desconectar.
+ *
+ * Não há mais campo de "Access Token" manual — app_secret e access_token só
+ * vivem no backend (BridgeSecretCipher / token-refresh).
+ */
 export function MetaConfigPanel() {
   const { toast } = useToast();
-  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+  const [companies, setCompanies] = useState<AdvertiserCompany[]>([]);
   const [selectedCompany, setSelectedCompany] = useState('');
+  const [connection, setConnection] = useState<PlatformConnection | null>(null);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
-  const [connectionResult, setConnectionResult] = useState<TestConnectionResult | null>(null);
-  const [existingConfig, setExistingConfig] = useState<MetaConfig | null>(null);
+  const [connectionResult, setConnectionResult] = useState<{ message: string } | null>(null);
 
-  // Form state
-  const [accessToken, setAccessToken] = useState('');
-  const [businessId, setBusinessId] = useState('');
-  const [adAccountId, setAdAccountId] = useState('');
-  const [appId, setAppId] = useState('');
-  const [appSecret, setAppSecret] = useState('');
-
-  // Load companies
   useEffect(() => {
-    async function loadCompanies() {
-      const { data } = await supabase.from('companies').select('id, name');
-      if (data) setCompanies(data);
-    }
-    loadCompanies();
-  }, []);
+    listAdvertiserCompanies()
+      .then((rows) => setCompanies(rows))
+      .catch((err) =>
+        toast({
+          title: 'Erro ao carregar empresas',
+          description: err instanceof Error ? err.message : 'Falha desconhecida',
+          variant: 'destructive',
+        }),
+      );
+  }, [toast]);
 
-  // Load config when company changes
   useEffect(() => {
     if (!selectedCompany) {
-      setExistingConfig(null);
-      resetForm();
+      setConnection(null);
+      setConnectionStatus('idle');
+      setConnectionResult(null);
       return;
     }
-    loadConfig(selectedCompany);
-  }, [selectedCompany]);
-
-  function resetForm() {
-    setAccessToken('');
-    setBusinessId('');
-    setAdAccountId('');
-    setAppId('');
-    setAppSecret('');
-    setConnectionStatus('idle');
-    setConnectionResult(null);
-  }
-
-  async function loadConfig(companyId: string) {
     setLoading(true);
-    try {
-      const config = await getMetaConfig(companyId);
-      setExistingConfig(config);
-      if (config) {
-        setAccessToken(''); // Don't show actual token
-        setBusinessId(config.meta_business_id || '');
-        setAdAccountId(config.ad_account_id || '');
-        setAppId(config.app_id || '');
-        setAppSecret('');
-      } else {
-        resetForm();
-      }
-    } catch (err: any) {
-      toast({ title: 'Erro ao carregar configuração', description: err.message, variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  }
+    getPlatformConnection('meta', selectedCompany)
+      .then((c) => setConnection(c))
+      .catch((err) =>
+        toast({
+          title: 'Erro ao carregar conexão',
+          description: err instanceof Error ? err.message : 'Falha desconhecida',
+          variant: 'destructive',
+        }),
+      )
+      .finally(() => setLoading(false));
+  }, [selectedCompany, toast]);
 
-  async function handleSave() {
-    if (!selectedCompany) {
-      toast({ title: 'Selecione uma empresa', variant: 'destructive' });
-      return;
-    }
-    if (!accessToken.trim() && !existingConfig) {
-      toast({ title: 'Access Token obrigatório', variant: 'destructive' });
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const payload: Record<string, string> = { company_id: selectedCompany };
-      if (accessToken.trim()) payload.access_token = accessToken.trim();
-      else if (existingConfig) {
-        // If no new token, we need to send something — backend upsert requires it
-        toast({ title: 'Insira o Access Token para atualizar', variant: 'destructive' });
-        setSaving(false);
-        return;
-      }
-      if (businessId.trim()) payload.meta_business_id = businessId.trim();
-      if (adAccountId.trim()) payload.ad_account_id = adAccountId.trim();
-      if (appId.trim()) payload.app_id = appId.trim();
-      if (appSecret.trim()) payload.app_secret = appSecret.trim();
-
-      await saveMetaConfig(payload as any);
-      toast({ title: 'Configuração salva com sucesso!' });
-      setAccessToken('');
-      setAppSecret('');
-      await loadConfig(selectedCompany);
-    } catch (err: any) {
-      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleTestConnection() {
+  async function handleConnect() {
     if (!selectedCompany) return;
+    try {
+      await connectViaOAuth('meta', selectedCompany, '/settings');
+    } catch (err) {
+      toast({
+        title: 'Erro ao iniciar OAuth',
+        description: err instanceof Error ? err.message : 'Falha desconhecida',
+        variant: 'destructive',
+      });
+    }
+  }
+
+  async function handleTest() {
+    if (!connection) return;
     setConnectionStatus('testing');
     setConnectionResult(null);
-    try {
-      const result = await testMetaConnection(selectedCompany);
-      if (result.success) {
-        setConnectionStatus('success');
-        setConnectionResult(result);
-      } else {
-        setConnectionStatus('error');
-        setConnectionResult(result);
-      }
-    } catch (err: any) {
+    const r = await testPlatformConnection(connection.id);
+    if (r.success) {
+      setConnectionStatus('success');
+      setConnectionResult({
+        message:
+          r.accounts && r.accounts.length
+            ? `${r.accounts.length} conta(s) acessível(is)`
+            : 'Conexão OK',
+      });
+    } else {
       setConnectionStatus('error');
-      setConnectionResult({ success: false, error: err.message });
+      setConnectionResult({ message: r.error ?? 'Erro ao testar conexão' });
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!connection) return;
+    try {
+      await removePlatformConnection(connection.id);
+      toast({ title: 'Conexão removida' });
+      setConnection(null);
+      setConnectionStatus('idle');
+    } catch (err) {
+      toast({
+        title: 'Erro ao desconectar',
+        description: err instanceof Error ? err.message : 'Falha desconhecida',
+        variant: 'destructive',
+      });
     }
   }
 
@@ -144,20 +127,22 @@ export function MetaConfigPanel() {
           <CardTitle className="text-base">Integração Meta Ads</CardTitle>
         </div>
         <CardDescription>
-          Configure tokens e IDs para cada empresa. Os tokens são armazenados de forma segura no backend.
+          Conecte cada empresa via OAuth. Tokens nunca chegam ao navegador — o
+          backend cifra e armazena server-side.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Company selector */}
         <div className="space-y-2">
-          <Label>Empresa</Label>
+          <Label className="text-sm font-medium">Empresa</Label>
           <Select value={selectedCompany} onValueChange={setSelectedCompany}>
             <SelectTrigger>
               <SelectValue placeholder="Selecione uma empresa" />
             </SelectTrigger>
             <SelectContent>
               {companies.map((c) => (
-                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -165,77 +150,37 @@ export function MetaConfigPanel() {
 
         {selectedCompany && !loading && (
           <>
-            {existingConfig && (
-              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
-                Configuração existente — token: {existingConfig.access_token}
-              </Badge>
-            )}
-
             <Separator />
 
-            <div className="space-y-2">
-              <Label htmlFor="access-token">Access Token *</Label>
-              <Input
-                id="access-token"
-                type="password"
-                placeholder={existingConfig ? 'Insira novo token para atualizar' : 'Cole seu token (EAABs...)'}
-                value={accessToken}
-                onChange={(e) => setAccessToken(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Token de acesso da Meta com permissões ads_read, ads_management e business_management.
+            {connection ? (
+              <div className="space-y-2">
+                <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                  Conectado — token: ••••{connection.accessTokenHint ?? '????'}
+                  {connection.tokenExpiresAt
+                    ? ` · expira ${new Date(connection.tokenExpiresAt).toLocaleDateString()}`
+                    : ''}
+                </Badge>
+                {connection.accountId && (
+                  <p className="text-xs text-muted-foreground">
+                    Ad Account: {connection.accountId}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Esta empresa ainda não tem uma conexão Meta ativa.
               </p>
-            </div>
+            )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="business-id">Business ID</Label>
-                <Input
-                  id="business-id"
-                  placeholder="Ex: 123456789"
-                  value={businessId}
-                  onChange={(e) => setBusinessId(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ad-account-id">Ad Account ID</Label>
-                <Input
-                  id="ad-account-id"
-                  placeholder="Ex: act_123456789"
-                  value={adAccountId}
-                  onChange={(e) => setAdAccountId(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="app-id">App ID (opcional)</Label>
-                <Input
-                  id="app-id"
-                  placeholder="ID do aplicativo Meta"
-                  value={appId}
-                  onChange={(e) => setAppId(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="app-secret">App Secret (opcional)</Label>
-                <Input
-                  id="app-secret"
-                  type="password"
-                  placeholder={existingConfig ? '***masked***' : 'Secret do aplicativo'}
-                  value={appSecret}
-                  onChange={(e) => setAppSecret(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 pt-2">
-              <Button onClick={handleSave} disabled={saving}>
-                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Salvar Configuração
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <Button onClick={handleConnect}>
+                <ExternalLink className="mr-2 h-4 w-4" />
+                {connection ? 'Reconectar com Meta' : 'Conectar com Meta'}
               </Button>
               <Button
                 variant="secondary"
-                onClick={handleTestConnection}
-                disabled={connectionStatus === 'testing' || !existingConfig}
+                onClick={handleTest}
+                disabled={connectionStatus === 'testing' || !connection}
               >
                 {connectionStatus === 'testing' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -244,18 +189,23 @@ export function MetaConfigPanel() {
                 )}
                 Testar Conexão
               </Button>
+              {connection && (
+                <Button variant="ghost" onClick={handleDisconnect}>
+                  Desconectar
+                </Button>
+              )}
             </div>
 
             {connectionStatus === 'success' && connectionResult && (
               <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary gap-1">
                 <CheckCircle2 className="h-3 w-3" />
-                Conexão OK! {connectionResult.accounts_count} conta(s) encontrada(s).
+                {connectionResult.message}
               </Badge>
             )}
             {connectionStatus === 'error' && connectionResult && (
               <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-destructive gap-1">
                 <XCircle className="h-3 w-3" />
-                {connectionResult.error || 'Erro ao testar conexão'}
+                {connectionResult.message}
               </Badge>
             )}
           </>
@@ -269,5 +219,13 @@ export function MetaConfigPanel() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function Label({ className, children, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
+  return (
+    <label className={`text-sm font-medium ${className ?? ''}`} {...props}>
+      {children}
+    </label>
   );
 }
