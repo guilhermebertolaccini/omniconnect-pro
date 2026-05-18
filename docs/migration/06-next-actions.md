@@ -27,6 +27,7 @@
 | SAA frontend (Sprint 2.4) — invites, refresh tokens, OAuth pickup, cutover | ✅ |
 | CRM backend (Sprint 3) — schema + domain + signatures + storage + pdf-parser + realtime | ✅ |
 | CRM frontend (Sprint 3.1) — auth + contexts + storage/parser + cleanup Supabase | ✅ |
+| CRM hardening (Sprint 3.2) — timelines + document audit via backend | ✅ |
 
 ## Sprint 1.3 — Hardening final pré-Sprint 2 ✅ CONCLUÍDA
 
@@ -175,12 +176,26 @@ Detalhamento completo: ver `docs/migration/sprint-3-1-crm-frontend.md`.
 | **F — Smoke** | `vite build` verde e Vitest `9/9` verde. `tsc --noEmit` ainda esbarra no baseline de tipos `lucide-react`/React, como no SAA. |
 
 **Pendências conscientes pós-cutover:**
-- Expor endpoint backend para listar `CrmDocumentVersion`/`CrmDocumentAccessLog` e substituir fallback local.
-- Expor endpoint backend para timeline/auditoria de proposal/contract events no frontend.
 - Melhorar extração de texto PDF com `pdf.js`; hoje o cutover usa `File.text()` como fallback sem dependência.
 - Tornar frontend CRM job bloqueante no CI quando os smoke tests forem ampliados.
 
-## Roadmap longo (depois da Sprint 3.1)
+## Sprint 3.2 — CRM frontend hardening ✅ CONCLUÍDA
+
+Detalhamento completo: ver `docs/migration/sprint-3-2-crm-hardening.md`.
+
+| Bloco | Resumo |
+|---|---|
+| **A — Document audit API** | `crm-storage` ganhou `GET /crm/storage/documents/:parentType/:parentId/versions` e `/access-logs`, ambos com `JwtAuthGuard`, tenant scope e broker scope via parent validation. |
+| **B — Timeline API** | `crm/proposals/:id/events` e `crm/contracts/:id/events` listam eventos após validar acesso ao parent. Updates de `pdfUrl` agora registram evento `pdf_attached`/`pdf_removed`. |
+| **C — Frontend cleanup** | `documentVersions.ts`, `ProposalDetail` e `ContractDetail` consomem os endpoints backend; removidos fallbacks locais em `localStorage` para documentos/timelines. |
+| **D — Specs** | Specs focadas em tenant/broker scope e eventos PDF: `crm-storage`, `crm-proposals`, `crm-contracts`. |
+
+**Métricas Sprint 3.2:**
+- Backend specs afetadas: 26/26 verdes
+- Backend `tsc --noEmit -p tsconfig.build.json`: limpo
+- CRM frontend `vite build`: verde
+
+## Roadmap longo (depois da Sprint 3.2)
 
 1. **Sprint 4** — Bridges processors reais (consumir `IntegrationEvent`
    e propagar para `CrmLead`, `CrmContact` etc). Hoje só persistimos +

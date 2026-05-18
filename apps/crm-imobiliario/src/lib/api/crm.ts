@@ -798,6 +798,29 @@ export interface UploadedCrmDocument {
   mimeType: string;
 }
 
+export interface CrmDocumentVersionRow {
+  id: string;
+  parentType: CrmDocumentParentType;
+  parentId: string;
+  pdfUrl: string;
+  fileName: string | null;
+  action: "attached" | "replaced" | "generated" | "imported";
+  uploadedById: number | null;
+  uploaderName: string | null;
+  createdAt: string;
+}
+
+export interface CrmDocumentAccessLogRow {
+  id: string;
+  parentType: CrmDocumentParentType;
+  parentId: string;
+  pdfUrl: string;
+  action: "viewed" | "downloaded";
+  userId: number | null;
+  userName: string | null;
+  createdAt: string;
+}
+
 export async function uploadCrmDocument(input: {
   parentType: CrmDocumentParentType;
   parentId: string;
@@ -820,6 +843,24 @@ export async function uploadCrmDocument(input: {
       ? uploaded.url
       : `${API_BASE_URL}${uploaded.url.startsWith("/") ? "" : "/"}${uploaded.url}`,
   };
+}
+
+export function listCrmDocumentVersions(
+  parentType: CrmDocumentParentType,
+  parentId: string,
+): Promise<CrmDocumentVersionRow[]> {
+  return request<CrmDocumentVersionRow[]>(
+    `/crm/storage/documents/${parentType}/${encodeURIComponent(parentId)}/versions`,
+  );
+}
+
+export function listCrmDocumentAccessLogs(
+  parentType: CrmDocumentParentType,
+  parentId: string,
+): Promise<CrmDocumentAccessLogRow[]> {
+  return request<CrmDocumentAccessLogRow[]>(
+    `/crm/storage/documents/${parentType}/${encodeURIComponent(parentId)}/access-logs`,
+  );
 }
 
 export interface ParsedCrmPdf {
@@ -880,4 +921,25 @@ export function createSignatureEnvelope(
     method: "POST",
     body: JSON.stringify({ signers }),
   });
+}
+
+export interface CrmTimelineEventRow {
+  id: string;
+  eventType: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  message?: string | null;
+  createdAt: string;
+}
+
+export function listProposalEvents(proposalId: string): Promise<CrmTimelineEventRow[]> {
+  return request<CrmTimelineEventRow[]>(
+    `/crm/proposals/${encodeURIComponent(proposalId)}/events`,
+  );
+}
+
+export function listContractEvents(contractId: string): Promise<CrmTimelineEventRow[]> {
+  return request<CrmTimelineEventRow[]>(
+    `/crm/contracts/${encodeURIComponent(contractId)}/events`,
+  );
 }

@@ -56,6 +56,12 @@ export class CrmContractsController {
     return this.service.findOne(ensureTenant(user), id, crmActor(user));
   }
 
+  @Get(':id/events')
+  @Roles(Role.admin, Role.supervisor, Role.broker)
+  listEvents(@CurrentUser() user: RequestUserLike, @Param('id') id: string) {
+    return this.service.listEvents(ensureTenant(user), id, crmActor(user));
+  }
+
   @Patch(':id')
   @Roles(Role.admin, Role.supervisor, Role.broker)
   update(

@@ -151,7 +151,22 @@ export class CrmProposalsService {
       data.validUntil = dto.validUntil ? new Date(dto.validUntil) : null;
     if (dto.notes !== undefined) data.notes = dto.notes;
     if (dto.pdfUrl !== undefined) data.pdfUrl = dto.pdfUrl;
-    return this.prisma.crmProposal.update({ where: { id }, data });
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.crmProposal.update({ where: { id }, data });
+      if (dto.pdfUrl !== undefined && dto.pdfUrl !== existing.pdfUrl) {
+        await tx.crmProposalEvent.create({
+          data: {
+            tenantId,
+            proposalId: id,
+            eventType: dto.pdfUrl ? 'pdf_attached' : 'pdf_removed',
+            toStatus: existing.status,
+            message: dto.pdfUrl ? 'PDF attached or replaced' : 'PDF removed',
+            createdById: actor.id,
+          },
+        });
+      }
+      return updated;
+    });
   }
 
   async transition(
@@ -218,5 +233,14 @@ export class CrmProposalsService {
     }
     await this.prisma.crmProposal.delete({ where: { id } });
     return { id };
+  }
+
+  async listEvents(tenantId: string, id: string, actor: CrmActor) {
+    await this.findOne(tenantId, id, actor);
+    return this.prisma.crmProposalEvent.findMany({
+      where: { tenantId, proposalId: id },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
   }
 }

@@ -215,6 +215,54 @@ export class CrmStorageService {
     return { absolutePath, mimeType, fileName: version.fileName };
   }
 
+  async listVersions(
+    tenantId: string,
+    actor: CrmActor,
+    parentType: CrmDocumentParentType,
+    parentId: string,
+  ) {
+    await this.assertParentBelongsToTenant(tenantId, parentType, parentId, actor);
+    return this.prisma.crmDocumentVersion.findMany({
+      where: { tenantId, parentType, parentId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        parentType: true,
+        parentId: true,
+        pdfUrl: true,
+        fileName: true,
+        action: true,
+        uploadedById: true,
+        uploaderName: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  async listAccessLogs(
+    tenantId: string,
+    actor: CrmActor,
+    parentType: CrmDocumentParentType,
+    parentId: string,
+  ) {
+    await this.assertParentBelongsToTenant(tenantId, parentType, parentId, actor);
+    return this.prisma.crmDocumentAccessLog.findMany({
+      where: { tenantId, parentType, parentId },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        parentType: true,
+        parentId: true,
+        pdfUrl: true,
+        action: true,
+        userId: true,
+        userName: true,
+        createdAt: true,
+      },
+    });
+  }
+
   private buildUrlPath(
     tenantId: string,
     parentType: CrmDocumentParentType,

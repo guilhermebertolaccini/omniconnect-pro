@@ -11,7 +11,7 @@ import {
   Body,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Role } from '@prisma/client';
+import { CrmDocumentParentType, Role } from '@prisma/client';
 import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -68,5 +68,47 @@ export class CrmStorageController {
       );
     }
     return res.sendFile(absolutePath);
+  }
+
+  @Get('documents/:parentType/:parentId/versions')
+  @Roles(Role.admin, Role.supervisor, Role.broker)
+  listVersions(
+    @CurrentUser() user: RequestUserLike,
+    @Param('parentType') parentTypeRaw: string,
+    @Param('parentId') parentId: string,
+  ) {
+    const parentType = this.parseParentType(parentTypeRaw);
+    return this.service.listVersions(
+      ensureTenant(user),
+      crmActor(user),
+      parentType,
+      parentId,
+    );
+  }
+
+  @Get('documents/:parentType/:parentId/access-logs')
+  @Roles(Role.admin, Role.supervisor, Role.broker)
+  listAccessLogs(
+    @CurrentUser() user: RequestUserLike,
+    @Param('parentType') parentTypeRaw: string,
+    @Param('parentId') parentId: string,
+  ) {
+    const parentType = this.parseParentType(parentTypeRaw);
+    return this.service.listAccessLogs(
+      ensureTenant(user),
+      crmActor(user),
+      parentType,
+      parentId,
+    );
+  }
+
+  private parseParentType(value: string): CrmDocumentParentType {
+    if (
+      value !== CrmDocumentParentType.proposal &&
+      value !== CrmDocumentParentType.contract
+    ) {
+      throw new BadRequestException(`Unsupported parentType "${value}"`);
+    }
+    return value;
   }
 }

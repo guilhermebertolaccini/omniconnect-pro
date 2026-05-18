@@ -1,3 +1,9 @@
+import {
+  listCrmDocumentAccessLogs,
+  listCrmDocumentVersions,
+  type CrmDocumentParentType,
+} from "@/lib/api/crm";
+
 export type VersionAction = "attached" | "replaced" | "generated" | "imported";
 export type VersionParent = "proposal" | "contract";
 export type AccessAction = "viewed" | "downloaded";
@@ -23,28 +29,28 @@ export async function recordDocumentVersion(input: {
   uploadedBy?: string | null;
   uploaderName?: string | null;
 }) {
-  const rows = readLocal<DocumentVersion>("crm-document-versions");
-  rows.unshift({
-    id: `version-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    parent_type: input.parentType,
-    parent_id: input.parentId,
-    pdf_url: input.pdfUrl,
-    file_name: input.fileName ?? null,
-    action: input.action,
-    uploaded_by: input.uploadedBy ?? null,
-    uploader_name: input.uploaderName ?? null,
-    created_at: new Date().toISOString(),
-  });
-  writeLocal("crm-document-versions", rows.slice(0, 500));
+  void input;
+  // O backend registra versões no upload (`/crm/storage/upload`) e associa
+  // action/actor em `CrmDocumentVersion`. Mantemos a função para compat dos
+  // componentes antigos, sem persistência local.
 }
 
 export async function listDocumentVersions(
   parentType: VersionParent,
   parentId: string,
 ): Promise<DocumentVersion[]> {
-  return readLocal<DocumentVersion>("crm-document-versions").filter(
-    (r) => r.parent_type === parentType && r.parent_id === parentId,
-  );
+  const rows = await listCrmDocumentVersions(parentType as CrmDocumentParentType, parentId);
+  return rows.map((r) => ({
+    id: r.id,
+    parent_type: r.parentType,
+    parent_id: r.parentId,
+    pdf_url: r.pdfUrl,
+    file_name: r.fileName,
+    action: r.action,
+    uploaded_by: r.uploadedById == null ? null : String(r.uploadedById),
+    uploader_name: r.uploaderName,
+    created_at: r.createdAt,
+  }));
 }
 
 export interface DocumentAccessLog {
@@ -64,37 +70,23 @@ export async function recordDocumentAccess(input: {
   pdfUrl: string;
   action: AccessAction;
 }) {
-  const rows = readLocal<DocumentAccessLog>("crm-document-access-log");
-  rows.unshift({
-    id: `access-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    parent_type: input.parentType,
-    parent_id: input.parentId,
-    pdf_url: input.pdfUrl,
-    action: input.action,
-    user_id: null,
-    user_name: null,
-    created_at: new Date().toISOString(),
-  });
-  writeLocal("crm-document-access-log", rows.slice(0, 500));
+  void input;
+  // O backend registra download/visualização quando o arquivo é servido.
 }
 
 export async function listDocumentAccessLogs(
   parentType: VersionParent,
   parentId: string,
 ): Promise<DocumentAccessLog[]> {
-  return readLocal<DocumentAccessLog>("crm-document-access-log").filter(
-    (r) => r.parent_type === parentType && r.parent_id === parentId,
-  );
-}
-
-function readLocal<T>(key: string): T[] {
-  try {
-    return JSON.parse(window.localStorage.getItem(key) ?? "[]") as T[];
-  } catch {
-    return [];
-  }
-}
-
-function writeLocal<T>(key: string, rows: T[]) {
-  window.localStorage.setItem(key, JSON.stringify(rows));
+  const rows = await listCrmDocumentAccessLogs(parentType as CrmDocumentParentType, parentId);
+  return rows.map((r) => ({
+    id: r.id,
+    parent_type: r.parentType,
+    parent_id: r.parentId,
+    pdf_url: r.pdfUrl,
+    action: r.action,
+    user_id: r.userId == null ? null : String(r.userId),
+    user_name: r.userName,
+    created_at: r.createdAt,
+  }));
 }

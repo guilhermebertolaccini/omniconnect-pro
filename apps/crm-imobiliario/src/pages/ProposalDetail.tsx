@@ -7,6 +7,7 @@ import { PdfVersionsList } from "@/components/PdfVersionsList";
 import { PdfAccessLogList } from "@/components/PdfAccessLogList";
 import { TrackedPdfLink } from "@/components/TrackedPdfLink";
 import { recordDocumentVersion } from "@/lib/documentVersions";
+import { listProposalEvents } from "@/lib/api/crm";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -56,7 +57,15 @@ export default function ProposalDetail() {
   const loadEvents = async () => {
     if (!id) return;
     setLoadingEvents(true);
-    setEvents(readProposalEvents(id));
+    const rows = await listProposalEvents(id);
+    setEvents(rows.map((r) => ({
+      id: r.id,
+      event_type: r.eventType,
+      from_status: r.fromStatus,
+      to_status: r.toStatus,
+      message: r.message ?? null,
+      created_at: r.createdAt,
+    })));
     setLoadingEvents(false);
   };
 
@@ -86,15 +95,8 @@ export default function ProposalDetail() {
   };
 
   const logPdfEvent = async (type: "pdf_replaced" | "pdf_removed" | "pdf_attached", message: string) => {
-    const row: EventRow = {
-      id: `proposal-event-${Date.now()}`,
-      event_type: type,
-      from_status: null,
-      to_status: proposal.status,
-      message,
-      created_at: new Date().toISOString(),
-    };
-    writeProposalEvents(proposal.id, [row, ...readProposalEvents(proposal.id)].slice(0, 100));
+    void type;
+    void message;
     await loadEvents();
   };
 
@@ -319,19 +321,4 @@ export default function ProposalDetail() {
       </Card>
     </div>
   );
-}
-
-function readProposalEvents(proposalId: string): EventRow[] {
-  try {
-    const all = JSON.parse(window.localStorage.getItem("crm-proposal-events") ?? "{}") as Record<string, EventRow[]>;
-    return all[proposalId] ?? [];
-  } catch {
-    return [];
-  }
-}
-
-function writeProposalEvents(proposalId: string, rows: EventRow[]) {
-  const all = JSON.parse(window.localStorage.getItem("crm-proposal-events") ?? "{}") as Record<string, EventRow[]>;
-  all[proposalId] = rows;
-  window.localStorage.setItem("crm-proposal-events", JSON.stringify(all));
 }

@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { useContracts } from "@/contexts/ContractContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { createSignatureEnvelope, listContractSignatures } from "@/lib/api/crm";
+import { createSignatureEnvelope, listContractEvents, listContractSignatures } from "@/lib/api/crm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +65,7 @@ interface EventRow {
   event_type: string;
   from_status: string | null;
   to_status: string | null;
+  message: string | null;
   created_at: string;
 }
 
@@ -120,7 +121,15 @@ export default function ContractDetail() {
         })),
       );
     }
-    setEvents(readContractEvents(id));
+    const eventRows = await listContractEvents(id);
+    setEvents(eventRows.map((r) => ({
+      id: r.id,
+      event_type: r.eventType,
+      from_status: r.fromStatus,
+      to_status: r.toStatus,
+      message: r.message ?? null,
+      created_at: r.createdAt,
+    })));
     setLoadingData(false);
   };
 
@@ -190,15 +199,8 @@ export default function ContractDetail() {
   };
 
   const logPdfEvent = async (type: "pdf_replaced" | "pdf_removed" | "pdf_attached", message: string) => {
-    const row: EventRow = {
-      id: `contract-event-${Date.now()}`,
-      event_type: type,
-      from_status: null,
-      to_status: contract.status,
-      created_at: new Date().toISOString(),
-    };
+    void type;
     void message;
-    writeContractEvents(contract.id, [row, ...readContractEvents(contract.id)].slice(0, 100));
     await loadData();
   };
 
@@ -532,19 +534,4 @@ export default function ContractDetail() {
       </Dialog>
     </div>
   );
-}
-
-function readContractEvents(contractId: string): EventRow[] {
-  try {
-    const all = JSON.parse(window.localStorage.getItem("crm-contract-events") ?? "{}") as Record<string, EventRow[]>;
-    return all[contractId] ?? [];
-  } catch {
-    return [];
-  }
-}
-
-function writeContractEvents(contractId: string, rows: EventRow[]) {
-  const all = JSON.parse(window.localStorage.getItem("crm-contract-events") ?? "{}") as Record<string, EventRow[]>;
-  all[contractId] = rows;
-  window.localStorage.setItem("crm-contract-events", JSON.stringify(all));
 }

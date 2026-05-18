@@ -66,6 +66,14 @@ describe('CrmStorageService', () => {
           versions.push(data);
           return data;
         }),
+        findMany: jest.fn(async ({ where }: any) =>
+          versions.filter(
+            (v) =>
+              v.tenantId === where.tenantId &&
+              v.parentType === where.parentType &&
+              v.parentId === where.parentId,
+          ),
+        ),
         findFirst: jest.fn(async ({ where }: any) =>
           versions.find(
             (v) => v.id === where.id && v.tenantId === where.tenantId,
@@ -77,6 +85,14 @@ describe('CrmStorageService', () => {
           accessLogs.push(data);
           return data;
         }),
+        findMany: jest.fn(async ({ where }: any) =>
+          accessLogs.filter(
+            (v) =>
+              v.tenantId === where.tenantId &&
+              v.parentType === where.parentType &&
+              v.parentId === where.parentId,
+          ),
+        ),
       },
       user: {
         findUnique: jest.fn(async () => ({ name: 'Uploader' })),
@@ -254,5 +270,61 @@ describe('CrmStorageService', () => {
       void log;
     }
     expect(accessLogs.length).toBe(0);
+  });
+
+  it('lists document versions only after validating tenant and broker scope', async () => {
+    versions.push(
+      {
+        id: 'v-a',
+        tenantId: 'tenant-a',
+        parentType: CrmDocumentParentType.proposal,
+        parentId: 'prop-a',
+      },
+      {
+        id: 'v-b',
+        tenantId: 'tenant-b',
+        parentType: CrmDocumentParentType.proposal,
+        parentId: 'prop-a',
+      },
+    );
+    const rows = await service.listVersions(
+      'tenant-a',
+      { id: 9, role: Role.broker, tenantRole: Role.broker },
+      CrmDocumentParentType.proposal,
+      'prop-a',
+    );
+    expect(rows.map((r) => r.id)).toEqual(['v-a']);
+    await expect(
+      service.listVersions(
+        'tenant-a',
+        { id: 42, role: Role.broker, tenantRole: Role.broker },
+        CrmDocumentParentType.proposal,
+        'prop-a',
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('lists access logs only for the requested tenant-scoped parent', async () => {
+    accessLogs.push(
+      {
+        id: 'a-a',
+        tenantId: 'tenant-a',
+        parentType: CrmDocumentParentType.contract,
+        parentId: 'ct-a',
+      },
+      {
+        id: 'a-b',
+        tenantId: 'tenant-b',
+        parentType: CrmDocumentParentType.contract,
+        parentId: 'ct-a',
+      },
+    );
+    const rows = await service.listAccessLogs(
+      'tenant-a',
+      { id: 1, role: Role.admin, tenantRole: Role.admin },
+      CrmDocumentParentType.contract,
+      'ct-a',
+    );
+    expect(rows.map((r) => r.id)).toEqual(['a-a']);
   });
 });

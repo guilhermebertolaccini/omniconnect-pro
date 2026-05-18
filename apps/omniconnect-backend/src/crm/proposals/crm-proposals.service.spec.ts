@@ -120,6 +120,13 @@ describe('CrmProposalsService — tenant + broker isolation', () => {
           events.push(ev);
           return ev;
         }),
+        findMany: jest.fn(async ({ where }: any) =>
+          events.filter(
+            (e) =>
+              e.tenantId === where.tenantId &&
+              e.proposalId === where.proposalId,
+          ),
+        ),
       },
       $transaction: jest.fn(async (cb: any) => cb(prismaMock)),
     };
@@ -232,5 +239,59 @@ describe('CrmProposalsService — tenant + broker isolation', () => {
         { id: 1, role: Role.admin, tenantRole: Role.admin },
       ),
     ).rejects.toThrow(/Cannot transition/);
+  });
+
+  it('records a proposal event when pdfUrl changes', async () => {
+    const proposal = await service.create(
+      'tenant-a',
+      {
+        propertyId: 'prop-a',
+        unitId: 'unit-a',
+        clientId: 'client-a',
+        brokerId: 10,
+      },
+      { id: 1, role: Role.admin, tenantRole: Role.admin },
+    );
+    await service.update(
+      'tenant-a',
+      proposal.id,
+      { pdfUrl: '/api/crm/storage/files/file-a.pdf' },
+      { id: 1, role: Role.admin, tenantRole: Role.admin },
+    );
+    expect(prismaMock.crmProposalEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          eventType: 'pdf_attached',
+          proposalId: proposal.id,
+          tenantId: 'tenant-a',
+        }),
+      }),
+    );
+  });
+
+  it('listEvents returns only tenant-scoped events after checking access', async () => {
+    const proposal = await service.create(
+      'tenant-a',
+      {
+        propertyId: 'prop-a',
+        unitId: 'unit-a',
+        clientId: 'client-a',
+        brokerId: 10,
+      },
+      { id: 1, role: Role.admin, tenantRole: Role.admin },
+    );
+    const rows = await service.listEvents('tenant-a', proposal.id, {
+      id: 1,
+      role: Role.admin,
+      tenantRole: Role.admin,
+    });
+    expect(rows.every((r) => r.tenantId === 'tenant-a')).toBe(true);
+    await expect(
+      service.listEvents('tenant-b', proposal.id, {
+        id: 1,
+        role: Role.admin,
+        tenantRole: Role.admin,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

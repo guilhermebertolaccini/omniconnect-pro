@@ -110,6 +110,13 @@ describe('CrmContractsService — tenant + broker + signed immutability', () => 
           events.push(data);
           return data;
         }),
+        findMany: jest.fn(async ({ where }: any) =>
+          events.filter(
+            (e) =>
+              e.tenantId === where.tenantId &&
+              e.contractId === where.contractId,
+          ),
+        ),
       },
       crmUnit: { updateMany: jest.fn(async () => ({ count: 1 })) },
       crmPayment: {
@@ -211,5 +218,45 @@ describe('CrmContractsService — tenant + broker + signed immutability', () => 
     await service.markSignedInternal('tenant-a', 'ct-signed');
     // Não deveria emitir (já está signed).
     expect(realtimeMock.emitToTenant).not.toHaveBeenCalled();
+  });
+
+  it('update: records contract event when pdfUrl changes', async () => {
+    await service.update(
+      'tenant-a',
+      'ct-a',
+      { pdfUrl: '/api/crm/storage/files/new-contract.pdf' },
+      { id: 1, role: Role.admin, tenantRole: Role.admin },
+    );
+    expect(prismaMock.crmContractEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          eventType: 'pdf_attached',
+          contractId: 'ct-a',
+          tenantId: 'tenant-a',
+        }),
+      }),
+    );
+  });
+
+  it('listEvents returns only tenant-scoped events after checking access', async () => {
+    await service.update(
+      'tenant-a',
+      'ct-a',
+      { pdfUrl: '/api/crm/storage/files/new-contract.pdf' },
+      { id: 1, role: Role.admin, tenantRole: Role.admin },
+    );
+    const rows = await service.listEvents('tenant-a', 'ct-a', {
+      id: 1,
+      role: Role.admin,
+      tenantRole: Role.admin,
+    });
+    expect(rows.every((r) => r.tenantId === 'tenant-a')).toBe(true);
+    await expect(
+      service.listEvents('tenant-b', 'ct-a', {
+        id: 1,
+        role: Role.admin,
+        tenantRole: Role.admin,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
