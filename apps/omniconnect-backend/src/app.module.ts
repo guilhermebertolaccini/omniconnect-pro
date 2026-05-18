@@ -38,6 +38,7 @@ import { AdsBridgeModule } from './ads-bridge/ads-bridge.module';
 import { BotBridgeModule } from './bot-bridge/bot-bridge.module';
 import { AdPlatformConnectionsModule } from './ad-platform-connections/ad-platform-connections.module';
 import { AdvertiserCompaniesModule } from './advertiser-companies/advertiser-companies.module';
+import { AdCampaignsAiModule } from './ad-campaigns-ai/ad-campaigns-ai.module';
 
 @Module({
   imports: [
@@ -88,6 +89,7 @@ import { AdvertiserCompaniesModule } from './advertiser-companies/advertiser-com
     BotBridgeModule,
     AdPlatformConnectionsModule,
     AdvertiserCompaniesModule,
+    AdCampaignsAiModule,
   ],
   controllers: [HealthController],
   providers: [PrismaService],
