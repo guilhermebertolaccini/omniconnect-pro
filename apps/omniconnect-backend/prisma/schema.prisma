@@ -63,18 +63,19 @@ model User {
   lineOperators LineOperator[] // Relacionamento com linhas
   createdLines  LinesStock[] // Linhas criadas por este usuário (para ativadores)
 
-  systemEvents SystemEvent[]
-  tenants      UserTenant[]
-  apiKeys      TenantApiKey[]
+  systemEvents  SystemEvent[]
+  tenants       UserTenant[]
+  apiKeys       TenantApiKey[]
+  refreshTokens RefreshToken[]
 
   // Smart Ad Automator (SAA) relations
-  invitedTenantInvitations  TenantInvitation[]    @relation("TenantInvitationInvitedBy")
-  acceptedTenantInvitations TenantInvitation[]    @relation("TenantInvitationAcceptedBy")
-  createdAdvertiserCompanies AdvertiserCompany[]  @relation("AdvertiserCompanyCreatedBy")
-  advertiserCompanyAccesses AdvertiserCompanyAccess[]
-  createdAdPlatformConnections AdPlatformConnection[]   @relation("AdPlatformConnectionCreatedBy")
-  generatedAdCampaignAIAnalyses AdCampaignAIAnalysis[] @relation("AdCampaignAIAnalysisGeneratedBy")
-  createdOrganicPostExperiments OrganicPostExperiment[] @relation("OrganicPostExperimentCreatedBy")
+  invitedTenantInvitations      TenantInvitation[]        @relation("TenantInvitationInvitedBy")
+  acceptedTenantInvitations     TenantInvitation[]        @relation("TenantInvitationAcceptedBy")
+  createdAdvertiserCompanies    AdvertiserCompany[]       @relation("AdvertiserCompanyCreatedBy")
+  advertiserCompanyAccesses     AdvertiserCompanyAccess[]
+  createdAdPlatformConnections  AdPlatformConnection[]    @relation("AdPlatformConnectionCreatedBy")
+  generatedAdCampaignAIAnalyses AdCampaignAIAnalysis[]    @relation("AdCampaignAIAnalysisGeneratedBy")
+  createdOrganicPostExperiments OrganicPostExperiment[]   @relation("OrganicPostExperimentCreatedBy")
 
   @@index([email])
   @@index([segment])
@@ -591,28 +592,29 @@ model Tenant {
   integrationEvents      IntegrationEvent[]
   apiKeys                TenantApiKey[]
 
-  tenantInvitations           TenantInvitation[]
-  advertiserCompanies         AdvertiserCompany[]
-  adPlatformConnections       AdPlatformConnection[]
-  adCampaignAIAnalyses        AdCampaignAIAnalysis[]
-  organicPostExperiments      OrganicPostExperiment[]
+  tenantInvitations             TenantInvitation[]
+  advertiserCompanies           AdvertiserCompany[]
+  adPlatformConnections         AdPlatformConnection[]
+  adCampaignAIAnalyses          AdCampaignAIAnalysis[]
+  organicPostExperiments        OrganicPostExperiment[]
   organicPostExperimentVariants OrganicPostExperimentVariant[]
+  refreshTokens                 RefreshToken[]
 }
 
 model IntegrationConnection {
-  id                       String   @id @default(uuid())
-  tenantId                 String
-  provider                 String   // crm, ads, bot
+  id                     String   @id @default(uuid())
+  tenantId               String
+  provider               String // crm, ads, bot
   // Shared webhook secret used to verify HMAC-SHA256 signatures from
   // the external provider. Stored encrypted at rest (AES-256-GCM via
   // BridgeSecretCipher) and decrypted on demand right before signature
   // verification. NEVER logged. Rotation = create a new row, deprecate
   // the old one. The previous field name (`secretHash`) was misleading:
   // it stored the secret itself, not a hash.
-  webhookSecretEncrypted   String
-  status                   String   @default("active")
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  webhookSecretEncrypted String
+  status                 String   @default("active")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   tenant Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   events IntegrationEvent[]
@@ -650,23 +652,23 @@ model AIUsageLog {
 }
 
 model IntegrationEvent {
-  id              String    @id @default(uuid())
-  tenantId        String
-  connectionId    String
-  provider        String
+  id             String    @id @default(uuid())
+  tenantId       String
+  connectionId   String
+  provider       String
   // Idempotency is scoped to (tenant, provider, key). A global @unique
   // was a multi-tenant footgun: two providers — or two tenants on the
   // same provider — could legitimately mint identical keys (UUIDv4
   // collision is rare, but hash-of-body collisions across tenants
   // sharing a similar template are not). Cross-tenant collisions are
   // expected and must NOT silently swallow the event.
-  idempotencyKey  String
-  signature       String?
-  status          String    @default("received")
-  errorMessage    String?   @db.Text
-  payload         Json
-  createdAt       DateTime  @default(now())
-  processedAt     DateTime?
+  idempotencyKey String
+  signature      String?
+  status         String    @default("received")
+  errorMessage   String?   @db.Text
+  payload        Json
+  createdAt      DateTime  @default(now())
+  processedAt    DateTime?
 
   tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   connection IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
@@ -698,17 +700,17 @@ model UserTenant {
 // at <= effectiveUntil OR effectiveUntil = null). Prices are per 1k
 // tokens. Currency tracked alongside the rate.
 model ModelPricing {
-  id              Int       @id @default(autoincrement())
-  modelProvider   String
-  modelName       String
-  inputPer1k      Float
-  outputPer1k     Float
-  currency        String    @default("USD")
-  effectiveFrom   DateTime  @default(now())
-  effectiveUntil  DateTime?
-  notes           String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id             Int       @id @default(autoincrement())
+  modelProvider  String
+  modelName      String
+  inputPer1k     Float
+  outputPer1k    Float
+  currency       String    @default("USD")
+  effectiveFrom  DateTime  @default(now())
+  effectiveUntil DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([modelProvider, modelName])
   @@index([modelProvider, modelName, effectiveFrom])
@@ -722,9 +724,9 @@ model TenantApiKey {
   id          String    @id @default(uuid())
   tenantId    String
   hashedKey   String    @unique
-  prefix      String    // first ~8 chars of the plaintext for human identification only
+  prefix      String // first ~8 chars of the plaintext for human identification only
   label       String
-  scopes      Json?     // optional fine-grained scope list (future use)
+  scopes      Json? // optional fine-grained scope list (future use)
   createdById Int?
   createdAt   DateTime  @default(now())
   lastUsedAt  DateTime?
@@ -761,16 +763,16 @@ model TenantApiKey {
 // secret embedded in the invite URL. Acceptance creates a UserTenant
 // row and sets `acceptedAt`/`acceptedById`.
 model TenantInvitation {
-  id            String    @id @default(uuid())
-  tenantId      String
-  email         String
-  role          Role
-  token         String    @unique
-  invitedById   Int?
-  acceptedById  Int?
-  acceptedAt    DateTime?
-  expiresAt     DateTime
-  createdAt     DateTime  @default(now())
+  id           String    @id @default(uuid())
+  tenantId     String
+  email        String
+  role         Role
+  token        String    @unique
+  invitedById  Int?
+  acceptedById Int?
+  acceptedAt   DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
 
   tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   invitedBy  User?  @relation("TenantInvitationInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
@@ -802,13 +804,13 @@ model AdvertiserCompany {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  createdBy   User?  @relation("AdvertiserCompanyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("AdvertiserCompanyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
-  accesses             AdvertiserCompanyAccess[]
-  platformConnections  AdPlatformConnection[]
-  campaignAIAnalyses   AdCampaignAIAnalysis[]
-  organicExperiments   OrganicPostExperiment[]
+  accesses            AdvertiserCompanyAccess[]
+  platformConnections AdPlatformConnection[]
+  campaignAIAnalyses  AdCampaignAIAnalysis[]
+  organicExperiments  OrganicPostExperiment[]
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -842,19 +844,19 @@ model AdvertiserCompanyAccess {
 // `meta_business_id`, Google `customer_id`, TikTok `advertiser_id`).
 // Unique per (advertiserCompanyId, platform) — one connection per platform.
 model AdPlatformConnection {
-  id                       String     @id @default(uuid())
-  tenantId                 String
-  advertiserCompanyId      String
-  platform                 AdPlatform
-  accountId                String?
-  accessTokenEncrypted     String?    @db.Text
-  refreshTokenEncrypted    String?    @db.Text
-  tokenExpiresAt           DateTime?
-  isActive                 Boolean    @default(true)
-  extra                    Json?
-  createdById              Int?
-  createdAt                DateTime   @default(now())
-  updatedAt                DateTime   @updatedAt
+  id                    String     @id @default(uuid())
+  tenantId              String
+  advertiserCompanyId   String
+  platform              AdPlatform
+  accountId             String?
+  accessTokenEncrypted  String?    @db.Text
+  refreshTokenEncrypted String?    @db.Text
+  tokenExpiresAt        DateTime?
+  isActive              Boolean    @default(true)
+  extra                 Json?
+  createdById           Int?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
 
   tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   advertiserCompany AdvertiserCompany @relation(fields: [advertiserCompanyId], references: [id], onDelete: Cascade)
@@ -907,7 +909,7 @@ model OrganicPostExperiment {
   accountId           String?
   name                String
   hypothesis          String?    @db.Text
-  mode                String     // retroactive | manual | publish
+  mode                String // retroactive | manual | publish
   winningMetric       String     @default("engagement_rate")
   minSampleReach      Int        @default(0)
   durationDays        Int        @default(7)
@@ -957,4 +959,46 @@ model OrganicPostExperimentVariant {
   @@index([tenantId])
   @@index([experimentId])
   @@index([tenantId, experimentId])
+}
+
+// ---------------------------------------------------------------------------
+// Auth refresh tokens (Sprint 2.4)
+// ---------------------------------------------------------------------------
+// Refresh token rotativo, persistido como SHA-256 hex do segredo bruto
+// (`tokenHash`). O segredo cru existe APENAS no HttpOnly cookie do cliente; o
+// banco guarda só o hash, então um leak de DB não permite reuso. Cada
+// /auth/refresh:
+//   1. Procura por tokenHash do cookie.
+//   2. Falha se já foi revogado (revokedAt != null) ou expirou.
+//   3. Cria novo RefreshToken, seta `replacedById` no antigo e revoga o
+//      antigo (`revokedAt = now()`). Detecção de reuse: se o cliente
+//      apresenta um token que já está `revokedAt != null` mas tem
+//      `replacedById`, é um possível roubo — revogamos TODA a cadeia do
+//      usuário e auditamos (AUTH_REFRESH_REUSE_DETECTED).
+//
+// `tenantId` é o tenant ativo no momento da emissão. Em produção a
+// JwtStrategy exige UserTenant válido — mesmo que o refresh devolva access
+// para outro tenant, a Strategy bloqueia o request.
+model RefreshToken {
+  id          String    @id @default(uuid())
+  tenantId    String
+  userId      Int
+  tokenHash   String    @unique
+  userAgent   String?
+  ipAddress   String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  successorId String?   @unique
+  createdAt   DateTime  @default(now())
+
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  successor   RefreshToken? @relation("RefreshTokenRotation", fields: [successorId], references: [id], onDelete: SetNull)
+  predecessor RefreshToken? @relation("RefreshTokenRotation")
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([tenantId, userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
 }
