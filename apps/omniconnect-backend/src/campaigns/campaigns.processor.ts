@@ -50,8 +50,23 @@ export class CampaignsProcessor {
       // Normalizar telefone (adicionar 55, remover caracteres especiais)
       const contactPhone = this.phoneValidationService.normalizePhone(rawContactPhone);
 
-      // Verificar se está na blocklist
-      const isBlocked = await this.blocklistService.isBlocked(contactPhone);
+      // Resolver tenantId via line.appId (trusted) — necessário antes da blocklist.
+      // FIXME(Sprint 1.2): passar tenantId no payload do job para evitar a query extra.
+      const lineForTenant = await this.prisma.linesStock.findUnique({
+        where: { id: lineId },
+        select: { tenantId: true, appId: true },
+      });
+      const appForTenant = lineForTenant
+        ? await this.prisma.app.findUnique({
+            where: { id: lineForTenant.appId },
+            select: { tenantId: true },
+          })
+        : null;
+      const jobTenantId =
+        appForTenant?.tenantId || lineForTenant?.tenantId || 'default-tenant';
+
+      // Verificar se está na blocklist (escopado por tenant)
+      const isBlocked = await this.blocklistService.isBlocked(jobTenantId, contactPhone);
       if (isBlocked) {
         console.log(`❌ Contato ${contactPhone} está na blocklist`);
         await this.prisma.campaign.update({
@@ -91,7 +106,9 @@ export class CampaignsProcessor {
         return;
       }
 
-      // Buscar a linha
+      // Buscar a linha.
+      // FIXME(Sprint 1.2): passar tenantId direto no payload do job para evitar
+      // a query extra e garantir validação no enqueue.
       const line = await this.prisma.linesStock.findUnique({
         where: { id: lineId },
       });
@@ -223,7 +240,7 @@ export class CampaignsProcessor {
           }
 
           // Registrar conversa
-          await this.conversationsService.create({
+          await this.conversationsService.create(jobTenantId, {
             contactName,
             contactPhone,
             segment: contactSegment,

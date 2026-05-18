@@ -146,8 +146,8 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
                 data: { status: 'processing', attempts: { increment: 1 } },
               });
 
-              // Criar conversa
-              await this.conversationsService.create({
+              // Criar conversa (tenant do operador conectado)
+              await this.conversationsService.create((user as any).tenantId || 'default-tenant', {
                 contactPhone: queuedMessage.contactPhone,
                 contactName: queuedMessage.contactName || queuedMessage.contactPhone,
                 message: queuedMessage.message,
@@ -520,7 +520,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
       // Salvar conversa usando a linha ATUAL do operador
       // Isso garante que mesmo se a linha foi trocada, a mensagem vai pela linha atual
-      const conversation = await this.conversationsService.create({
+      const conversation = await this.conversationsService.create((user as any).tenantId || 'default-tenant', {
         contactName: contact?.name || 'Desconhecido',
         contactPhone: data.contactPhone,
         segment: user.segment,

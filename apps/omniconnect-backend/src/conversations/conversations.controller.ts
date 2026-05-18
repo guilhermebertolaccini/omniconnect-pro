@@ -11,6 +11,7 @@ import { Role } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PrismaService } from '../prisma.service';
 import { getEmailDomain } from '../common/utils/email-domain.util';
+import { ensureTenant } from '../common/utils/tenant-context';
 
 @Controller('conversations')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -22,9 +23,9 @@ export class ConversationsController {
 
   @Post()
   @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
-  create(@Body() createConversationDto: CreateConversationDto) {
+  create(@CurrentUser() user: any, @Body() createConversationDto: CreateConversationDto) {
     console.log('📝 [POST /conversations] Criando conversa:', JSON.stringify(createConversationDto, null, 2));
-    return this.conversationsService.create(createConversationDto);
+    return this.conversationsService.create(ensureTenant(user), createConversationDto);
   }
 
   @Get()

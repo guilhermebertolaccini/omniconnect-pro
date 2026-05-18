@@ -7,9 +7,9 @@ import { UpdateTagDto } from './dto/update-tag.dto';
 export class TagsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createTagDto: CreateTagDto) {
+  async create(tenantId: string, createTagDto: CreateTagDto) {
     const existingTag = await this.prisma.tag.findFirst({
-      where: { name: createTagDto.name },
+      where: { name: createTagDto.name, tenantId },
     });
 
     if (existingTag) {
@@ -17,34 +17,33 @@ export class TagsService {
     }
 
     return this.prisma.tag.create({
-      data: createTagDto,
+      data: { ...createTagDto, tenantId },
     });
   }
 
-  async findAll(filters?: any) {
+  async findAll(tenantId: string, filters?: any) {
     const { search, ...validFilters } = filters || {};
-    
-    const where = search 
+
+    const where = search
       ? {
+          tenantId,
           ...validFilters,
           OR: [
             { name: { contains: search, mode: 'insensitive' } },
             { description: { contains: search, mode: 'insensitive' } },
           ],
         }
-      : validFilters;
+      : { tenantId, ...validFilters };
 
     return this.prisma.tag.findMany({
       where,
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
-  async findOne(id: number) {
+  async findOne(tenantId: string, id: number) {
     const tag = await this.prisma.tag.findFirst({
-      where: { id },
+      where: { id, tenantId },
     });
 
     if (!tag) {
@@ -54,19 +53,19 @@ export class TagsService {
     return tag;
   }
 
-  async findByName(name: string) {
+  async findByName(tenantId: string, name: string) {
     return this.prisma.tag.findFirst({
-      where: { name },
+      where: { name, tenantId },
     });
   }
 
-  async update(id: number, updateTagDto: UpdateTagDto) {
-    await this.findOne(id);
+  async update(tenantId: string, id: number, updateTagDto: UpdateTagDto) {
+    await this.findOne(tenantId, id);
 
-    // Se estiver atualizando o nome, verificar se já existe
     if (updateTagDto.name) {
       const existingTag = await this.prisma.tag.findFirst({
         where: {
+          tenantId,
           name: updateTagDto.name,
           id: { not: id },
         },
@@ -77,7 +76,6 @@ export class TagsService {
       }
     }
 
-    // Limpar campos vazios
     const cleanData: any = { ...updateTagDto };
     if (cleanData.segment === '' || cleanData.segment === undefined) {
       cleanData.segment = null;
@@ -89,12 +87,11 @@ export class TagsService {
     });
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(tenantId: string, id: number) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.tag.delete({
       where: { id },
     });
   }
 }
-

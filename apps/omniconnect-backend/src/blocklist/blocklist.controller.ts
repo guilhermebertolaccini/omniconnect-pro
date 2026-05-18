@@ -1,48 +1,68 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Query,
+} from '@nestjs/common';
 import { BlocklistService } from './blocklist.service';
 import { CreateBlocklistDto } from './dto/create-blocklist.dto';
 import { UpdateBlocklistDto } from './dto/update-blocklist.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ensureTenant } from '../common/utils/tenant-context';
 import { Role } from '@prisma/client';
 
 @Controller('blocklist')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class BlocklistController {
-  constructor(private readonly blocklistService: BlocklistService) { }
+  constructor(private readonly blocklistService: BlocklistService) {}
 
   @Post()
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  create(@Body() createBlocklistDto: CreateBlocklistDto) {
-    return this.blocklistService.create(createBlocklistDto);
+  create(@CurrentUser() user: any, @Body() createBlocklistDto: CreateBlocklistDto) {
+    return this.blocklistService.create(ensureTenant(user), createBlocklistDto);
   }
 
   @Get()
-  findAll(@Query('search') search?: string) {
-    return this.blocklistService.findAll(search);
+  findAll(@CurrentUser() user: any, @Query('search') search?: string) {
+    return this.blocklistService.findAll(ensureTenant(user), search);
   }
 
   @Get('check')
-  async check(@Query('phone') phone?: string, @Query('cpf') cpf?: string) {
-    const isBlocked = await this.blocklistService.isBlocked(phone, cpf);
+  async check(
+    @CurrentUser() user: any,
+    @Query('phone') phone?: string,
+    @Query('cpf') cpf?: string,
+  ) {
+    const isBlocked = await this.blocklistService.isBlocked(ensureTenant(user), phone, cpf);
     return { blocked: isBlocked };
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.blocklistService.findOne(+id);
+  findOne(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.blocklistService.findOne(ensureTenant(user), +id);
   }
 
   @Patch(':id')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  update(@Param('id') id: string, @Body() updateBlocklistDto: UpdateBlocklistDto) {
-    return this.blocklistService.update(+id, updateBlocklistDto);
+  update(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() updateBlocklistDto: UpdateBlocklistDto,
+  ) {
+    return this.blocklistService.update(ensureTenant(user), +id, updateBlocklistDto);
   }
 
   @Delete(':id')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  remove(@Param('id') id: string) {
-    return this.blocklistService.remove(+id);
+  remove(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.blocklistService.remove(ensureTenant(user), +id);
   }
 }

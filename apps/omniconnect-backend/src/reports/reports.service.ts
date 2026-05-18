@@ -115,10 +115,10 @@ export class ReportsService {
    * Qtd. Promessas, Conversão, Tempo Médio Transbordo, Tempo Médio Espera Total, 
    * Tempo Médio Atendimento, Tempo Médio Resposta
    */
-  async getOpSinteticoReport(filters: ReportFilterDto) {
+  async getOpSinteticoReport(tenantId: string, filters: ReportFilterDto) {
     console.log('📊 [Reports] OP Sintético - Filtros:', JSON.stringify(filters));
 
-    const whereClause: any = {};
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -143,10 +143,10 @@ export class ReportsService {
 
     console.log(`📊 [Reports] OP Sintético - ${conversations.length} conversas encontradas`);
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const tabulations = await this.prisma.tabulation.findMany();
+    const tabulations = await this.prisma.tabulation.findMany({ where: { tenantId } });
     const tabulationMap = new Map(tabulations.map(t => [t.id, t]));
 
     // Agrupar por segmento e data
@@ -227,10 +227,11 @@ export class ReportsService {
    * Email Principal, Canal, Carteiras, Carteira do Evento, Valor da oportunidade, 
    * Identificador da chamada de Voz
    */
-  async getKpiReport(filters: ReportFilterDto) {
+  async getKpiReport(tenantId: string, filters: ReportFilterDto) {
     console.log('📊 [Reports] KPI - Filtros:', JSON.stringify(filters));
 
     const whereClause: any = {
+      tenantId,
       tabulation: { not: null },
     };
 
@@ -257,13 +258,13 @@ export class ReportsService {
 
     console.log(`📊 [Reports] KPI - ${conversations.length} conversas encontradas`);
 
-    const tabulations = await this.prisma.tabulation.findMany();
+    const tabulations = await this.prisma.tabulation.findMany({ where: { tenantId } });
     const tabulationMap = new Map(tabulations.map(t => [t.id, t]));
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
     const result = conversations.map(conv => {
@@ -330,8 +331,8 @@ export class ReportsService {
    * Solicitação envio, Envio, Confirmação, Leitura (se habilitado), Falha entrega, 
    * Motivo falha, WhatsApp de saida, Usuário Solicitante, Carteira, Teve retorno
    */
-  async getHsmReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getHsmReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.contactSegment = filters.segment;
@@ -356,13 +357,13 @@ export class ReportsService {
 
     console.log(`📊 [Reports] HSM - ${campaigns.length} campanhas encontradas`);
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
-    const lines = await this.prisma.linesStock.findMany();
+    const lines = await this.prisma.linesStock.findMany({ where: { tenantId } });
     const lineMap = new Map(lines.map(l => [l.id, l]));
 
     const result = campaigns.map(campaign => {
@@ -419,8 +420,8 @@ export class ReportsService {
    * RELATÓRIO STATUS DE LINHA
    * Estrutura: Data, Numero, Business, QualityScore, Tier, Segmento
    */
-  async getLineStatusReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getLineStatusReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -431,7 +432,7 @@ export class ReportsService {
       orderBy: { updatedAt: 'desc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
     const result = lines.map(line => {
@@ -457,8 +458,8 @@ export class ReportsService {
    * numero_saida, login_usuario, template_envio, coringa_1, coringa_2, coringa_3, 
    * coringa_4, tipo_envio
    */
-  async getEnviosReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getEnviosReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.contactSegment = filters.segment;
@@ -502,13 +503,13 @@ export class ReportsService {
       orderBy: { datetime: 'desc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
-    const lines = await this.prisma.linesStock.findMany();
+    const lines = await this.prisma.linesStock.findMany({ where: { tenantId } });
     const lineMap = new Map(lines.map(l => [l.id, l]));
 
     const result: any[] = [];
@@ -587,8 +588,8 @@ export class ReportsService {
    * boleto, valor, transbordo, primeira_opcao_oferta, segunda_via, nota_nps, obs_nps, 
    * erro_api, abandono, protocolo
    */
-  async getIndicadoresReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getIndicadoresReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -609,16 +610,16 @@ export class ReportsService {
       orderBy: { datetime: 'asc' },
     });
 
-    const tabulations = await this.prisma.tabulation.findMany();
+    const tabulations = await this.prisma.tabulation.findMany({ where: { tenantId } });
     const tabulationMap = new Map(tabulations.map(t => [t.id, t]));
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
-    const lines = await this.prisma.linesStock.findMany();
+    const lines = await this.prisma.linesStock.findMany({ where: { tenantId } });
     const lineMap = new Map(lines.map(l => [l.id, l]));
 
     // Agrupar conversas por contato para calcular TMA
@@ -693,8 +694,8 @@ export class ReportsService {
    * cpf, telefone, login, evento, evento_normalizado, tma, tmc, tmpro, tmf, tmrc, 
    * tmro, protocolo
    */
-  async getTemposReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getTemposReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -718,16 +719,16 @@ export class ReportsService {
       ],
     });
 
-    const tabulations = await this.prisma.tabulation.findMany();
+    const tabulations = await this.prisma.tabulation.findMany({ where: { tenantId } });
     const tabulationMap = new Map(tabulations.map(t => [t.id, t]));
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
-    const lines = await this.prisma.linesStock.findMany();
+    const lines = await this.prisma.linesStock.findMany({ where: { tenantId } });
     const lineMap = new Map(lines.map(l => [l.id, l]));
 
     // Agrupar por contato
@@ -786,8 +787,8 @@ export class ReportsService {
    * Conteúdo do Disparo Inicial, Carteira, WhatsApp Saída, Quantidade de Disparos,
    * Enviado, Confirmado, Leitura, Falha, Interação
    */
-  async getTemplatesReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getTemplatesReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.contactSegment = filters.segment;
@@ -808,10 +809,10 @@ export class ReportsService {
       orderBy: { dateTime: 'desc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const lines = await this.prisma.linesStock.findMany();
+    const lines = await this.prisma.linesStock.findMany({ where: { tenantId } });
     const lineMap = new Map(lines.map(l => [l.id, l]));
 
     // Agrupar por nome do template para contar disparos
@@ -862,8 +863,8 @@ export class ReportsService {
    * Nome do Operador, Tabulação, Status, Primeiro Atendimento, Último Atendimento,
    * Enviado, Confirmado, Leitura, Falha, Interação
    */
-  async getCompletoCsvReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getCompletoCsvReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -884,13 +885,13 @@ export class ReportsService {
       orderBy: { datetime: 'asc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
-    const tabulations = await this.prisma.tabulation.findMany();
+    const tabulations = await this.prisma.tabulation.findMany({ where: { tenantId } });
     const tabulationMap = new Map(tabulations.map(t => [t.id, t]));
 
     // Agrupar por contato para pegar primeiro e último atendimento
@@ -943,8 +944,9 @@ export class ReportsService {
    * RELATÓRIO DE EQUIPE
    * Estrutura: id, Operador, Quantidade de Mensagens, Carteira
    */
-  async getEquipeReport(filters: ReportFilterDto) {
+  async getEquipeReport(tenantId: string, filters: ReportFilterDto) {
     const whereClause: any = {
+      tenantId,
       sender: 'operator',
     };
 
@@ -967,12 +969,13 @@ export class ReportsService {
       orderBy: { datetime: 'desc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
     const users = await this.prisma.user.findMany({
       where: {
         role: 'operator',
+        tenants: { some: { tenantId } },
       },
     });
     const userMap = new Map(users.map(u => [u.name, u]));
@@ -1013,8 +1016,8 @@ export class ReportsService {
    * Dispositivo Disparo, Segmento do Dispositivo, E-mail Operador, Data de Disparo,
    * Dispositivo Recebido, Enviado, Confirmado, Leitura, Falha, Interação
    */
-  async getDadosTransacionadosReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getDadosTransacionadosReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.contactSegment = filters.segment;
@@ -1035,18 +1038,16 @@ export class ReportsService {
       orderBy: { dateTime: 'desc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const lines = await this.prisma.linesStock.findMany();
+    const lines = await this.prisma.linesStock.findMany({ where: { tenantId } });
     const lineMap = new Map(lines.map(l => [l.id, l]));
 
     const users = await this.prisma.user.findMany({
       where: {
         line: { not: null },
-        email: {
-          endsWith: '@paschoalotto.com.br',
-        },
+        tenants: { some: { tenantId } },
       },
     });
     const userMap = new Map(
@@ -1103,8 +1104,8 @@ export class ReportsService {
    * Telefone do Cliente, Segmento, Hora da Mensagem, Mensagem Transcrita,
    * Quem Enviou a Mensagem, Finalização
    */
-  async getDetalhadoConversasReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getDetalhadoConversasReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -1128,13 +1129,13 @@ export class ReportsService {
       ],
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
-    const tabulations = await this.prisma.tabulation.findMany();
+    const tabulations = await this.prisma.tabulation.findMany({ where: { tenantId } });
     const tabulationMap = new Map(tabulations.map(t => [t.id, t]));
 
     // Agrupar por contato para pegar início e fim
@@ -1183,8 +1184,8 @@ export class ReportsService {
    * RELATÓRIO DE LINHAS
    * Estrutura: id, Número, Status, Segmento, Operador Vinculado, Data de Criação
    */
-  async getLinhasReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getLinhasReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -1247,13 +1248,14 @@ export class ReportsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
     // Buscar todos os operadores vinculados via LineOperator
     const lineIds = lines.map(l => l.id);
-    const lineOperators = await (this.prisma as any).lineOperator.findMany({
+    const lineOperators = await this.prisma.lineOperator.findMany({
       where: {
+        tenantId,
         lineId: { in: lineIds },
       },
       include: {
@@ -1301,8 +1303,10 @@ export class ReportsService {
    * RELATÓRIO DE USUÁRIOS
    * Estrutura: Nome, E-mail, Segmento, ROLE
    */
-  async getUsuariosReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getUsuariosReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = {
+      tenants: { some: { tenantId } },
+    };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -1313,7 +1317,7 @@ export class ReportsService {
       orderBy: { name: 'asc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
     const result = users.map(user => {
@@ -1338,10 +1342,10 @@ export class ReportsService {
    * Data e Hora ínicio da Conversa, Data e hora fim da Conversa, Finalização,
    * Segmento, Carteira, Protocolo
    */
-  async getResumoAtendimentosReport(filters: ReportFilterDto) {
+  async getResumoAtendimentosReport(tenantId: string, filters: ReportFilterDto) {
     console.log('📊 [Reports] Gerando Resumo Atendimentos com filtros:', JSON.stringify(filters));
 
-    const whereClause: any = {};
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.segment = filters.segment;
@@ -1368,13 +1372,13 @@ export class ReportsService {
 
     console.log(`📊 [Reports] Encontradas ${conversations.length} conversas`);
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
-    const tabulations = await this.prisma.tabulation.findMany();
+    const tabulations = await this.prisma.tabulation.findMany({ where: { tenantId } });
     const tabulationMap = new Map(tabulations.map(t => [t.id, t]));
 
     // Agrupar por contato
@@ -1424,8 +1428,8 @@ export class ReportsService {
    * Login do Operador, Número de Saída, CPF do Cliente, Telefone do Cliente,
    * Finalização, Disparo, Falha, Entrega, Retorno
    */
-  async getHiperPersonalizadoReport(filters: ReportFilterDto) {
-    const whereClause: any = {};
+  async getHiperPersonalizadoReport(tenantId: string, filters: ReportFilterDto) {
+    const whereClause: any = { tenantId };
 
     if (filters.segment) {
       whereClause.contactSegment = filters.segment;
@@ -1446,18 +1450,16 @@ export class ReportsService {
       orderBy: { dateTime: 'desc' },
     });
 
-    const segments = await this.prisma.segment.findMany();
+    const segments = await this.prisma.segment.findMany({ where: { tenantId } });
     const segmentMap = new Map(segments.map(s => [s.id, s]));
 
-    const lines = await this.prisma.linesStock.findMany();
+    const lines = await this.prisma.linesStock.findMany({ where: { tenantId } });
     const lineMap = new Map(lines.map(l => [l.id, l]));
 
     const users = await this.prisma.user.findMany({
       where: {
         line: { not: null },
-        email: {
-          endsWith: '@paschoalotto.com.br',
-        },
+        tenants: { some: { tenantId } },
       },
     });
     const userMap = new Map(
@@ -1466,7 +1468,7 @@ export class ReportsService {
         .map(u => [u.line!, u])
     );
 
-    const contacts = await this.prisma.contact.findMany();
+    const contacts = await this.prisma.contact.findMany({ where: { tenantId } });
     const contactMap = new Map(contacts.map(c => [c.phone, c]));
 
     // Buscar conversas para verificar retorno e finalização
@@ -1477,7 +1479,7 @@ export class ReportsService {
       },
     });
 
-    const tabulations = await this.prisma.tabulation.findMany();
+    const tabulations = await this.prisma.tabulation.findMany({ where: { tenantId } });
     const tabulationMap = new Map(tabulations.map(t => [t.id, t]));
 
     const contactConvs: Record<string, { retorno: boolean; tabulation?: number }> = {};

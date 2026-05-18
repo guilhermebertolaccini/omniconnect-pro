@@ -189,6 +189,9 @@ export class CloudApiWebhookService {
       const from = message.from;
       const messageId = message.id;
       const timestamp = parseInt(message.timestamp) * 1000; // Converter para milissegundos
+      // Resolver tenantId a partir do App vinculado à linha (trusted).
+      // Não confiar em campos do payload do WhatsApp.
+      const tenantId: string = (line as any)?.app?.tenantId || 'default-tenant';
 
       // Buscar nome do contato
       let contactName = from;
@@ -296,7 +299,7 @@ export class CloudApiWebhookService {
       if (isBlockPhrase) {
         this.logger.log(`Frases de bloqueio detectada: ${messageText}`);
         blockedByPhrase = true;
-        await this.blocklistService.create({
+        await this.blocklistService.create(tenantId, {
           name: contact.name,
           phone: from,
           cpf: contact.cpf,
@@ -338,7 +341,7 @@ export class CloudApiWebhookService {
       }
 
       // Criar conversa
-      const conversation = await this.conversationsService.create({
+      const conversation = await this.conversationsService.create(tenantId, {
         contactName: contact.name,
         contactPhone: from,
         segment: line.segment,

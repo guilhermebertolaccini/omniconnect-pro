@@ -64,9 +64,19 @@ export class MessageQueueService {
           data: { status: 'processing', attempts: { increment: 1 } },
         });
 
+        // Resolver tenantId via operador (trusted, lookup pelo id passado).
+        // FIXME(Sprint 1.2): incluir tenantId no payload do scheduler para evitar
+        // a query extra e validar antes do processamento.
+        const operator = await this.prisma.user.findUnique({
+          where: { id: operatorId },
+          include: { tenants: { take: 1 } },
+        });
+        const tenantId =
+          operator?.tenants?.[0]?.tenantId || 'default-tenant';
+
         // Criar conversa e enviar mensagem via WebSocket
         // Nota: Isso vai criar a conversa e notificar o operador
-        await this.conversationsService.create({
+        await this.conversationsService.create(tenantId, {
           contactPhone: queuedMessage.contactPhone,
           contactName: queuedMessage.contactName || queuedMessage.contactPhone,
           message: queuedMessage.message,

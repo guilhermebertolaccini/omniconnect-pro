@@ -7,30 +7,33 @@ import { UpdateBlocklistDto } from './dto/update-blocklist.dto';
 export class BlocklistService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createBlocklistDto: CreateBlocklistDto) {
+  async create(tenantId: string, createBlocklistDto: CreateBlocklistDto) {
     return this.prisma.blockList.create({
-      data: createBlocklistDto,
+      data: { ...createBlocklistDto, tenantId },
     });
   }
 
-  async findAll(search?: string) {
+  async findAll(tenantId: string, search?: string) {
     return this.prisma.blockList.findMany({
-      where: search ? {
-        OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search } },
-          { cpf: { contains: search } },
-        ],
-      } : undefined,
-      orderBy: {
-        createdAt: 'desc',
+      where: {
+        tenantId,
+        ...(search
+          ? {
+              OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { phone: { contains: search } },
+                { cpf: { contains: search } },
+              ],
+            }
+          : {}),
       },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
-  async findOne(id: number) {
-    const blocklist = await this.prisma.blockList.findUnique({
-      where: { id },
+  async findOne(tenantId: string, id: number) {
+    const blocklist = await this.prisma.blockList.findFirst({
+      where: { id, tenantId },
     });
 
     if (!blocklist) {
@@ -40,9 +43,11 @@ export class BlocklistService {
     return blocklist;
   }
 
-  async isBlocked(phone?: string, cpf?: string): Promise<boolean> {
+  async isBlocked(tenantId: string, phone?: string, cpf?: string): Promise<boolean> {
+    if (!phone && !cpf) return false;
     const blocked = await this.prisma.blockList.findFirst({
       where: {
+        tenantId,
         OR: [
           ...(phone ? [{ phone }] : []),
           ...(cpf ? [{ cpf }] : []),
@@ -53,8 +58,8 @@ export class BlocklistService {
     return !!blocked;
   }
 
-  async update(id: number, updateBlocklistDto: UpdateBlocklistDto) {
-    await this.findOne(id);
+  async update(tenantId: string, id: number, updateBlocklistDto: UpdateBlocklistDto) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.blockList.update({
       where: { id },
@@ -62,8 +67,8 @@ export class BlocklistService {
     });
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(tenantId: string, id: number) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.blockList.delete({
       where: { id },

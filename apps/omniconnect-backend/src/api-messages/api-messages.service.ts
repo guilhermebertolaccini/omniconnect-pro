@@ -174,8 +174,11 @@ export class ApiMessagesService {
     const errors: Array<{ phone: string; reason: string }> = [];
     let processed = 0;
 
-    // Validar tag
-    const tag = await this.tagsService.findByName(dto.tag);
+    // FIXME(Sprint 1.2): resolve tenantId from API key → TenantApiKey table.
+    // For now we default; ApiKeyGuard only validates the static API_KEY env.
+    const tenantId = 'default-tenant';
+
+    const tag = await this.tagsService.findByName(tenantId, dto.tag);
     if (!tag) {
       const errorResponse = {
         status: 'error',
@@ -362,9 +365,9 @@ export class ApiMessagesService {
         }
 
         // Buscar ou criar contato (usar telefone normalizado)
-        let contact = await this.contactsService.findByPhone(normalizedPhone);
+        let contact = await this.contactsService.findByPhone(tenantId, normalizedPhone);
         if (!contact) {
-          contact = await this.contactsService.create({
+          contact = await this.contactsService.create(tenantId, {
             name: message.clientId || 'Cliente',
             phone: message.phone,
             segment: tag.segment || operator.segment || null,
@@ -382,7 +385,7 @@ export class ApiMessagesService {
         }
 
         // Criar conversa
-        await this.conversationsService.create({
+        await this.conversationsService.create(tenantId, {
           contactName: contact.name,
           contactPhone: normalizedPhone,
           segment: tag.segment || operator.segment || null,
@@ -492,6 +495,9 @@ export class ApiMessagesService {
    */
   async sendTemplateExternal(dto: SendTemplateExternalDto, ipAddress?: string, userAgent?: string) {
     try {
+      // FIXME(Sprint 1.2): resolve tenantId from API key → TenantApiKey table.
+      const tenantId = 'default-tenant';
+
       // Buscar operador
       const operator = await this.findOperatorBySpecialistCode(dto.specialistCode);
 
@@ -590,18 +596,18 @@ export class ApiMessagesService {
       });
 
       // Buscar ou criar contato
-      let contact = await this.contactsService.findByPhone(dto.phone);
+      let contact = await this.contactsService.findByPhone(tenantId, dto.phone);
       if (!contact) {
         // Buscar tag para obter segmento
         let segment = operator.segment;
         if (dto.tag) {
-          const tag = await this.tagsService.findByName(dto.tag);
+          const tag = await this.tagsService.findByName(tenantId, dto.tag);
           if (tag?.segment) {
             segment = tag.segment;
           }
         }
 
-        contact = await this.contactsService.create({
+        contact = await this.contactsService.create(tenantId, {
           name: dto.contactName || 'Cliente',
           phone: dto.phone,
           segment,
@@ -609,7 +615,7 @@ export class ApiMessagesService {
       }
 
       // Criar conversa
-      await this.conversationsService.create({
+      await this.conversationsService.create(tenantId, {
         contactName: contact.name,
         contactPhone: dto.phone,
         segment: contact.segment,

@@ -4,29 +4,45 @@ import { Pool } from 'pg';
 import * as argon2 from 'argon2';
 import * as dotenv from 'dotenv';
 
-// Carregar variáveis de ambiente
 dotenv.config();
 
-// Prisma 7 requer adapter
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
+// Dev / seed tenant. In production, real tenants come from /tenants flow.
+const SEED_TENANT_ID = 'default-tenant';
+const SEED_TENANT_NAME = 'Default Tenant (seed)';
+
+async function ensureSeedTenant() {
+  return prisma.tenant.upsert({
+    where: { id: SEED_TENANT_ID },
+    update: { isActive: true },
+    create: {
+      id: SEED_TENANT_ID,
+      name: SEED_TENANT_NAME,
+      isActive: true,
+    },
+  });
+}
+
 async function main() {
   console.log('🌱 Iniciando seed...');
 
-  // Criar segmento padrão
+  const tenant = await ensureSeedTenant();
+  console.log('✅ Tenant garantido:', tenant.id);
+
   const segment = await prisma.segment.upsert({
-    where: { name: 'Padrão' },
+    where: { tenantId_name: { tenantId: tenant.id, name: 'Padrão' } },
     update: {},
     create: {
       name: 'Padrão',
+      tenantId: tenant.id,
     },
   });
 
   console.log('✅ Segmento criado:', segment.name);
 
-  // Criar usuário admin
   const adminPassword = await argon2.hash('<@P0d3ro50ço#a$S@@');
   const admin = await prisma.user.upsert({
     where: { email: 'admin@vend.com' },
@@ -40,9 +56,14 @@ async function main() {
     },
   });
 
+  await prisma.userTenant.upsert({
+    where: { userId_tenantId: { userId: admin.id, tenantId: tenant.id } },
+    update: { role: 'admin' },
+    create: { userId: admin.id, tenantId: tenant.id, role: 'admin' },
+  });
+
   console.log('✅ Admin criado:', admin.email);
 
-  // Criar usuário supervisor
   const supervisorPassword = await argon2.hash('..?SuP3RV15o4)(ALt');
   const supervisor = await prisma.user.upsert({
     where: { email: 'supervisor@vend.com' },
@@ -57,9 +78,14 @@ async function main() {
     },
   });
 
+  await prisma.userTenant.upsert({
+    where: { userId_tenantId: { userId: supervisor.id, tenantId: tenant.id } },
+    update: { role: 'supervisor' },
+    create: { userId: supervisor.id, tenantId: tenant.id, role: 'supervisor' },
+  });
+
   console.log('✅ Supervisor criado:', supervisor.email);
 
-  // Criar usuário operator
   const operatorPassword = await argon2.hash('ç~^OpeR4t0R=3}}ooo');
   const operator = await prisma.user.upsert({
     where: { email: 'operator@vend.com' },
@@ -74,26 +100,33 @@ async function main() {
     },
   });
 
-  console.log('✅ Operator criado:', operator.email, '| senha: operator123');
+  await prisma.userTenant.upsert({
+    where: { userId_tenantId: { userId: operator.id, tenantId: tenant.id } },
+    update: { role: 'operator' },
+    create: { userId: operator.id, tenantId: tenant.id, role: 'operator' },
+  });
 
-  // Criar Tags de exemplo
+  console.log('✅ Operator criado:', operator.email);
+
   const tags = await Promise.all([
     prisma.tag.upsert({
-      where: { name: 'emp1' },
+      where: { tenantId_name: { tenantId: tenant.id, name: 'emp1' } },
       update: {},
       create: {
         name: 'emp1',
         description: 'Tag de exemplo para carteira 1',
         segment: segment.id,
+        tenantId: tenant.id,
       },
     }),
     prisma.tag.upsert({
-      where: { name: 'emp2' },
+      where: { tenantId_name: { tenantId: tenant.id, name: 'emp2' } },
       update: {},
       create: {
         name: 'emp2',
         description: 'Tag de exemplo para carteira 2',
         segment: segment.id,
+        tenantId: tenant.id,
       },
     }),
   ]);
@@ -108,12 +141,11 @@ async function main() {
   console.log('   Operator:   operator@vend.com | ç~^OpeR4t0R=3}}ooo');
   console.log('\n🏷️  Tags:');
   console.log('   emp1, emp2');
-  console.log('\n💡 Dica: Use o upload CSV para importar tabulações!');
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Erro no seed:', e);
+    console.error('❌ Erro durante seed:', e);
     process.exit(1);
   })
   .finally(async () => {

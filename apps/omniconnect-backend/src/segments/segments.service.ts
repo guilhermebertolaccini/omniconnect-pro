@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { CreateSegmentDto } from './dto/create-segment.dto';
 import { UpdateSegmentDto } from './dto/update-segment.dto';
@@ -9,9 +14,9 @@ import { Readable } from 'stream';
 export class SegmentsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createSegmentDto: CreateSegmentDto) {
+  async create(tenantId: string, createSegmentDto: CreateSegmentDto) {
     const existing = await this.prisma.segment.findFirst({
-      where: { name: createSegmentDto.name },
+      where: { name: createSegmentDto.name, tenantId },
     });
 
     if (existing) {
@@ -19,37 +24,33 @@ export class SegmentsService {
     }
 
     return this.prisma.segment.create({
-      data: createSegmentDto,
+      data: { ...createSegmentDto, tenantId },
     });
   }
 
-  async findAll(search?: string, segmentId?: number) {
-    const where: any = {};
-    
-    // Se segmentId foi fornecido (supervisor), filtrar apenas esse segmento
+  async findAll(tenantId: string, search?: string, segmentId?: number) {
+    const where: any = { tenantId };
+
     if (segmentId) {
       where.id = segmentId;
     }
-    
-    // Adicionar filtro de busca se fornecido
+
     if (search) {
       where.name = {
         contains: search,
         mode: 'insensitive',
       };
     }
-    
+
     return this.prisma.segment.findMany({
-      where: Object.keys(where).length > 0 ? where : undefined,
-      orderBy: {
-        name: 'asc',
-      },
+      where,
+      orderBy: { name: 'asc' },
     });
   }
 
-  async findOne(id: number) {
+  async findOne(tenantId: string, id: number) {
     const segment = await this.prisma.segment.findFirst({
-      where: { id },
+      where: { id, tenantId },
     });
 
     if (!segment) {
@@ -59,8 +60,8 @@ export class SegmentsService {
     return segment;
   }
 
-  async update(id: number, updateSegmentDto: UpdateSegmentDto) {
-    await this.findOne(id);
+  async update(tenantId: string, id: number, updateSegmentDto: UpdateSegmentDto) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.segment.update({
       where: { id },
@@ -68,15 +69,18 @@ export class SegmentsService {
     });
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(tenantId: string, id: number) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.segment.delete({
       where: { id },
     });
   }
 
-  async importFromCSV(file: Express.Multer.File): Promise<{ success: number; errors: string[] }> {
+  async importFromCSV(
+    tenantId: string,
+    file: Express.Multer.File,
+  ): Promise<{ success: number; errors: string[] }> {
     if (!file || !file.buffer) {
       throw new BadRequestException('Arquivo CSV não fornecido');
     }
@@ -88,42 +92,40 @@ export class SegmentsService {
 
     return new Promise((resolve, reject) => {
       const stream = Readable.from(file.buffer.toString('utf-8'));
-      
+
       stream
         .pipe(csv({ separator: ';' }))
         .on('data', (data) => {
-          // Filtrar linhas vazias manualmente
-          const hasData = Object.values(data).some(value => value && String(value).trim() !== '');
+          const hasData = Object.values(data).some((value) => value && String(value).trim() !== '');
           if (hasData) {
             results.push(data);
           }
         })
         .on('end', async () => {
-          console.log(`📊 Processando ${results.length} linhas do CSV de segmentos`);
-
           for (const row of results) {
             try {
-              // Tentar diferentes nomes de coluna
-              const name = row['Nome']?.trim() || row['Name']?.trim() || row['Segmento']?.trim() || row['Segment']?.trim();
+              const name =
+                row['Nome']?.trim() ||
+                row['Name']?.trim() ||
+                row['Segmento']?.trim() ||
+                row['Segment']?.trim();
 
               if (!name) {
-                errors.push(`Linha ignorada: Nome vazio`);
+                errors.push('Linha ignorada: Nome vazio');
                 continue;
               }
 
-              // Normalizar nome (uppercase para comparação)
               const normalizedName = name.toLowerCase();
 
-              // Verificar se já processamos este nome nesta importação
               if (processedNames.has(normalizedName)) {
-                continue; // Pular duplicatas no mesmo CSV
+                continue;
               }
 
               processedNames.add(normalizedName);
 
-              // Verificar se segmento já existe
               const existing = await this.prisma.segment.findFirst({
                 where: {
+                  tenantId,
                   name: {
                     equals: name,
                     mode: 'insensitive',
@@ -136,17 +138,14 @@ export class SegmentsService {
                 continue;
               }
 
-              // Criar segmento
               await this.prisma.segment.create({
-                data: { name },
+                data: { name, tenantId },
               });
 
               successCount++;
-              console.log(`✅ Segmento criado: ${name}`);
             } catch (error) {
               const errorMsg = error instanceof Error ? error.message : 'Erro desconhecido';
               errors.push(`Erro ao processar linha: ${errorMsg}`);
-              console.error('❌ Erro ao processar linha do CSV:', error);
             }
           }
 

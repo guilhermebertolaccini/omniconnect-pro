@@ -1,4 +1,17 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, UseInterceptors, UploadedFile } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Query,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+} from '@nestjs/common';
 import { SegmentsService } from './segments.service';
 import { CreateSegmentDto } from './dto/create-segment.dto';
 import { UpdateSegmentDto } from './dto/update-segment.dto';
@@ -8,6 +21,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ensureTenant } from '../common/utils/tenant-context';
 
 @Controller('segments')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -16,46 +30,48 @@ export class SegmentsController {
 
   @Post()
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  create(@Body() createSegmentDto: CreateSegmentDto) {
-    return this.segmentsService.create(createSegmentDto);
+  create(@CurrentUser() user: any, @Body() createSegmentDto: CreateSegmentDto) {
+    return this.segmentsService.create(ensureTenant(user), createSegmentDto);
   }
 
   @Get()
-  findAll(@Query('search') search?: string, @CurrentUser() user?: any) {
-    // Supervisor só vê seu próprio segmento, digital e admin veem todos
+  findAll(@CurrentUser() user: any, @Query('search') search?: string) {
+    const tenantId = ensureTenant(user);
     if (user?.role === Role.supervisor && user?.segment) {
-      return this.segmentsService.findAll(search, user.segment);
+      return this.segmentsService.findAll(tenantId, search, user.segment);
     }
-    // digital e admin veem todos os segmentos
-    return this.segmentsService.findAll(search);
+    return this.segmentsService.findAll(tenantId, search);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.segmentsService.findOne(+id);
+  findOne(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.segmentsService.findOne(ensureTenant(user), +id);
   }
 
   @Patch(':id')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  update(@Param('id') id: string, @Body() updateSegmentDto: UpdateSegmentDto) {
-    return this.segmentsService.update(+id, updateSegmentDto);
+  update(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() updateSegmentDto: UpdateSegmentDto,
+  ) {
+    return this.segmentsService.update(ensureTenant(user), +id, updateSegmentDto);
   }
 
   @Delete(':id')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  remove(@Param('id') id: string) {
-    return this.segmentsService.remove(+id);
+  remove(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.segmentsService.remove(ensureTenant(user), +id);
   }
 
   @Post('upload-csv')
   @Roles(Role.admin, Role.supervisor, Role.digital)
   @UseInterceptors(FileInterceptor('file'))
-  async uploadCSV(@UploadedFile() file: Express.Multer.File) {
+  async uploadCSV(@CurrentUser() user: any, @UploadedFile() file: Express.Multer.File) {
     if (!file) {
-      throw new Error('Arquivo CSV não fornecido');
+      throw new BadRequestException('Arquivo CSV não fornecido');
     }
-
-    const result = await this.segmentsService.importFromCSV(file);
+    const result = await this.segmentsService.importFromCSV(ensureTenant(user), file);
     return {
       message: `Importação concluída: ${result.success} segmento(s) criado(s)`,
       success: result.success,

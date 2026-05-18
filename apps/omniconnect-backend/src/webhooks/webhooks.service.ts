@@ -102,6 +102,13 @@ export class WebhooksService {
           return { status: 'ignored', reason: 'Line not found' };
         }
 
+        // Resolver tenantId via App vinculado à linha (trusted; não vem do payload).
+        const lineApp = await this.prisma.app.findUnique({
+          where: { id: line.appId },
+          select: { tenantId: true },
+        });
+        const tenantId: string = lineApp?.tenantId || (line as any).tenantId || 'default-tenant';
+
         console.log(`🔍 [Webhook] Linha encontrada: ID ${line.id}, Phone: ${line.phone}`, {
           operadoresVinculados: line.operators.length,
           operadores: line.operators.map(lo => ({
@@ -193,7 +200,7 @@ export class WebhooksService {
           blockedByPhrase = true;
 
           // Adicionar à blocklist
-          await this.blocklistService.create({
+          await this.blocklistService.create(tenantId, {
             name: contact.name,
             phone: from,
             cpf: contact.cpf,
@@ -251,7 +258,7 @@ export class WebhooksService {
         }
 
         // Criar conversa
-        const conversation = await this.conversationsService.create({
+        const conversation = await this.conversationsService.create(tenantId, {
           contactName: contact.name,
           contactPhone: from,
           segment: line.segment,

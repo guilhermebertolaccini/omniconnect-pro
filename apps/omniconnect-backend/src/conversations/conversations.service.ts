@@ -12,10 +12,14 @@ export class ConversationsService {
     private websocketGateway: WebsocketGateway,
   ) { }
 
-  async create(createConversationDto: CreateConversationDto) {
+  async create(tenantId: string, createConversationDto: CreateConversationDto) {
+    if (!tenantId) {
+      throw new Error('ConversationsService.create requires tenantId');
+    }
     const conversation = await this.prisma.conversation.create({
       data: {
         ...createConversationDto,
+        tenantId,
         datetime: createConversationDto.datetime || new Date(),
       },
       select: {

@@ -61,6 +61,12 @@ export class CampaignsService {
       throw new NotFoundException('Campanha não encontrada');
     }
 
+    // FIXME(Sprint 1.2): resolve tenantId from authenticated campaign owner
+    // (currently uploadCampaign is invoked from controllers behind JwtAuthGuard
+    // but does not propagate tenant context; tenantId is enforced once contacts
+    // become tenant-scoped end-to-end).
+    const tenantId = 'default-tenant';
+
     // Buscar operadores online do segmento
     const onlineOperators = await this.usersService.getOnlineOperators(campaign.contactSegment);
 
@@ -168,9 +174,9 @@ export class CampaignsService {
         if (!operator) continue;
 
         // Criar ou atualizar contato
-        let existingContact = await this.contactsService.findByPhone(contact.phone);
+        let existingContact = await this.contactsService.findByPhone(tenantId, contact.phone);
         if (!existingContact) {
-          await this.contactsService.create({
+          await this.contactsService.create(tenantId, {
             name: contact.name,
             phone: contact.phone,
             cpf: contact.cpf,
@@ -179,7 +185,7 @@ export class CampaignsService {
           });
         } else if (contact.cpf || contact.contract) {
           // Atualizar contato existente com novos dados
-          await this.contactsService.update(existingContact.id, {
+          await this.contactsService.update(tenantId, existingContact.id, {
             cpf: contact.cpf || existingContact.cpf,
             contract: contact.contract || existingContact.contract,
           });
