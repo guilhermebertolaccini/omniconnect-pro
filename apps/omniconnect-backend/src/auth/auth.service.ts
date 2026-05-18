@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
 import * as argon2 from 'argon2';
+import { IssueContext, RefreshTokenService } from './refresh-token.service';
 
 @Injectable()
 export class AuthService {
@@ -10,6 +11,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private refreshTokens: RefreshTokenService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -50,8 +52,7 @@ export class AuthService {
     }
   }
 
-  async login(user: any) {
-    // Se o usuário for operator, atualizar status para Online
+  async login(user: any, ctx: IssueContext = {}) {
     if (user.role === 'operator') {
       await this.prisma.user.update({
         where: { id: user.id },
@@ -60,13 +61,22 @@ export class AuthService {
     }
 
     const userTenants = await this.prisma.userTenant.findMany({
-      where: { userId: user.id }
+      where: { userId: user.id },
     });
-    const activeTenantId = userTenants.length > 0 ? userTenants[0].tenantId : 'default-tenant';
+    const activeTenantId =
+      userTenants.length > 0 ? userTenants[0].tenantId : 'default-tenant';
 
-    const payload = { email: user.email, sub: user.id, role: user.role, tenantId: activeTenantId };
+    const session = await this.refreshTokens.issue(
+      { id: user.id, email: user.email, role: user.role },
+      activeTenantId,
+      ctx,
+    );
+
     return {
-      access_token: this.jwtService.sign(payload),
+      access_token: session.accessToken,
+      access_expires_in: session.accessExpiresIn,
+      refresh_token: session.refreshToken,
+      refresh_expires_at: session.refreshExpiresAt,
       user: {
         id: user.id,
         name: user.name,
@@ -81,13 +91,30 @@ export class AuthService {
     };
   }
 
-  async logout(userId: number) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+  /**
+   * Roteia uma sessão a partir do refresh token bruto. Devolve o mesmo shape
+   * de `login` (sem o `user`, já que o caller já está autenticado).
+   */
+  async refresh(presentedToken: string | null, ctx: IssueContext = {}) {
+    const session = await this.refreshTokens.rotate(presentedToken, ctx);
 
-    // Se o usuário for operator, atualizar status para Offline
-    if (user && user.role === 'operator') {
+    return {
+      access_token: session.accessToken,
+      access_expires_in: session.accessExpiresIn,
+      refresh_token: session.refreshToken,
+      refresh_expires_at: session.refreshExpiresAt,
+    };
+  }
+
+  /**
+   * Logout single-session: revoga somente o refresh apresentado (cookie). Se o
+   * caller é operator, marca status como Offline.
+   */
+  async logout(userId: number, presentedRefresh: string | null) {
+    await this.refreshTokens.revoke(presentedRefresh);
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (user?.role === 'operator') {
       await this.prisma.user.update({
         where: { id: userId },
         data: { status: 'Offline' },
@@ -95,6 +122,14 @@ export class AuthService {
     }
 
     return { message: 'Logout realizado com sucesso' };
+  }
+
+  /**
+   * Logout all-sessions: revoga toda a cadeia ativa de refresh do user.
+   */
+  async logoutAll(userId: number) {
+    const revoked = await this.refreshTokens.revokeAllForUser(userId);
+    return { message: 'Sessões encerradas', revoked };
   }
 
   async hashPassword(password: string): Promise<string> {

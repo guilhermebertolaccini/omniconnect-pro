@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import compression from 'compression';
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -16,6 +17,8 @@ async function bootstrap() {
       : ['http://localhost:5173', 'http://localhost:3001'],
     credentials: true,
   });
+
+  app.use(cookieParser());
 
   // Compression
   app.use(compression());
