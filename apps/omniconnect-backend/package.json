@@ -68,7 +68,9 @@
     "rxjs": "^7.8.2",
     "socket.io": "^4.8.1",
     "swagger-ui-express": "^5.0.1",
-    "winston": "^3.19.0"
+    "winston": "^3.19.0",
+    "@omniconnect/ai-contracts": "workspace:*",
+    "@omniconnect/shared-types": "workspace:*"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.14",

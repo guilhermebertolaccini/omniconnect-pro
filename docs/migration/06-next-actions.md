@@ -68,29 +68,29 @@ Sequência de execução proposta. Cada bloco tem **dono** (quem decide / quem e
 
 > **Sequência exata em `03-migration-plan.md`.** Aqui só o resumo dos próximos 5 passos imediatos:
 
-### C.1 ⏳ Criar repo `omniconnect-pro` no GitHub e local
+### C.1 ✅ Criar repo `omniconnect-pro` no GitHub e local
 **Depende de:** A.1
 **Entregável:** Fase 1 do plano completa, repo vazio funcional com workspace configurado
 
-### C.2 ⏳ Migrar OmniConnect para `apps/omniconnect-backend` e `apps/omniconnect-frontend`
+### C.2 ✅ Migrar OmniConnect para `apps/omniconnect-backend` e `apps/omniconnect-frontend`
 **Depende de:** C.1 + A.3
 **Entregável:** Fase 2, build do backend passa, build do frontend passa
 
-### C.3 ⏳ Aplicar patch InsightAI corrigido
+### C.3 ✅ Aplicar patch InsightAI corrigido
 **Depende de:** C.2 + bloqueadores do patch (`04-insight-ai-patch-analysis.md`)
 **Entregável:** Fase 3, endpoint `/insight-ai/dashboard/summary` responde
 
-### C.4 ⏳ Setup `packages/ai-contracts` e `packages/shared-types`
+### C.4 ✅ Setup `packages/ai-contracts` e `packages/shared-types`
 **Depende de:** C.3
 **Entregável:** Fase 4, tipos do InsightAI consumíveis por outros apps
 
-### C.5 ⏳ Migrar Botify
+### C.5 ✅ Migrar Botify
 **Depende de:** A.2 + C.4
 **Entregável:** Fase 5, `apps/botify` builda dentro do monorepo
 
-### C.6 ⏳ Migrar CRM Imobiliário
-### C.7 ⏳ Migrar Smart Ad Automator
-### C.8 ⏳ Bridges entre apps (OmniConnect↔CRM, SAA↔OmniConnect)
+### C.6 ✅ Migrar CRM Imobiliário
+### C.7 ✅ Migrar Smart Ad Automator
+### C.8 ✅ Bridges entre apps (OmniConnect↔CRM, SAA↔OmniConnect)
 ### C.9 ⏳ Arquivar `taticaofc`
 
 ---

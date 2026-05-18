@@ -16,8 +16,10 @@
     "noImplicitAny": false,
     "strictBindCallApply": false,
     "forceConsistentCasingInFileNames": false,
-    "noFallthroughCasesInSwitch": false,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "paths": {
+      "@omniconnect/*": ["../../packages/*/dist"]
+    }
   },
   "ts-node": {
     "transpileOnly": true,

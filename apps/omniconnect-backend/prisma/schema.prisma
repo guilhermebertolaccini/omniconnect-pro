@@ -55,6 +55,7 @@ model User {
   createdLines  LinesStock[] // Linhas criadas por este usuário (para ativadores)
 
   systemEvents SystemEvent[]
+  tenants      UserTenant[]
 
   @@index([email])
   @@index([segment])
@@ -67,31 +68,36 @@ model Segment {
   name      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tenantId  String   @default("default-tenant")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([name])
+  @@index([tenantId])
 }
 
 model Tabulation {
-  id          Int      @id @default(autoincrement())
-  name        String
-  isCPC       Boolean  @default(false)
-  isEnvio     Boolean  @default(true)
-  isEntregue  Boolean  @default(true)
-  isLido      Boolean  @default(true)
-  isRetorno   Boolean  @default(true)
-  isCPCProd   Boolean  @default(false)
-  isBoleto    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  name       String
+  isCPC      Boolean  @default(false)
+  isEnvio    Boolean  @default(true)
+  isEntregue Boolean  @default(true)
+  isLido     Boolean  @default(true)
+  isRetorno  Boolean  @default(true)
+  isCPCProd  Boolean  @default(false)
+  isBoleto   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  tenantId   String   @default("default-tenant")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([name])
+  @@index([tenantId])
 }
-
 
 model Contact {
   id        Int       @id @default(autoincrement())
   name      String
-  phone     String   @unique // Telefone único - não permite duplicados
+  phone     String    @unique // Telefone único - não permite duplicados
   segment   Int?
   cpf       String?
   contract  String?
@@ -99,11 +105,14 @@ model Contact {
   lastCPCAt DateTime? // Última vez que foi marcado como CPC (para temporizador)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  tenantId  String    @default("default-tenant")
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
 
   @@index([phone])
   @@index([cpf])
   @@index([segment])
   @@index([isCPC])
+  @@index([tenantId])
 }
 
 model Campaign {
@@ -123,6 +132,8 @@ model Campaign {
   endTime           DateTime? // Horário limite para envio das mensagens
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  tenantId          String    @default("default-tenant")
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
 
   @@index([contactPhone])
   @@index([contactSegment])
@@ -131,6 +142,7 @@ model Campaign {
   @@index([dateTime])
   @@index([templateId])
   @@index([name])
+  @@index([tenantId])
 }
 
 model BlockList {
@@ -140,9 +152,12 @@ model BlockList {
   cpf       String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tenantId  String   @default("default-tenant")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([phone])
   @@index([cpf])
+  @@index([tenantId])
 }
 
 // App Meta (WhatsApp Business App)
@@ -155,8 +170,11 @@ model App {
   wabaId             String? // WhatsApp Business Account ID (opcional)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  tenantId           String   @default("default-tenant")
+  tenant             Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([name])
+  @@index([tenantId])
 }
 
 model LinesStock {
@@ -175,7 +193,9 @@ model LinesStock {
 
   operators LineOperator[] // Relacionamento com operadores
   creator   User?          @relation(fields: [createdBy], references: [id]) // Usuário que criou
-  templates Template[]     // Templates vinculados a esta linha
+  templates Template[] // Templates vinculados a esta linha
+  tenantId  String         @default("default-tenant")
+  tenant    Tenant         @relation(fields: [tenantId], references: [id])
 
   @@index([phone])
   @@index([lineStatus])
@@ -184,6 +204,7 @@ model LinesStock {
   @@index([numberId])
   @@index([createdBy])
   @@index([appId])
+  @@index([tenantId])
 }
 
 // Tabela de relacionamento entre Linhas e Operadores (máximo 2 operadores por linha)
@@ -194,12 +215,15 @@ model LineOperator {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  line LinesStock @relation(fields: [lineId], references: [id], onDelete: Cascade)
-  user User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  line     LinesStock @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId String     @default("default-tenant")
+  tenant   Tenant     @relation(fields: [tenantId], references: [id])
 
   @@unique([lineId, userId])
   @@index([lineId])
   @@index([userId])
+  @@index([tenantId])
 }
 
 model Conversation {
@@ -216,11 +240,13 @@ model Conversation {
   tabulation   Int?
   messageType  String    @default("text")
   mediaUrl     String?
-  messageId    String?   // WhatsApp Message ID (wamid) - usado para evitar duplicatas
+  messageId    String? // WhatsApp Message ID (wamid) - usado para evitar duplicatas
   archived     Boolean   @default(false) // Se true, conversa foi arquivada
   archivedAt   DateTime? // Data de arquivamento
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  tenantId     String    @default("default-tenant")
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
 
   @@index([contactPhone])
   @@index([segment])
@@ -231,6 +257,7 @@ model Conversation {
   @@index([archived, datetime])
   @@index([archivedAt])
   @@index([messageId])
+  @@index([tenantId])
 }
 
 model Tag {
@@ -240,9 +267,12 @@ model Tag {
   segment     Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  tenantId    String   @default("default-tenant")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([name])
   @@index([segment])
+  @@index([tenantId])
 }
 
 model ApiLog {
@@ -255,37 +285,43 @@ model ApiLog {
   ipAddress       String?
   userAgent       String?
   createdAt       DateTime @default(now())
+  tenantId        String   @default("default-tenant")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([endpoint])
   @@index([method])
   @@index([statusCode])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // Template para mensagens de campanha (vinculado a segmento)
 model Template {
-  id            Int      @id @default(autoincrement())
+  id            Int         @id @default(autoincrement())
   name          String
-  language      String   @default("pt_BR")
-  category      String   @default("MARKETING")
+  language      String      @default("pt_BR")
+  category      String      @default("MARKETING")
   segmentId     Int? // null = global (todos os segmentos)
   lineId        Int? // Template vinculado a uma linha específica
-  line          LinesStock?   @relation(fields: [lineId], references: [id])
+  line          LinesStock? @relation(fields: [lineId], references: [id])
   namespace     String?
-  status        String   @default("APPROVED")
+  status        String      @default("APPROVED")
   headerType    String?
-  headerContent String?  @db.Text
-  bodyText      String   @db.Text
+  headerContent String?     @db.Text
+  bodyText      String      @db.Text
   footerText    String?
-  buttons       String?  @db.Text
-  variables     String?  @db.Text
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  buttons       String?     @db.Text
+  variables     String?     @db.Text
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  tenantId      String      @default("default-tenant")
+  tenant        Tenant      @relation(fields: [tenantId], references: [id])
 
   @@index([name])
   @@index([segmentId])
   @@index([status])
   @@index([category])
+  @@index([tenantId])
 }
 
 // Histórico de envios de templates
@@ -302,6 +338,8 @@ model TemplateMessage {
   campaignId   Int?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  tenantId     String   @default("default-tenant")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([templateId])
   @@index([contactPhone])
@@ -309,6 +347,7 @@ model TemplateMessage {
   @@index([status])
   @@index([campaignId])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // Painel de Controle - Configurações globais do sistema
@@ -349,9 +388,12 @@ model ControlPanel {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tenantId  String   @default("default-tenant")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
   @@unique([segmentId])
   @@index([segmentId])
+  @@index([tenantId])
 }
 
 // Histórico de repescagem por contato
@@ -366,11 +408,14 @@ model ContactRepescagem {
   lastMessageAt  DateTime  @default(now())
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  tenantId       String    @default("default-tenant")
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
 
   @@unique([contactPhone, operatorId])
   @@index([contactPhone])
   @@index([operatorId])
   @@index([blockedUntil])
+  @@index([tenantId])
 }
 
 // Histórico de envio para controle de reenvio
@@ -380,9 +425,12 @@ model SendHistory {
   campaignId   Int?
   lineId       Int?
   sentAt       DateTime @default(now())
+  tenantId     String   @default("default-tenant")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([contactPhone])
   @@index([sentAt])
+  @@index([tenantId])
 }
 
 // Fila de mensagens quando não há operador online
@@ -400,11 +448,14 @@ model MessageQueue {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   processedAt  DateTime?
+  tenantId     String    @default("default-tenant")
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
 
   @@index([status])
   @@index([contactPhone])
   @@index([segment])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // Eventos do sistema para acompanhamento e métricas
@@ -417,11 +468,109 @@ model SystemEvent {
   severity  String   @default("info") // info, warning, error, success
   createdAt DateTime @default(now())
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user     User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  tenantId String @default("default-tenant")
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([type])
   @@index([module])
   @@index([userId])
   @@index([severity])
   @@index([createdAt])
+  @@index([tenantId])
+}
+
+// Análises de IA sobre conversas comerciais.
+// Esta tabela permite gerar métricas mesmo quando o CRM/tabulação manual está incompleto.
+model ConversationAIAnalysis {
+  id                Int       @id @default(autoincrement())
+  tenantId          String    @default("default-tenant")
+  contactPhone      String
+  contactName       String?
+  segment           Int?
+  userId            Int?
+  userName          String?
+  conversationStart DateTime?
+  conversationEnd   DateTime?
+  messageCount      Int       @default(0)
+
+  summary                        String   @db.Text
+  leadIntent                     String
+  opportunityStatus              String
+  risk                           String
+  mainObjection                  String?
+  objections                     String?  @db.Text
+  sellerQualityScore             Int      @default(0)
+  responseQualityScore           Int      @default(0)
+  qualificationScore             Int      @default(0)
+  followUpScore                  Int      @default(0)
+  firstResponseMinutes           Int?
+  hasSellerAbandonment           Boolean  @default(false)
+  hasLeadAbandonment             Boolean  @default(false)
+  hasQualification               Boolean  @default(false)
+  hasSchedulingAttempt           Boolean  @default(false)
+  hasProposalOrSimulationAttempt Boolean  @default(false)
+  lostOpportunity                Boolean  @default(false)
+  nextBestAction                 String   @db.Text
+  evidence                       String?  @db.Text
+  metrics                        String?  @db.Text
+  rawResult                      String?  @db.Text
+  createdAt                      DateTime @default(now())
+  updatedAt                      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([contactPhone])
+  @@index([segment])
+  @@index([userId])
+  @@index([leadIntent])
+  @@index([opportunityStatus])
+  @@index([risk])
+  @@index([lostOpportunity])
+  @@index([createdAt])
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  document  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users                  UserTenant[]
+  segments               Segment[]
+  tabulations            Tabulation[]
+  contacts               Contact[]
+  campaigns              Campaign[]
+  blockLists             BlockList[]
+  apps                   App[]
+  linesStocks            LinesStock[]
+  lineOperators          LineOperator[]
+  conversations          Conversation[]
+  tags                   Tag[]
+  apiLogs                ApiLog[]
+  templates              Template[]
+  templateMessages       TemplateMessage[]
+  controlPanels          ControlPanel[]
+  contactRepescagems     ContactRepescagem[]
+  sendHistories          SendHistory[]
+  messageQueues          MessageQueue[]
+  systemEvents           SystemEvent[]
+  conversationAIAnalyses ConversationAIAnalysis[]
+}
+
+model UserTenant {
+  id       String @id @default(uuid())
+  userId   Int
+  tenantId String @default("default-tenant")
+  role     Role
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([userId])
+  @@index([tenantId])
 }

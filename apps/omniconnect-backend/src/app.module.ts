@@ -32,6 +32,10 @@ import { MessageSendingModule } from './message-sending/message-sending.module';
 import { CacheModule } from './cache/cache.module';
 import { ArchivingModule } from './archiving/archiving.module';
 import { AppsModule } from './apps/apps.module';
+import { InsightAiModule } from './insight-ai/insight-ai.module';
+import { CrmBridgeModule } from './crm-bridge/crm-bridge.module';
+import { AdsBridgeModule } from './ads-bridge/ads-bridge.module';
+import { BotBridgeModule } from './bot-bridge/bot-bridge.module';
 
 @Module({
   imports: [
@@ -76,6 +80,10 @@ import { AppsModule } from './apps/apps.module';
     ControlPanelModule,
     MessageQueueModule,
     SystemEventsModule,
+    InsightAiModule,
+    CrmBridgeModule,
+    AdsBridgeModule,
+    BotBridgeModule,
   ],
   controllers: [HealthController],
   providers: [PrismaService],
