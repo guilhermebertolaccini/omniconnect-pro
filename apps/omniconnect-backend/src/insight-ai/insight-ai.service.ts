@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma.service';
 import { ModelPricingService } from '../model-pricing/model-pricing.service';
 import { AnalyzeConversationDto } from './dto/analyze-conversation.dto';
@@ -36,20 +37,33 @@ export class InsightAiService {
   ) {}
 
   /**
-   * Enqueue a conversation analysis as a BullMQ job. Returns the jobId
-   * so the caller can poll via getJobStatus(). Uses a stable jobId
-   * derived from (tenantId, contactPhone, window) so identical
-   * requests within the dedup window do not stack up.
+   * Enqueue a conversation analysis. Returns the jobId so the caller
+   * can poll via getJobStatus().
+   *
+   * Job IDs are deterministic: `iai:<sha256(tenantId|phone|days|limit|hourBucket)>`.
+   * Two reasons:
+   *   - Deduplication: Bull treats `jobId` as a uniqueness key — if a
+   *     job with the same id is in waiting/active/delayed state the
+   *     queue keeps the original instead of stacking duplicates. This
+   *     was promised in the previous code via a comment but never
+   *     actually implemented (no `jobId` was passed).
+   *   - Privacy: hashing the inputs means the raw phone number is
+   *     never written into Redis. The bucket is the current UTC hour,
+   *     which strikes a balance between "re-analyze if the user
+   *     retries 30s later" (same id, dedup wins) and "re-run cleanly
+   *     after an hour" (different id, re-runs fine).
    */
   async enqueueAnalyzeByPhone(
     tenantId: string,
     contactPhone: string,
     dto: AnalyzeConversationDto = {},
   ): Promise<EnqueueResult> {
+    const jobId = this.buildAnalyzeJobId(tenantId, contactPhone, dto);
     const job = await this.queue.add(
       'analyze-conversation',
       { tenantId, contactPhone, dto },
       {
+        jobId,
         attempts: 3,
         backoff: { type: 'exponential', delay: 5_000 },
         removeOnComplete: { age: 24 * 3600, count: 500 },
@@ -65,16 +79,19 @@ export class InsightAiService {
   }
 
   /**
-   * Inspect a previously enqueued job. Scoped to tenantId so a user
-   * cannot poll jobs created by another tenant — we read job.data and
-   * compare.
+   * Inspect a previously enqueued job. Strictly scoped to tenantId: a
+   * job whose data does NOT carry a tenantId is treated as if it did
+   * not exist (defense in depth — malformed/legacy payloads cannot be
+   * cross-read), and a job whose tenantId differs from the caller's is
+   * a 404, not a 403, so we do not leak job existence across tenants.
    */
   async getJobStatus(tenantId: string, jobId: string): Promise<JobStatusResult> {
     const job = await this.queue.getJob(jobId);
     if (!job) {
       throw new NotFoundException(`Job ${jobId} not found`);
     }
-    if (job.data?.tenantId && job.data.tenantId !== tenantId) {
+    const jobTenantId = (job.data as { tenantId?: unknown } | null)?.tenantId;
+    if (!jobTenantId || jobTenantId !== tenantId) {
       throw new NotFoundException(`Job ${jobId} not found`);
     }
     const state = (await job.getState()) as JobStatusResult['status'];
@@ -85,6 +102,26 @@ export class InsightAiService {
       failedReason: job.failedReason ?? undefined,
       attemptsMade: job.attemptsMade,
     };
+  }
+
+  /**
+   * Hash-derived job id, exported for tests. The hour bucket scopes
+   * dedup to ~1h windows so retries within the same hour collapse but
+   * re-runs the next hour proceed normally.
+   */
+  buildAnalyzeJobId(
+    tenantId: string,
+    contactPhone: string,
+    dto: AnalyzeConversationDto,
+  ): string {
+    const days = dto.days ?? 30;
+    const limit = dto.limit ?? 80;
+    const segment = dto.segment ?? '';
+    const userId = dto.userId ?? '';
+    const bucket = Math.floor(Date.now() / (60 * 60 * 1000));
+    const material = `${tenantId}|${contactPhone}|${days}|${limit}|${segment}|${userId}|${bucket}`;
+    const digest = crypto.createHash('sha256').update(material).digest('hex');
+    return `iai:${digest}`;
   }
 
   async analyzeByPhone(tenantId: string, contactPhone: string, dto: AnalyzeConversationDto = {}) {
