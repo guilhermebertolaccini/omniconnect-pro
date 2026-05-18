@@ -13,6 +13,7 @@ enum Role {
   supervisor
   ativador
   digital
+  broker
 }
 
 enum Status {
@@ -43,6 +44,93 @@ enum AdPlatform {
   meta
   google_ads
   tiktok_ads
+}
+
+// -----------------------------------------------------------------------
+// CRM Imobiliário enums (Sprint 3). Mirror dos enums Supabase originais
+// do crm-imobiliario, normalizados ao snake_case do Postgres já em uso.
+// -----------------------------------------------------------------------
+enum CrmUnitStatus {
+  available
+  reserved
+  sold
+}
+
+enum CrmClientScore {
+  A
+  B
+  C
+  D
+}
+
+enum CrmLeadStage {
+  new
+  contacted
+  qualified
+  proposal
+  negotiation
+  visit
+  won
+  lost
+  closed_won
+  closed_lost
+}
+
+enum CrmInteractionType {
+  call
+  email
+  whatsapp
+  meeting
+  note
+  visit
+}
+
+enum CrmProposalStatus {
+  draft
+  sent
+  accepted
+  rejected
+}
+
+enum CrmContractStatus {
+  draft
+  review
+  pending_signature
+  signed
+}
+
+enum CrmPaymentType {
+  signal
+  installment
+  balloon
+}
+
+enum CrmPaymentStatus {
+  pending
+  paid
+  overdue
+}
+
+enum CrmCommissionStatus {
+  pending
+  paid
+}
+
+enum CrmDocumentParentType {
+  proposal
+  contract
+}
+
+enum CrmDocumentVersionAction {
+  attached
+  replaced
+  generated
+  imported
+}
+
+enum CrmDocumentAccessAction {
+  viewed
+  downloaded
 }
 
 // Models
@@ -76,6 +164,18 @@ model User {
   createdAdPlatformConnections  AdPlatformConnection[]    @relation("AdPlatformConnectionCreatedBy")
   generatedAdCampaignAIAnalyses AdCampaignAIAnalysis[]    @relation("AdCampaignAIAnalysisGeneratedBy")
   createdOrganicPostExperiments OrganicPostExperiment[]   @relation("OrganicPostExperimentCreatedBy")
+
+  // CRM Imobiliário (Sprint 3) — User só aparece nas pontas que importam:
+  // (a) corretor responsável (broker), (b) criador/autor de evento.
+  crmPropertiesCreated   CrmProperty[]               @relation("CrmPropertyCreatedBy")
+  crmClientsAsBroker     CrmClient[]                 @relation("CrmClientBroker")
+  crmLeadsAsBroker       CrmLead[]                   @relation("CrmLeadBroker")
+  crmInteractionsCreated CrmInteraction[]            @relation("CrmInteractionCreatedBy")
+  crmFollowUpsCreated    CrmFollowUp[]               @relation("CrmFollowUpCreatedBy")
+  crmProposalsAsBroker   CrmProposal[]               @relation("CrmProposalBroker")
+  crmContractsAsBroker   CrmContract[]               @relation("CrmContractBroker")
+  crmCommissionsAsBroker CrmCommission[]             @relation("CrmCommissionBroker")
+  crmNotificationPrefs   CrmNotificationPreference[]
 
   @@index([email])
   @@index([segment])
@@ -599,6 +699,26 @@ model Tenant {
   organicPostExperiments        OrganicPostExperiment[]
   organicPostExperimentVariants OrganicPostExperimentVariant[]
   refreshTokens                 RefreshToken[]
+
+  // CRM Imobiliário (Sprint 3)
+  crmProperties              CrmProperty[]
+  crmUnits                   CrmUnit[]
+  crmCommissionConfigs       CrmCommissionConfig[]
+  crmClients                 CrmClient[]
+  crmLeads                   CrmLead[]
+  crmInteractions            CrmInteraction[]
+  crmFollowUps               CrmFollowUp[]
+  crmProposals               CrmProposal[]
+  crmProposalEvents          CrmProposalEvent[]
+  crmContracts               CrmContract[]
+  crmContractEvents          CrmContractEvent[]
+  crmSignatures              CrmSignature[]
+  crmPayments                CrmPayment[]
+  crmCommissions             CrmCommission[]
+  crmDocumentVersions        CrmDocumentVersion[]
+  crmDocumentAccessLogs      CrmDocumentAccessLog[]
+  crmChangeHistory           CrmChangeHistory[]
+  crmNotificationPreferences CrmNotificationPreference[]
 }
 
 model IntegrationConnection {
@@ -1001,4 +1121,502 @@ model RefreshToken {
   @@index([tenantId, userId])
   @@index([expiresAt])
   @@index([revokedAt])
+}
+
+// ---------------------------------------------------------------------------
+// CRM Imobiliário (Sprint 3)
+// ---------------------------------------------------------------------------
+// Modelos para gestão de empreendimentos imobiliários, leads, propostas,
+// contratos, assinaturas (Clicksign), financeiro (parcelas, comissões) e
+// auditoria. Todo modelo carrega `tenantId` com índice composto para isolar
+// queries — não há nenhuma view global. PKs em uuid para encaixar no padrão
+// do Supabase original sem reescrever IDs em referências cruzadas.
+// ---------------------------------------------------------------------------
+
+// Empreendimento imobiliário (lote, prédio, condomínio).
+model CrmProperty {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  address     String
+  city        String
+  developer   String?
+  imageUrl    String?
+  towers      Json     @default("[]")
+  documents   Json     @default("[]")
+  createdById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("CrmPropertyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  units            CrmUnit[]
+  commissionConfig CrmCommissionConfig?
+  leads            CrmLead[]
+  proposals        CrmProposal[]
+  contracts        CrmContract[]
+  payments         CrmPayment[]
+  commissions      CrmCommission[]
+
+  @@index([tenantId])
+  @@index([tenantId, name])
+}
+
+// Unidade dentro de um Property. `status` evolui available → reserved → sold;
+// `clientId` é guardado direto (sem FK forte porque é populado em momentos
+// distintos do ciclo — reserva temporária, contrato assinado, etc).
+model CrmUnit {
+  id                String        @id @default(uuid())
+  tenantId          String
+  propertyId        String
+  number            String
+  tower             String?
+  typology          String?
+  floor             Int?
+  area              Decimal?      @db.Decimal(12, 2)
+  price             Decimal?      @db.Decimal(14, 2)
+  status            CrmUnitStatus @default(available)
+  observations      String?       @db.Text
+  clientId          String?
+  reservedAt        DateTime?
+  reservationExpiry DateTime?
+  proposalId        String?
+  contractId        String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property CrmProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  proposals   CrmProposal[]
+  contracts   CrmContract[]
+  payments    CrmPayment[]
+  commissions CrmCommission[]
+
+  @@unique([tenantId, propertyId, number])
+  @@index([tenantId])
+  @@index([tenantId, propertyId])
+  @@index([tenantId, status])
+}
+
+// Percentual de comissão por empreendimento. `propertyId` é PK no Supabase
+// original; aqui mantemos uuid próprio mas exigimos unique por property.
+model CrmCommissionConfig {
+  id                String   @id @default(uuid())
+  tenantId          String
+  propertyId        String   @unique
+  commissionPercent Decimal  @default(5) @db.Decimal(5, 2)
+  updatedById       Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property CrmProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+// Cliente comprador. PII (cpf_cnpj, phone, email, income) protegida por
+// JwtAuthGuard + tenant scoping. Serviços nunca devem retornar `cpfCnpj` em
+// listas; só no detalhe e mediante audit em CrmDocumentAccessLog quando o
+// acesso for crítico.
+model CrmClient {
+  id        String          @id @default(uuid())
+  tenantId  String
+  name      String
+  cpfCnpj   String?
+  phone     String?
+  email     String?
+  income    Decimal?        @db.Decimal(14, 2)
+  score     CrmClientScore?
+  notes     String?         @db.Text
+  brokerId  Int?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  broker User?  @relation("CrmClientBroker", fields: [brokerId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, brokerId])
+  @@index([tenantId, cpfCnpj])
+}
+
+// Lead no pipeline. `brokerName` é cache denormalizado (snapshot da época
+// da atribuição). Tabela realtime — vide CrmGateway (Bloco E).
+model CrmLead {
+  id               String       @id @default(uuid())
+  tenantId         String
+  name             String
+  email            String?
+  phone            String?
+  source           String?
+  stage            CrmLeadStage @default(new)
+  brokerId         Int?
+  brokerName       String?
+  propertyId       String?
+  clientId         String?
+  propertyInterest String?
+  estimatedValue   Decimal?     @db.Decimal(14, 2)
+  notes            String?      @db.Text
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  broker   User?        @relation("CrmLeadBroker", fields: [brokerId], references: [id], onDelete: SetNull)
+  property CrmProperty? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+
+  interactions CrmInteraction[]
+  followUps    CrmFollowUp[]
+
+  @@index([tenantId])
+  @@index([tenantId, stage])
+  @@index([tenantId, brokerId])
+  @@index([tenantId, clientId])
+}
+
+// Interação registrada no lead (call/email/whatsapp/meeting/note/visit).
+model CrmInteraction {
+  id          String             @id @default(uuid())
+  tenantId    String
+  leadId      String
+  type        CrmInteractionType
+  content     String?            @db.Text
+  createdById Int?
+  createdAt   DateTime           @default(now())
+
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead      CrmLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("CrmInteractionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, leadId])
+}
+
+// Tarefa de follow-up associada ao lead.
+model CrmFollowUp {
+  id          String    @id @default(uuid())
+  tenantId    String
+  leadId      String
+  scheduledAt DateTime
+  status      String    @default("pending")
+  title       String?
+  notes       String?   @db.Text
+  completedAt DateTime?
+  createdById Int?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead      CrmLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("CrmFollowUpCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, leadId])
+  @@index([tenantId, status])
+  @@index([tenantId, scheduledAt])
+}
+
+// Proposta comercial gerada para uma unidade. `paymentCondition` é JSON livre
+// com `{ installments: [{amount, dueDate, type}], ... }`. Snapshot dos nomes
+// (`propertyName`, `unitNumber`, `clientName`, `brokerName`) é mantido para
+// quando a entidade original sofrer rename/exclusão.
+model CrmProposal {
+  id               String            @id @default(uuid())
+  tenantId         String
+  propertyId       String
+  unitId           String
+  clientId         String
+  brokerId         Int
+  propertyName     String
+  unitNumber       String
+  clientName       String
+  brokerName       String?
+  originalPrice    Decimal?          @db.Decimal(14, 2)
+  discount         Decimal?          @db.Decimal(14, 2)
+  discountPercent  Decimal?          @db.Decimal(6, 2)
+  finalPrice       Decimal?          @db.Decimal(14, 2)
+  paymentCondition Json              @default("{}")
+  status           CrmProposalStatus @default(draft)
+  validUntil       DateTime?
+  pdfUrl           String?
+  sourcePdfUrl     String?
+  notes            String?           @db.Text
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  broker   User        @relation("CrmProposalBroker", fields: [brokerId], references: [id], onDelete: Restrict)
+  property CrmProperty @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  unit     CrmUnit     @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  events    CrmProposalEvent[]
+  contracts CrmContract[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, brokerId])
+  @@index([tenantId, unitId])
+  @@index([tenantId, clientId])
+}
+
+// Histórico imutável de mudanças de status / eventos da proposta.
+model CrmProposalEvent {
+  id          String   @id @default(uuid())
+  tenantId    String
+  proposalId  String
+  eventType   String
+  fromStatus  String?
+  toStatus    String?
+  message     String?  @db.Text
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  proposal CrmProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, proposalId])
+}
+
+// Contrato gerado a partir de uma proposta aceita. `signatures` JSONB é
+// snapshot sincronizado pela aplicação a partir da tabela CrmSignature
+// (signatures-sync no app layer). Status → 'signed' dispara o trigger
+// `crm_generate_financials_on_signed` que insere CrmPayment + CrmCommission.
+model CrmContract {
+  id                  String            @id @default(uuid())
+  tenantId            String
+  proposalId          String?
+  propertyId          String
+  unitId              String
+  clientId            String
+  brokerId            Int
+  propertyName        String
+  unitNumber          String
+  clientName          String
+  clientCpfCnpj       String?
+  brokerName          String?
+  finalPrice          Decimal?          @db.Decimal(14, 2)
+  paymentCondition    Json              @default("{}")
+  status              CrmContractStatus @default(draft)
+  signatures          Json              @default("[]")
+  pdfUrl              String?
+  sourcePdfUrl        String?
+  notes               String?           @db.Text
+  externalEnvelopeId  String?
+  externalProvider    String?
+  externalEnvelopeUrl String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  broker   User         @relation("CrmContractBroker", fields: [brokerId], references: [id], onDelete: Restrict)
+  proposal CrmProposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
+  property CrmProperty  @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  unit     CrmUnit      @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  events         CrmContractEvent[]
+  signaturesList CrmSignature[]
+  payments       CrmPayment[]
+  commissions    CrmCommission[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, brokerId])
+  @@index([tenantId, unitId])
+  @@index([externalEnvelopeId])
+}
+
+// Histórico imutável de eventos do contrato.
+model CrmContractEvent {
+  id          String   @id @default(uuid())
+  tenantId    String
+  contractId  String
+  eventType   String
+  fromStatus  String?
+  toStatus    String?
+  message     String?  @db.Text
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contract CrmContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, contractId])
+}
+
+// Assinaturas individuais (signers) de um contrato Clicksign. `token` é
+// usado para webhook callback matching; `signatureHash` é o hash do PDF
+// assinado retornado pelo provider.
+model CrmSignature {
+  id            String    @id @default(uuid())
+  tenantId      String
+  contractId    String
+  role          String
+  signerName    String?
+  signerEmail   String?
+  status        String    @default("pending")
+  token         String    @default(uuid())
+  signedAt      DateTime?
+  ipAddress     String?
+  signatureHash String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contract CrmContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, role])
+  @@index([tenantId])
+  @@index([tenantId, contractId])
+  @@index([token])
+}
+
+// Parcela financeira. Gerada por trigger SQL on-signed lendo
+// `paymentCondition.installments` do contrato (vide migration).
+model CrmPayment {
+  id                String           @id @default(uuid())
+  tenantId          String
+  contractId        String
+  propertyId        String
+  unitId            String
+  clientId          String
+  propertyName      String
+  unitNumber        String
+  clientName        String
+  type              CrmPaymentType
+  installmentNumber Int?
+  amount            Decimal?         @db.Decimal(14, 2)
+  dueDate           DateTime?
+  paidAt            DateTime?
+  status            CrmPaymentStatus @default(pending)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contract CrmContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  property CrmProperty @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  unit     CrmUnit     @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, contractId, installmentNumber])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, contractId])
+  @@index([tenantId, dueDate])
+}
+
+// Comissão devida ao corretor. Gerada por trigger SQL on-signed.
+model CrmCommission {
+  id                String              @id @default(uuid())
+  tenantId          String
+  contractId        String
+  propertyId        String
+  unitId            String
+  brokerId          Int
+  propertyName      String
+  unitNumber        String
+  brokerName        String?
+  salePrice         Decimal?            @db.Decimal(14, 2)
+  commissionPercent Decimal?            @db.Decimal(6, 2)
+  commissionValue   Decimal?            @db.Decimal(14, 2)
+  status            CrmCommissionStatus @default(pending)
+  paidAt            DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contract CrmContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  property CrmProperty @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  unit     CrmUnit     @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  broker   User        @relation("CrmCommissionBroker", fields: [brokerId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, contractId, brokerId])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, contractId])
+  @@index([tenantId, brokerId])
+}
+
+// Versionamento de PDFs de proposal/contract. `parentType` discrimina entre
+// proposta e contrato (o `parentId` aponta para a row correspondente).
+model CrmDocumentVersion {
+  id           String                   @id @default(uuid())
+  tenantId     String
+  parentType   CrmDocumentParentType
+  parentId     String
+  pdfUrl       String
+  fileName     String?
+  action       CrmDocumentVersionAction
+  uploadedById Int?
+  uploaderName String?
+  createdAt    DateTime                 @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, parentType, parentId])
+}
+
+// Log de acesso a documentos (LGPD). Toda visualização/download é registrada.
+model CrmDocumentAccessLog {
+  id         String                  @id @default(uuid())
+  tenantId   String
+  parentType CrmDocumentParentType
+  parentId   String
+  pdfUrl     String
+  action     CrmDocumentAccessAction
+  userId     Int?
+  userName   String?
+  createdAt  DateTime                @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, parentType, parentId])
+  @@index([tenantId, userId])
+}
+
+// Audit log dedicado do CRM (campos sensíveis: stage, broker_id, price,
+// status etc.). Não substitui SystemEvent — convive: SystemEvent guarda
+// eventos de produto (LeadCreated, ContractSigned…); CrmChangeHistory
+// guarda diff em campo específico.
+model CrmChangeHistory {
+  id         String   @id @default(uuid())
+  tenantId   String
+  entityType String
+  entityId   String
+  field      String
+  oldValue   String?  @db.Text
+  newValue   String?  @db.Text
+  userId     Int?
+  userName   String?
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, entityType, entityId])
+}
+
+// Preferências de notificação CRM por usuário, escopadas ao tenant
+// (operador pode ter prefs distintas em tenants diferentes).
+model CrmNotificationPreference {
+  id                       String   @id @default(uuid())
+  tenantId                 String
+  userId                   Int
+  proposalSent             Boolean  @default(true)
+  contractPendingSignature Boolean  @default(true)
+  paymentDueSoon           Boolean  @default(true)
+  paymentOverdue           Boolean  @default(true)
+  commissionPaid           Boolean  @default(true)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
 }
