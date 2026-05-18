@@ -29,6 +29,12 @@ export enum EventType {
   REPESCAGEM_TRIGGERED = 'repescagem_triggered',
   BLOCK_PHRASE_TRIGGERED = 'block_phrase_triggered',
   AUTO_MESSAGE_SENT = 'auto_message_sent',
+
+  // Smart Ad Automator (SAA)
+  AD_PLATFORM_PROXY_CALL = 'ad_platform_proxy_call',
+  AD_PLATFORM_TOKEN_REFRESHED = 'ad_platform_token_refreshed',
+  AD_PLATFORM_TOKEN_REFRESH_FAILED = 'ad_platform_token_refresh_failed',
+  AD_PLATFORM_TOKEN_EXPIRED = 'ad_platform_token_expired',
 }
 
 export enum EventSeverity {
@@ -46,6 +52,8 @@ export enum EventModule {
   CONVERSATIONS = 'conversations',
   API_MESSAGES = 'api_messages',
   AUTO_MESSAGE = 'auto_message',
+  AD_PLATFORM_PROXY = 'ad_platform_proxy',
+  AD_PLATFORM_TOKEN_REFRESH = 'ad_platform_token_refresh',
 }
 
 interface EventFilters {

@@ -37,6 +37,7 @@ import { CrmBridgeModule } from './crm-bridge/crm-bridge.module';
 import { AdsBridgeModule } from './ads-bridge/ads-bridge.module';
 import { BotBridgeModule } from './bot-bridge/bot-bridge.module';
 import { AdPlatformConnectionsModule } from './ad-platform-connections/ad-platform-connections.module';
+import { AdvertiserCompaniesModule } from './advertiser-companies/advertiser-companies.module';
 
 @Module({
   imports: [
@@ -86,6 +87,7 @@ import { AdPlatformConnectionsModule } from './ad-platform-connections/ad-platfo
     AdsBridgeModule,
     BotBridgeModule,
     AdPlatformConnectionsModule,
+    AdvertiserCompaniesModule,
   ],
   controllers: [HealthController],
   providers: [PrismaService],
