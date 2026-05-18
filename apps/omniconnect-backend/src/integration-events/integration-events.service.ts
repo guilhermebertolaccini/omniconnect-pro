@@ -40,17 +40,17 @@ export class IntegrationEventsService {
   async recordEvent(input: RecordEventInput): Promise<RecordedEvent> {
     const { tenantId, connectionId, provider, idempotencyKey, signature, payload } = input;
 
+    // Idempotency is scoped per (tenant, provider, key). A row for the
+    // same key on a different tenant is a legitimate, separate event
+    // and must be allowed through.
     const existing = await this.prisma.integrationEvent.findUnique({
-      where: { idempotencyKey },
-      select: { id: true, tenantId: true, status: true },
+      where: {
+        tenantId_provider_idempotencyKey: { tenantId, provider, idempotencyKey },
+      },
+      select: { id: true, status: true },
     });
 
     if (existing) {
-      if (existing.tenantId !== tenantId) {
-        this.logger.warn(
-          `idempotencyKey collision across tenants. key=${idempotencyKey} expected=${tenantId} got=${existing.tenantId}`,
-        );
-      }
       return { eventId: existing.id, alreadyProcessed: true };
     }
 

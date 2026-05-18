@@ -54,7 +54,7 @@ describe('assertActiveConnection', () => {
     id: 'conn-1',
     provider: 'crm' as const,
     status: 'active',
-    secretHash: 's',
+    webhookSecretEncrypted: 'v1.aaaa.bbbb.cccc',
     tenantId: 'tenant-a',
     tenant: { id: 'tenant-a', isActive: true } as any,
   } as any;

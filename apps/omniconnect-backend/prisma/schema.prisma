@@ -575,13 +575,19 @@ model Tenant {
 }
 
 model IntegrationConnection {
-  id             String   @id @default(uuid())
-  tenantId       String
-  provider       String   // crm, ads, bot
-  secretHash     String
-  status         String   @default("active")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                       String   @id @default(uuid())
+  tenantId                 String
+  provider                 String   // crm, ads, bot
+  // Shared webhook secret used to verify HMAC-SHA256 signatures from
+  // the external provider. Stored encrypted at rest (AES-256-GCM via
+  // BridgeSecretCipher) and decrypted on demand right before signature
+  // verification. NEVER logged. Rotation = create a new row, deprecate
+  // the old one. The previous field name (`secretHash`) was misleading:
+  // it stored the secret itself, not a hash.
+  webhookSecretEncrypted   String
+  status                   String   @default("active")
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 
   tenant Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   events IntegrationEvent[]
@@ -623,7 +629,13 @@ model IntegrationEvent {
   tenantId        String
   connectionId    String
   provider        String
-  idempotencyKey  String    @unique
+  // Idempotency is scoped to (tenant, provider, key). A global @unique
+  // was a multi-tenant footgun: two providers — or two tenants on the
+  // same provider — could legitimately mint identical keys (UUIDv4
+  // collision is rare, but hash-of-body collisions across tenants
+  // sharing a similar template are not). Cross-tenant collisions are
+  // expected and must NOT silently swallow the event.
+  idempotencyKey  String
   signature       String?
   status          String    @default("received")
   errorMessage    String?   @db.Text
@@ -634,6 +646,7 @@ model IntegrationEvent {
   tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   connection IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, provider, idempotencyKey])
   @@index([tenantId])
   @@index([tenantId, provider])
   @@index([tenantId, status])

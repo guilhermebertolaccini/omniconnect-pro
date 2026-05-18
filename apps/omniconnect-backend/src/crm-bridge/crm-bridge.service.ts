@@ -10,6 +10,7 @@ import {
   safeParseJson,
   verifyHmac,
 } from '../integration-events/bridge-helpers';
+import { BridgeSecretCipher } from '../integration-events/bridge-secret-cipher';
 
 export interface HandleCrmWebhookInput {
   rawBody: Buffer;
@@ -29,6 +30,7 @@ export class CrmBridgeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: IntegrationEventsService,
+    private readonly cipher: BridgeSecretCipher,
   ) {}
 
   async handleWebhook(input: HandleCrmWebhookInput): Promise<HandleCrmWebhookResult> {
@@ -53,7 +55,8 @@ export class CrmBridgeService {
 
     if (verified) {
       if (process.env.NODE_ENV === 'production') {
-        verifyHmac(rawBody, signature, verified.secretHash);
+        const secret = this.cipher.decryptWithLegacyFallback(verified.webhookSecretEncrypted);
+        verifyHmac(rawBody, signature, secret);
       }
       tenantId = verified.tenantId;
       connectionId = verified.id;

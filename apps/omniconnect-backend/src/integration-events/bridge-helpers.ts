@@ -33,8 +33,10 @@ export function assertActiveConnection(opts: VerifyConnectionOpts) {
 }
 
 /**
- * Constant-time HMAC verification over the raw body buffer. Provider
- * secret comes from IntegrationConnection.secretHash.
+ * Constant-time HMAC verification over the raw body buffer. The
+ * `secret` argument is the *plaintext* shared secret, decrypted by
+ * BridgeSecretCipher from `IntegrationConnection.webhookSecretEncrypted`
+ * immediately before this call. NEVER pass the encrypted blob here.
  *
  * The signature header is expected to be the hex digest of
  * HMAC-SHA256(secret, rawBody). If the provider uses a different
@@ -52,8 +54,10 @@ export function verifyHmac(rawBody: Buffer, signature: string, secret: string) {
 
 /**
  * Derive an idempotency key from the header (when client supplies one)
- * or by hashing the raw body. We do NOT mix tenantId in because we
- * want to detect cross-tenant collisions explicitly in the service.
+ * or by hashing the raw body. The key is intentionally tenant-agnostic
+ * because uniqueness is enforced by the composite DB constraint
+ * (tenantId, provider, idempotencyKey) — two different tenants are
+ * allowed to mint the exact same key and both events must be persisted.
  */
 export function deriveIdempotencyKey(rawBody: Buffer, header?: string | null) {
   const trimmed = header?.trim();
