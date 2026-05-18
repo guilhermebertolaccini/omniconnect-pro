@@ -44,6 +44,8 @@ import { TenantInvitationsModule } from './tenant-invitations/tenant-invitations
 import { OAuthModule } from './oauth/oauth.module';
 import { CrmModule } from './crm/crm.module';
 import { CrmSignaturesModule } from './crm-signatures/crm-signatures.module';
+import { CrmStorageModule } from './crm-storage/crm-storage.module';
+import { CrmPdfParserModule } from './crm-pdf-parser/crm-pdf-parser.module';
 
 @Module({
   imports: [
@@ -100,6 +102,8 @@ import { CrmSignaturesModule } from './crm-signatures/crm-signatures.module';
     OAuthModule,
     CrmModule,
     CrmSignaturesModule,
+    CrmStorageModule,
+    CrmPdfParserModule,
   ],
   controllers: [HealthController],
   providers: [PrismaService],
