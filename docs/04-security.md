@@ -32,6 +32,7 @@ Use sempre:
 - Token de reset com expiração curta (15min)
 - Proteção contra brute force (rate limit + lockout temporário) via módulo `rate-limiting/`
 - **`JwtStrategy` recusa tokens sem `tenantId`** (ou com `default-tenant`) em `NODE_ENV=production`. Em dev/test esses valores ainda são aceitos por compatibilidade. Detalhe em `03-multitenancy.md`.
+- **`JwtStrategy` re-valida membership em cada request** via `UserTenant.findUnique({ userId_tenantId })`. Em produção, sem membership → 401, mesmo com token válido (defende contra usuários removidos de um tenant antes do token expirar). Em dev → warning. O role efetivo para `RolesGuard` é `UserTenant.role` (`req.user.tenantRole`), com fallback para `User.role`.
 
 ## Authorization
 
@@ -146,7 +147,7 @@ Dados pessoais sensíveis (CPF, RG, financeiro, mensagens):
 - Payload size limit (evitar 100MB POST)
 - Responder 200 imediatamente, processar async via fila
 
-### HMAC sobre raw body (Sprint 1.1)
+### HMAC sobre raw body (Sprint 1.1, refinado na Sprint 1.3)
 
 Os bridges externos (`/crm-bridge`, `/ads-bridge`, `/bot-bridge`) usam o middleware `RawBodyMiddleware` para preservar o buffer original da request antes do parse JSON. Sem isso, qualquer reformatação do body (espaços, ordem de chaves) quebra a assinatura.
 
@@ -167,13 +168,14 @@ async receive(
   });
 }
 
-// service
-verifyHmac(rawBody, signature, connection.secretHash); // timingSafeEqual
+// service (Sprint 1.3): descriptografa antes de verificar
+const secret = this.cipher.decryptWithLegacyFallback(connection.webhookSecretEncrypted);
+verifyHmac(rawBody, signature, secret); // timingSafeEqual
 ```
 
 A função `verifyHmac` em `integration-events/bridge-helpers.ts`:
 
-1. Computa `HMAC-SHA256(secretHash, rawBody)` em hex.
+1. Computa `HMAC-SHA256(secret, rawBody)` em hex.
 2. Compara via `crypto.timingSafeEqual` (resistente a timing attacks).
 3. Falha duro com `UnauthorizedException` se comprimento ou conteúdo divergirem.
 
@@ -182,15 +184,32 @@ A função `assertActiveConnection`:
 - Em **produção**: exige `IntegrationConnection` existente, com `provider` correto, `status === 'active'` e `tenant.isActive`. Caso contrário, `NotFoundException`.
 - Em **dev/test**: retorna `null` e o service cai em `default-tenant` apenas para destravar a DX local.
 
-### Idempotência (Sprint 1.1)
+### Webhook secret encrypted at rest (Sprint 1.3)
 
-`IntegrationEvent.idempotencyKey` tem `@unique` global. O service:
+O campo `IntegrationConnection.secretHash` foi renomeado para `webhookSecretEncrypted`. O nome anterior era enganoso: a coluna sempre armazenou o segredo HMAC compartilhado em texto claro (usado diretamente como chave HMAC), não um hash.
+
+Agora o valor é cifrado em repouso via `BridgeSecretCipher` (AES-256-GCM, formato versionado `v1.<iv>.<tag>.<ct>` em base64). A chave mestra vem de `BRIDGE_SECRET_KEY` (env), aceita como:
+
+- 32 bytes em base64 (preferido em produção);
+- 64 caracteres hex; ou
+- passphrase derivada via `sha256(raw)` (apenas em dev/test; em produção o cipher recusa).
+
+`decryptWithLegacyFallback` aceita rows pré-Sprint 1.3 em texto claro apenas fora de produção, com warning. Em produção o cipher exige o formato `v1.…`.
+
+NUNCA logue o segredo em texto claro nem o blob cifrado. O cipher só descriptografa imediatamente antes de chamar `verifyHmac`; o secret nunca vive na memória entre requests.
+
+### Idempotência (Sprint 1.1, corrigida na Sprint 1.3)
+
+`IntegrationEvent.idempotencyKey` agora é unique composto `(tenantId, provider, idempotencyKey)`. O `@unique` global usado na Sprint 1.1 era um footgun multi-tenant: dois tenants legítimos no mesmo provider podiam mintar a mesma chave (UUIDv4 não, mas hash-of-body sim para templates de body parecidos) e o segundo evento sumia silenciosamente como duplicado.
+
+O service:
 
 - Usa o header `Idempotency-Key` quando presente.
-- Fallback: SHA-256 do raw body.
-- Em colisão, devolve o evento existente (`alreadyProcessed: true`) sem reprocessar.
+- Fallback: SHA-256 do raw body (tenant-agnóstico — a unicidade é garantida pela DB no nível composto).
+- Em colisão dentro do mesmo `(tenant, provider)`, devolve o evento existente (`alreadyProcessed: true`) sem reprocessar.
+- A mesma chave em `(tenant-A, crm)` e `(tenant-B, crm)` são dois eventos distintos, ambos persistidos e processados.
 
-Isso protege contra retries do provedor (Meta retenta até 24h em caso de timeout) e contra replays maliciosos com o mesmo payload.
+Isso protege contra retries do provedor (Meta retenta até 24h em caso de timeout) e contra replays maliciosos, sem sacrificar tenants legítimos.
 
 ## Production checklist
 

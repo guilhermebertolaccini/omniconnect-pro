@@ -92,7 +92,7 @@ const validated = ConversationAIResultSchema.parse(JSON.parse(rawOutput));
 
 Antes de enviar transcript ao LLM:
 
-1. **Redação** de PII (CPF, RG, telefone, e-mail, valores financeiros sensíveis)
+1. **Redação** de PII via `redactPII` (Sprint 1.3 expandido)
 2. **Consentimento** do tenant (`tenant.aiConsent === true`)
 3. **DPA** com provedor (OpenAI: configurar flag `no-training`)
 4. Documentar em política de privacidade
@@ -101,6 +101,23 @@ Antes de enviar transcript ao LLM:
 const safe = redactPII(rawMessages);
 const result = await provider.analyze(buildPrompt(safe));
 ```
+
+`redactPII` substitui, em ordem de prioridade (mais específico primeiro), os padrões:
+
+| Token | Padrão |
+|---|---|
+| `[EMAIL]` | RFC simplificado |
+| `[CNPJ]` | 14 dígitos ou `00.000.000/0000-00` |
+| `[CPF]` | 11 dígitos ou `000.000.000-00` |
+| `[RG]` | 8 dígitos + dígito ou X |
+| `[CEP]` | 8 dígitos ou `00000-000` |
+| `[DATE]` | `dd/mm/yy(yy)`, `dd-mm-yy(yy)`, `dd.mm.yy(yy)` |
+| `[INCOME]` | `renda \| salário \| ganho mensal \| rendimento` + figura R$ (label preservado, valor mascarado) |
+| `[CONTRACT]` | `contrato \| matrícula \| processo \| protocolo \| reserva` + id alfanumérico |
+| `[ADDR_NUM]` | `rua/av/avenida/alameda/travessa/praça/estrada <nome>, <num>` (nome da rua preservado, número mascarado) |
+| `[PHONE]` | formatos brasileiros (`+55 (11) 99999-8888`, `(11) 99999-1234`, `11 9999-8888`) e fallback bare 10 dígitos |
+
+Trade-off LGPD: sequência de 11 dígitos sem separadores é tratada como `[CPF]`, não `[PHONE]`. O risco LGPD do CPF é maior, então o redactor de CPF roda antes.
 
 Mandar apenas o **mínimo necessário**:
 - ✅ Texto da conversa (com PII redigida)
@@ -140,15 +157,25 @@ model AIUsageLog {
 
 Cada chamada bem-sucedida grava status `success` com tokens e custo; falhas (rate limit, parse error, schema invalid) gravam `failed` ou `degraded` com `errorCode` para análise de qualidade do provedor.
 
-Tabela de preços em config:
-```typescript
-export const AI_PRICING = {
-  'gpt-4o-mini': { input: 0.00015, output: 0.0006 },  // USD per 1k tokens
-  'gpt-4o':      { input: 0.005,   output: 0.015 },
-};
+Tabela de preços versionada em `ModelPricing` (Sprint 1.2.4):
+
+```prisma
+model ModelPricing {
+  id              Int       @id @default(autoincrement())
+  modelProvider   String
+  modelName       String
+  inputPer1k      Float
+  outputPer1k     Float
+  currency        String    @default("USD")
+  effectiveFrom   DateTime  @default(now())
+  effectiveUntil  DateTime?
+  notes           String?
+
+  @@index([modelProvider, modelName, effectiveFrom])
+}
 ```
 
-> **Próximo passo (Sprint 1.2):** mover `AI_PRICING` para uma tabela `ModelPricing` por modelo/versão/data-início — preços de provedores mudam frequentemente e a constante hardcoded vira passivo técnico rápido.
+`ModelPricingService.estimateCost(provider, model, promptTokens, completionTokens)` consulta a tabela com janela `effectiveFrom <= now AND (effectiveUntil IS NULL OR effectiveUntil > now)`, cache TTL 5min em memória, fallback resiliente para a baseline antiga (`gpt-4o`, `gpt-4o-mini`) caso a tabela esteja vazia / queue de DB falhe. Resultado anotado com `source: 'database' | 'fallback'` para auditoria.
 
 Endpoint `/billing-usage/ai?tenantId&from&to` agrega por tenant.
 
@@ -170,9 +197,9 @@ Provider falhou (timeout, 429, 500) →
 
 **Nunca** quebrar a UX por falha de IA.
 
-## Async via BullMQ (Sprint 1.1)
+## Async via Bull (Sprint 1.1, refinada na Sprint 1.3)
 
-O `InsightAiModule` registra a fila `insight-ai-analysis` no Bull e o processor `AnalyzeConversationProcessor` consome jobs `analyze-conversation`.
+O `InsightAiModule` registra a fila `insight-ai` no Bull v4 e o processor `AnalyzeConversationProcessor` consome jobs `analyze-conversation`.
 
 ```
 POST /insight-ai/analyze/:phone           → enqueue job  (default async)
@@ -183,14 +210,28 @@ GET  /insight-ai/jobs/:jobId              → status do job + resultado quando p
 Job payload **obrigatoriamente** carrega `tenantId`:
 
 ```typescript
-await queue.add('analyze-conversation', {
-  tenantId,
-  contactPhone,
-  // ...filtros opcionais
-});
+const jobId = service.buildAnalyzeJobId(tenantId, contactPhone, dto);
+await queue.add('analyze-conversation', { tenantId, contactPhone, dto }, { jobId });
 ```
 
-Worker chama `ensureJobTenant(job.data)` antes de qualquer write — o sentinel `default-tenant` é rejeitado em produção.
+### `jobId` determinístico (Sprint 1.3)
+
+```ts
+jobId = `iai:${sha256(tenantId|phone|days|limit|segment|userId|hourBucket)}`
+```
+
+Por que hash + hour bucket:
+- **Dedup real**: Bull respeita `jobId` único. Retries dentro da mesma janela horária colapsam em um único job, em vez de empilhar duplicatas.
+- **Privacidade**: o número de telefone nunca é escrito em texto claro no Redis, BullBoard ou logs de fila.
+- **Recovery**: a janela rola a cada hora — uma reanálise legítima na próxima hora gera id novo e roda normalmente.
+
+### `getJobStatus` estrito (Sprint 1.3)
+
+Worker e endpoint chamam `ensureJobTenant(job.data)` antes de qualquer write — o sentinel `default-tenant` é rejeitado em produção. O `GET /insight-ai/jobs/:id` retorna **404** (não 403) em três situações:
+
+1. Job não existe.
+2. Job existe mas o payload **não contém** `tenantId` (legacy / malformado — defesa em profundidade).
+3. Job existe mas pertence a outro tenant — não vazamos sequer a existência cross-tenant.
 
 A escolha por jobs (em vez de chamada síncrona dentro da request HTTP) protege contra:
 

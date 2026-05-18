@@ -42,21 +42,34 @@ Acesso via decorator `@CurrentUser()` (em `common/decorators/current-user.decora
 
 `tenantId` vem do JWT (após o usuário escolher workspace ativo, no retrofit multi-tenant). **Nunca** confiar em `tenantId` no body se ele pode ser derivado da autenticação.
 
-### `JwtStrategy` em produção (Sprint 1.1)
+### `JwtStrategy` em produção (Sprint 1.1, reforçada na Sprint 1.3)
 
 A `JwtStrategy` recusa qualquer token que chegue **sem `tenantId`** ou com `tenantId === 'default-tenant'` quando `NODE_ENV === 'production'`. Em desenvolvimento e teste o valor `default-tenant` continua aceito por compatibilidade — apenas para o ambiente local.
 
+Além disso, a Sprint 1.3 adicionou **re-validação de membership em cada request** via `UserTenant.findUnique({ userId_tenantId })`. Sem isso, um token antigo de um usuário removido do tenant continuava válido até expirar.
+
+Comportamento atual:
+
+| Ambiente | Sem `tenantId` no JWT | `default-tenant` | Sem `UserTenant` para o par (user, tenant) |
+|---|---|---|---|
+| `production` | 401 | 401 | 401 (`"not a member of the requested tenant"`) |
+| `development` | aceita como `default-tenant` | aceita | warning + aceita |
+
 ```typescript
-// apps/omniconnect-backend/src/auth/strategies/jwt.strategy.ts
-const tenantId = payload.tenantId;
-if (
-  process.env.NODE_ENV === 'production' &&
-  (!tenantId || tenantId === 'default-tenant')
-) {
-  throw new UnauthorizedException('Tenant not explicitly defined in production context');
+// apps/omniconnect-backend/src/auth/strategies/jwt.strategy.ts (resumo)
+const membership = await this.prisma.userTenant.findUnique({
+  where: { userId_tenantId: { userId: user.id, tenantId } },
+  select: { role: true },
+});
+
+if (!membership && inProd) {
+  throw new UnauthorizedException('User is not a member of the requested tenant');
 }
-return { ...user, tenantId: tenantId || 'default-tenant' };
+
+return { ...user, tenantId, tenantRole: membership?.role ?? null };
 ```
+
+`req.user.tenantRole` é o role **por tenant** (de `UserTenant.role`), que é a fonte de verdade para autorização multi-tenant. `RolesGuard` lê `tenantRole` primeiro e cai para o `user.role` global apenas se ausente.
 
 ### Helper `ensureTenant` (Sprint 1.1)
 
