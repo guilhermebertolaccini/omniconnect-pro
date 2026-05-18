@@ -20,7 +20,7 @@ export function Header({ onMenuClick }: HeaderProps) {
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const { user, signOut } = useAuth();
 
-  const displayName = user?.user_metadata?.display_name || user?.email || 'Admin';
+  const displayName = user?.name || user?.email || 'Admin';
   const initials = displayName.slice(0, 2).toUpperCase();
 
   useEffect(() => {

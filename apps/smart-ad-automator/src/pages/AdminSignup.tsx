@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { TrendingUp, Lock, Mail, Eye, EyeOff, User } from 'lucide-react';
+import { TrendingUp, Lock, Mail, Eye, EyeOff, User, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
+import { signUp, OmniconnectError } from '@/lib/omniconnectClient';
 
 export default function AdminSignup() {
   const navigate = useNavigate();
   const [name, setName] = useState('');
+  const [tenantName, setTenantName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -18,30 +19,38 @@ export default function AdminSignup() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 6) {
-      toast.error('A senha deve ter pelo menos 6 caracteres.');
+    if (password.length < 8) {
+      toast.error('A senha deve ter pelo menos 8 caracteres.');
+      return;
+    }
+    if (!tenantName.trim()) {
+      toast.error('Informe o nome da agência.');
       return;
     }
     setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { display_name: name },
-        emailRedirectTo: window.location.origin,
-      },
-    });
-
-    if (error) {
-      toast.error(error.message);
+    try {
+      await signUp({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        tenantName: tenantName.trim(),
+      });
+      toast.success('Conta criada com sucesso!');
+      navigate('/');
+    } catch (err) {
+      const message =
+        err instanceof OmniconnectError && err.status === 409
+          ? 'Este e-mail já está cadastrado.'
+          : err instanceof OmniconnectError && err.status === 403
+            ? 'Cadastros públicos estão desabilitados nesta instalação.'
+            : err instanceof Error
+              ? err.message
+              : 'Erro ao criar conta.';
+      toast.error(message);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    toast.success('Conta criada! Verifique seu e-mail para confirmar o cadastro.');
-    navigate('/login');
-    setLoading(false);
   };
 
   return (
@@ -88,6 +97,22 @@ export default function AdminSignup() {
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="tenantName">Nome da agência</Label>
+                <div className="relative">
+                  <Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="tenantName"
+                    type="text"
+                    placeholder="Minha Agência"
+                    value={tenantName}
+                    onChange={(e) => setTenantName(e.target.value)}
+                    className="pl-10"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="email">E-mail</Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -110,12 +135,12 @@ export default function AdminSignup() {
                   <Input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="Mínimo 6 caracteres"
+                    placeholder="Mínimo 8 caracteres"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 pr-10"
                     required
-                    minLength={6}
+                    minLength={8}
                   />
                   <button
                     type="button"

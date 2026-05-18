@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
+import { signIn, OmniconnectError } from '@/lib/omniconnectClient';
 
 export default function AdminLogin() {
   const navigate = useNavigate();
@@ -19,19 +19,21 @@ export default function AdminLogin() {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      toast.error(error.message === 'Invalid login credentials'
-        ? 'E-mail ou senha inválidos.'
-        : error.message);
+    try {
+      await signIn(email, password);
+      toast.success('Login realizado com sucesso!');
+      navigate('/');
+    } catch (err) {
+      const message =
+        err instanceof OmniconnectError && err.status === 401
+          ? 'E-mail ou senha inválidos.'
+          : err instanceof Error
+            ? err.message
+            : 'Erro ao fazer login.';
+      toast.error(message);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    toast.success('Login realizado com sucesso!');
-    navigate('/');
-    setLoading(false);
   };
 
   return (

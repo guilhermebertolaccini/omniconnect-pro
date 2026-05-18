@@ -1,71 +1,69 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-import type { User, Session } from '@supabase/supabase-js';
+import { useEffect, useState } from 'react';
+import {
+  getAuthState,
+  restoreSession,
+  signOut as backendSignOut,
+  subscribe,
+  type AuthState,
+  type SessionUser,
+} from '@/lib/omniconnectClient';
 
-interface AuthState {
-  user: User | null;
-  session: Session | null;
+interface UseAuthReturn extends AuthState {
+  /** Indica que o boot ainda não tentou restaurar a sessão. */
   loading: boolean;
+  /** Roles do user atual. Sprint 2.4: derivada apenas da role principal. */
   roles: string[];
+  /** Role primary — mantém forma do hook anterior para compat de UI. */
+  role: string | null;
+  /** True se `role === 'admin'` ou `super_admin`. */
+  isAdmin: boolean;
+  /** True se o user pertence ao tenant especial 'platform' como admin. */
+  isSuperAdmin: boolean;
+  signOut: () => Promise<void>;
 }
 
-async function fetchRoles(userId: string): Promise<string[]> {
-  const { data } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', userId);
-  return (data ?? []).map((r) => r.role as string);
-}
+let bootPromise: Promise<SessionUser | null> | null = null;
 
-export function useAuth() {
-  const [state, setState] = useState<AuthState>({
-    user: null,
-    session: null,
-    loading: true,
-    roles: [],
-  });
+/**
+ * Hook de auth do SAA — Sprint 2.4.
+ *
+ * Substitui o supabase.auth.onAuthStateChange por subscribe() do
+ * omniconnectClient. No primeiro mount, dispara restoreSession() UMA vez para
+ * tentar reaproveitar o cookie HttpOnly de refresh; chamadas subsequentes
+ * compartilham o mesmo Promise (sem rajada de /auth/refresh).
+ */
+export function useAuth(): UseAuthReturn {
+  const [state, setState] = useState<AuthState>(getAuthState());
+  const [loading, setLoading] = useState(state.status === 'anonymous');
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        const user = session?.user ?? null;
-        setState({ user, session, loading: false, roles: [] });
-        if (user) {
-          setTimeout(async () => {
-            const roles = await fetchRoles(user.id);
-            setState((prev) => ({ ...prev, roles }));
-          }, 0);
-        }
-      }
-    );
+    const unsub = subscribe(setState);
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      const user = session?.user ?? null;
-      if (user) {
-        const roles = await fetchRoles(user.id);
-        setState({ user, session, loading: false, roles });
-      } else {
-        setState({ user: null, session: null, loading: false, roles: [] });
-      }
-    });
+    if (!bootPromise) {
+      bootPromise = restoreSession();
+    }
+    bootPromise.finally(() => setLoading(false));
 
-    return () => subscription.unsubscribe();
+    return unsub;
   }, []);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setState({ user: null, session: null, loading: false, roles: [] });
+  const role = state.user?.role ?? null;
+  const isSuperAdmin = !!state.user && state.user.tenantId === 'platform' && role === 'admin';
+  const isAdmin = role === 'admin' || isSuperAdmin;
+  const roles = role ? (isSuperAdmin ? ['super_admin', role] : [role]) : [];
+
+  return {
+    ...state,
+    loading,
+    roles,
+    role,
+    isAdmin,
+    isSuperAdmin,
+    signOut: backendSignOut,
   };
+}
 
-  // Backward-compat: expose primary role
-  const role = state.roles.includes('super_admin')
-    ? 'super_admin'
-    : state.roles.includes('admin')
-      ? 'admin'
-      : state.roles[0] ?? null;
-
-  const isSuperAdmin = state.roles.includes('super_admin');
-  const isAdmin = state.roles.includes('admin') || isSuperAdmin;
-
-  return { ...state, role, isSuperAdmin, isAdmin, signOut };
+/** Reset interno de boot — exclusivo de testes. */
+export function __resetAuthBoot(): void {
+  bootPromise = null;
 }
