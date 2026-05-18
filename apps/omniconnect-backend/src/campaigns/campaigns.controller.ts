@@ -6,6 +6,8 @@ import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ensureTenant } from '../common/utils/tenant-context';
 import { Role } from '@prisma/client';
 import csv from 'csv-parser';
 import { Readable } from 'stream';
@@ -19,21 +21,22 @@ export class CampaignsController {
 
   @Post()
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  create(@Body() createCampaignDto: CreateCampaignDto) {
-    console.log('📋 [Campaigns] Criando campanha:', JSON.stringify(createCampaignDto, null, 2));
-    return this.campaignsService.create(createCampaignDto);
+  create(@CurrentUser() user: any, @Body() createCampaignDto: CreateCampaignDto) {
+    return this.campaignsService.create(ensureTenant(user), createCampaignDto);
   }
 
   @Post(':id/upload')
   @Roles(Role.admin, Role.supervisor, Role.digital)
   @UseInterceptors(FileInterceptor('file'))
   async uploadCsv(
+    @CurrentUser() user: any,
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('message') message?: string,
     @Body('useTemplate') useTemplate?: string,
     @Body('templateId') templateId?: string,
   ) {
+    const tenantId = ensureTenant(user);
     console.log(`📤 [Campaigns] Upload CSV recebido para campanha ${id}`);
     console.log(`📄 [Campaigns] Arquivo:`, file ? { name: file.originalname, size: file.size, mimetype: file.mimetype } : 'NENHUM');
     console.log(`📝 [Campaigns] Mensagem: ${message || 'Nenhuma'}`);
@@ -84,6 +87,7 @@ export class CampaignsController {
           console.log(`✅ [Campaigns] CSV processado: ${contacts.length} contatos encontrados`);
           try {
             const result = await this.campaignsService.uploadCampaign(
+              tenantId,
               +id,
               contacts,
               message,
@@ -106,25 +110,25 @@ export class CampaignsController {
 
   @Get()
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  findAll() {
-    return this.campaignsService.findAll();
+  findAll(@CurrentUser() user: any) {
+    return this.campaignsService.findAll(ensureTenant(user));
   }
 
   @Get(':id')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  findOne(@Param('id') id: string) {
-    return this.campaignsService.findOne(+id);
+  findOne(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.campaignsService.findOne(ensureTenant(user), +id);
   }
 
   @Get('stats/:name')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  getStats(@Param('name') name: string) {
-    return this.campaignsService.getStats(name);
+  getStats(@CurrentUser() user: any, @Param('name') name: string) {
+    return this.campaignsService.getStats(ensureTenant(user), name);
   }
 
   @Delete(':id')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  remove(@Param('id') id: string) {
-    return this.campaignsService.remove(+id);
+  remove(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.campaignsService.remove(ensureTenant(user), +id);
   }
 }

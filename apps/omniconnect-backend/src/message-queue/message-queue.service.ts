@@ -13,9 +13,12 @@ export class MessageQueueService {
   ) {}
 
   /**
-   * Adiciona mensagem à fila quando não há operador online
+   * Adiciona mensagem à fila quando não há operador online.
+   * `tenantId` é obrigatório e deve vir resolvido pelo caller (webhook
+   * resolveu via App, ou request autenticado já tem o user).
    */
   async addToQueue(
+    tenantId: string,
     contactPhone: string,
     contactName: string,
     message: string,
@@ -23,8 +26,12 @@ export class MessageQueueService {
     mediaUrl?: string,
     segment?: number,
   ) {
+    if (!tenantId) {
+      throw new Error('MessageQueueService.addToQueue requires tenantId');
+    }
     return await this.prisma.messageQueue.create({
       data: {
+        tenantId,
         contactPhone,
         contactName,
         message,
@@ -37,23 +44,35 @@ export class MessageQueueService {
   }
 
   /**
-   * Processa mensagens pendentes quando operador fica online
+   * Processa mensagens pendentes quando operador fica online.
+   * O tenantId é resolvido per-message a partir do próprio registro
+   * (`MessageQueue.tenantId` é confiável pois foi gravado no enqueue).
+   * Adicionalmente, escopamos a query inicial pelo tenant do operador
+   * para impedir cross-tenant pickup.
    */
   async processPendingMessages(operatorId: number, operatorSegment?: number) {
+    // Recuperar tenants do operador (mantemos compatibilidade com cenários
+    // mono-tenant onde o operador só está em 1 tenant).
+    const operator = await this.prisma.user.findUnique({
+      where: { id: operatorId },
+      include: { tenants: { select: { tenantId: true } } },
+    });
+    const operatorTenantIds = operator?.tenants?.map(t => t.tenantId) || [];
+
     const whereClause: any = {
       status: 'pending',
     };
-
-    // Filtrar por segmento se o operador tiver segmento
+    if (operatorTenantIds.length > 0) {
+      whereClause.tenantId = { in: operatorTenantIds };
+    }
     if (operatorSegment) {
       whereClause.segment = operatorSegment;
     }
 
-    // Remover limite de 10 - processar todas as mensagens pendentes (em lotes de 50)
     const pendingMessages = await this.prisma.messageQueue.findMany({
       where: whereClause,
       orderBy: { createdAt: 'asc' },
-      take: 50, // Processar até 50 mensagens por vez
+      take: 50,
     });
 
     for (const queuedMessage of pendingMessages) {
@@ -64,18 +83,10 @@ export class MessageQueueService {
           data: { status: 'processing', attempts: { increment: 1 } },
         });
 
-        // Resolver tenantId via operador (trusted, lookup pelo id passado).
-        // FIXME(Sprint 1.2): incluir tenantId no payload do scheduler para evitar
-        // a query extra e validar antes do processamento.
-        const operator = await this.prisma.user.findUnique({
-          where: { id: operatorId },
-          include: { tenants: { take: 1 } },
-        });
-        const tenantId =
-          operator?.tenants?.[0]?.tenantId || 'default-tenant';
+        // tenantId já foi gravado no enqueue — é a fonte da verdade aqui.
+        const tenantId = queuedMessage.tenantId;
 
         // Criar conversa e enviar mensagem via WebSocket
-        // Nota: Isso vai criar a conversa e notificar o operador
         await this.conversationsService.create(tenantId, {
           contactPhone: queuedMessage.contactPhone,
           contactName: queuedMessage.contactName || queuedMessage.contactPhone,

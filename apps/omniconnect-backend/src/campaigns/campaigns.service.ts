@@ -16,7 +16,10 @@ export class CampaignsService {
     private usersService: UsersService,
   ) { }
 
-  async create(createCampaignDto: CreateCampaignDto) {
+  async create(tenantId: string, createCampaignDto: CreateCampaignDto) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
     // Converter endTime (HH:mm) para DateTime do dia atual
     let endTimeDate: Date | null = null;
     if (createCampaignDto.endTime) {
@@ -42,30 +45,29 @@ export class CampaignsService {
           ? JSON.stringify(createCampaignDto.templateVariables)
           : null,
         endTime: endTimeDate,
+        tenantId,
       },
     });
   }
 
   async uploadCampaign(
+    tenantId: string,
     campaignId: number,
     contacts: CampaignContact[],
     message?: string,
     useTemplate?: boolean,
     templateId?: number,
   ) {
-    const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id: campaignId, tenantId },
     });
 
     if (!campaign) {
       throw new NotFoundException('Campanha não encontrada');
     }
-
-    // FIXME(Sprint 1.2): resolve tenantId from authenticated campaign owner
-    // (currently uploadCampaign is invoked from controllers behind JwtAuthGuard
-    // but does not propagate tenant context; tenantId is enforced once contacts
-    // become tenant-scoped end-to-end).
-    const tenantId = 'default-tenant';
 
     // Buscar operadores online do segmento
     const onlineOperators = await this.usersService.getOnlineOperators(campaign.contactSegment);
@@ -90,8 +92,8 @@ export class CampaignsService {
 
     // Se estiver usando template, verificar se o template é vinculado a uma linha específica
     if (finalUseTemplate && finalTemplateId) {
-      const template = await this.prisma.template.findUnique({
-        where: { id: finalTemplateId },
+      const template = await this.prisma.template.findFirst({
+        where: { id: finalTemplateId, tenantId },
       });
 
       if (template && template.lineId) {
@@ -205,14 +207,16 @@ export class CampaignsService {
             templateId: finalTemplateId,
             templateVariables: campaign.templateVariables,
             endTime: campaign.endTime,
+            tenantId,
           },
         });
 
-        // Adicionar à fila com delay baseado na rodada
+        // Adicionar à fila com delay baseado na rodada — tenantId no payload.
         const delay = roundIndex * intervalMs;
         await this.campaignsQueue.add(
           'send-campaign-message',
           {
+            tenantId,
             campaignId: campaignRecord.id,
             contactName: contact.name,
             contactPhone: contact.phone,
@@ -249,21 +253,23 @@ export class CampaignsService {
     };
   }
 
-  async findAll(filters?: any) {
-    // Remover campos inválidos que não existem no schema
+  async findAll(tenantId: string, filters?: any) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
     const { search, ...validFilters } = filters || {};
 
-    // Se houver busca por texto, aplicar filtros
-    const where = search
+    const where: any = search
       ? {
         ...validFilters,
+        tenantId,
         OR: [
           { name: { contains: search, mode: 'insensitive' } },
           { contactName: { contains: search, mode: 'insensitive' } },
           { contactPhone: { contains: search } },
         ],
       }
-      : validFilters;
+      : { ...validFilters, tenantId };
 
     return this.prisma.campaign.findMany({
       where,
@@ -273,9 +279,12 @@ export class CampaignsService {
     });
   }
 
-  async findOne(id: number) {
-    const campaign = await this.prisma.campaign.findUnique({
-      where: { id },
+  async findOne(tenantId: string, id: number) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id, tenantId },
     });
 
     if (!campaign) {
@@ -285,18 +294,20 @@ export class CampaignsService {
     return campaign;
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(tenantId: string, id: number) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.campaign.delete({
       where: { id },
     });
   }
 
-  async getStats(campaignName: string) {
-    // Buscar todas as campanhas com este nome
+  async getStats(tenantId: string, campaignName: string) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
     const campaigns = await this.prisma.campaign.findMany({
-      where: { name: campaignName },
+      where: { name: campaignName, tenantId },
       select: {
         id: true,
         contactPhone: true,
@@ -316,11 +327,12 @@ export class CampaignsService {
       ? new Date(Math.min(...campaigns.map(c => c.dateTime.getTime())))
       : new Date();
 
-    // Buscar conversas onde o contato respondeu após o envio da campanha
+    // Buscar conversas onde o contato respondeu após o envio da campanha (mesmo tenant).
     const conversations = await this.prisma.conversation.findMany({
       where: {
+        tenantId,
         contactPhone: { in: contactPhones },
-        sender: 'contact', // Mensagens do contato (respostas)
+        sender: 'contact',
         datetime: { gte: earliestCampaignTime },
       },
       select: {

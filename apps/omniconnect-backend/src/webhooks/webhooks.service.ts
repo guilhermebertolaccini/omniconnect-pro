@@ -218,8 +218,9 @@ export class WebhooksService {
           console.log(`📥 [Webhook] Nenhum operador online, adicionando mensagem à fila...`);
 
           // Adicionar à fila de mensagens
-          await (this.prisma as any).messageQueue.create({
+          await this.prisma.messageQueue.create({
             data: {
+              tenantId,
               contactPhone: from,
               contactName: contact.name,
               message: messageText,

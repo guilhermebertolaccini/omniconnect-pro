@@ -56,6 +56,7 @@ model User {
 
   systemEvents SystemEvent[]
   tenants      UserTenant[]
+  apiKeys      TenantApiKey[]
 
   @@index([email])
   @@index([segment])
@@ -570,6 +571,7 @@ model Tenant {
   aiUsageLogs            AIUsageLog[]
   integrationConnections IntegrationConnection[]
   integrationEvents      IntegrationEvent[]
+  apiKeys                TenantApiKey[]
 }
 
 model IntegrationConnection {
@@ -651,4 +653,28 @@ model UserTenant {
   @@unique([userId, tenantId])
   @@index([userId])
   @@index([tenantId])
+}
+
+// Server-to-server credential. Stored as sha256(secret), never as plaintext.
+// Resolved by ApiKeyGuard to obtain the tenant context for non-JWT callers
+// (massive CPC dispatch, external integrations, scripts, etc.).
+model TenantApiKey {
+  id          String    @id @default(uuid())
+  tenantId    String
+  hashedKey   String    @unique
+  prefix      String    // first ~8 chars of the plaintext for human identification only
+  label       String
+  scopes      Json?     // optional fine-grained scope list (future use)
+  createdById Int?
+  createdAt   DateTime  @default(now())
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  expiresAt   DateTime?
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, revokedAt])
+  @@index([prefix])
 }

@@ -311,8 +311,9 @@ export class CloudApiWebhookService {
 
       // Se ainda não encontrou operador online, adicionar à fila
       if (!finalOperatorId) {
-        await (this.prisma as any).messageQueue.create({
+        await this.prisma.messageQueue.create({
           data: {
+            tenantId,
             contactPhone: from,
             contactName: contact.name,
             message: messageText,

@@ -10,6 +10,7 @@ import { AppLoggerService } from '../logger/logger.service';
 import { WhatsappCloudService } from '../whatsapp-cloud/whatsapp-cloud.service';
 import { ControlPanelService } from '../control-panel/control-panel.service';
 import { PhoneValidationService } from '../phone-validation/phone-validation.service';
+import { ensureJobTenant } from '../common/utils/tenant-context';
 import axios from 'axios';
 
 interface TemplateVariable {
@@ -34,12 +35,16 @@ export class CampaignsProcessor {
 
   @Process('send-campaign-message')
   async handleSendMessage(job: Job) {
-    const { 
-      campaignId, 
-      contactName, 
-      contactPhone: rawContactPhone, 
-      contactSegment, 
-      lineId, 
+    // tenantId must travel in the payload (callers enqueue it). In production
+    // ensureJobTenant rejects jobs without tenant context; in dev/test it
+    // falls back to default-tenant with a logged warning.
+    const jobTenantId = ensureJobTenant(job.data, `campaigns:${job.id}`);
+    const {
+      campaignId,
+      contactName,
+      contactPhone: rawContactPhone,
+      contactSegment,
+      lineId,
       message,
       useTemplate,
       templateId,
@@ -49,21 +54,6 @@ export class CampaignsProcessor {
     try {
       // Normalizar telefone (adicionar 55, remover caracteres especiais)
       const contactPhone = this.phoneValidationService.normalizePhone(rawContactPhone);
-
-      // Resolver tenantId via line.appId (trusted) — necessário antes da blocklist.
-      // FIXME(Sprint 1.2): passar tenantId no payload do job para evitar a query extra.
-      const lineForTenant = await this.prisma.linesStock.findUnique({
-        where: { id: lineId },
-        select: { tenantId: true, appId: true },
-      });
-      const appForTenant = lineForTenant
-        ? await this.prisma.app.findUnique({
-            where: { id: lineForTenant.appId },
-            select: { tenantId: true },
-          })
-        : null;
-      const jobTenantId =
-        appForTenant?.tenantId || lineForTenant?.tenantId || 'default-tenant';
 
       // Verificar se está na blocklist (escopado por tenant)
       const isBlocked = await this.blocklistService.isBlocked(jobTenantId, contactPhone);
@@ -106,11 +96,9 @@ export class CampaignsProcessor {
         return;
       }
 
-      // Buscar a linha.
-      // FIXME(Sprint 1.2): passar tenantId direto no payload do job para evitar
-      // a query extra e garantir validação no enqueue.
-      const line = await this.prisma.linesStock.findUnique({
-        where: { id: lineId },
+      // Buscar a linha (tenant já validado via ensureJobTenant no início).
+      const line = await this.prisma.linesStock.findFirst({
+        where: { id: lineId, tenantId: jobTenantId },
       });
 
       if (!line || line.lineStatus !== 'active') {
@@ -155,10 +143,10 @@ export class CampaignsProcessor {
 
       while (retries < 3 && !sent) {
         try {
-          // Se usar template, enviar via template
+          // Se usar template, enviar via template (escopado por tenant)
           if (useTemplate && templateId) {
-            const template = await this.prisma.template.findUnique({
-              where: { id: templateId },
+            const template = await this.prisma.template.findFirst({
+              where: { id: templateId, tenantId: jobTenantId },
             });
 
             if (!template) {

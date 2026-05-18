@@ -62,17 +62,25 @@ export function withTenant<T extends Record<string, unknown>>(
  * Defensive guard for background jobs / processors that receive
  * tenantId via payload. Same semantics as ensureTenant but the source
  * is a JSON job object instead of req.user.
+ *
+ * @param payload The job data object — must carry `tenantId`.
+ * @param context Optional label (e.g. `"campaigns:42"`) included in the
+ *                error message to ease debugging of queue payloads.
  */
-export function ensureJobTenant(payload: { tenantId?: string | null } | null | undefined): string {
+export function ensureJobTenant(
+  payload: { tenantId?: string | null } | null | undefined,
+  context?: string,
+): string {
+  const where = context ? ` (${context})` : '';
   if (!payload) {
-    throw new ForbiddenException('Job payload missing tenant context');
+    throw new ForbiddenException(`Job payload missing tenant context${where}`);
   }
   const tenantId = payload.tenantId?.trim();
   if (!tenantId) {
-    throw new ForbiddenException('Job payload missing tenantId');
+    throw new ForbiddenException(`Job payload missing tenantId${where}`);
   }
   if (process.env.NODE_ENV === 'production' && tenantId === DEFAULT_TENANT_SENTINEL) {
-    throw new ForbiddenException('default-tenant is not allowed in production jobs');
+    throw new ForbiddenException(`default-tenant is not allowed in production jobs${where}`);
   }
   return tenantId;
 }

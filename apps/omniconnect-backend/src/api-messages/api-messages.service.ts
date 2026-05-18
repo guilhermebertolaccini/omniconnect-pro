@@ -168,15 +168,15 @@ export class ApiMessagesService {
   }
 
   /**
-   * Processa disparo CPC
+   * Processa disparo CPC. `tenantId` is resolved by ApiKeyGuard via
+   * TenantApiKey lookup before the controller hands off to this method.
    */
-  async sendMassiveCpc(dto: MassiveCpcDto, ipAddress?: string, userAgent?: string) {
+  async sendMassiveCpc(tenantId: string, dto: MassiveCpcDto, ipAddress?: string, userAgent?: string) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
     const errors: Array<{ phone: string; reason: string }> = [];
     let processed = 0;
-
-    // FIXME(Sprint 1.2): resolve tenantId from API key → TenantApiKey table.
-    // For now we default; ApiKeyGuard only validates the static API_KEY env.
-    const tenantId = 'default-tenant';
 
     const tag = await this.tagsService.findByName(tenantId, dto.tag);
     if (!tag) {
@@ -266,9 +266,10 @@ export class ApiMessagesService {
           continue;
         }
 
-        // Verificar blocklist (usar telefone normalizado)
+        // Verificar blocklist (usar telefone normalizado, escopo do tenant)
         const isBlocked = await this.prisma.blockList.findFirst({
           where: {
+            tenantId,
             OR: [
               { phone: normalizedPhone },
               { cpf: message.contract },
@@ -294,9 +295,9 @@ export class ApiMessagesService {
         let template: any = null;
 
         if (useTemplate && templateId) {
-          // Buscar template
-          template = await this.prisma.template.findUnique({
-            where: { id: templateId },
+          // Buscar template (escopado por tenant)
+          template = await this.prisma.template.findFirst({
+            where: { id: templateId, tenantId },
           });
 
           if (!template) {
@@ -491,13 +492,13 @@ export class ApiMessagesService {
 
 
   /**
-   * Envia template 1x1 via API externa
+   * Envia template 1x1 via API externa. `tenantId` resolved by ApiKeyGuard.
    */
-  async sendTemplateExternal(dto: SendTemplateExternalDto, ipAddress?: string, userAgent?: string) {
+  async sendTemplateExternal(tenantId: string, dto: SendTemplateExternalDto, ipAddress?: string, userAgent?: string) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
     try {
-      // FIXME(Sprint 1.2): resolve tenantId from API key → TenantApiKey table.
-      const tenantId = 'default-tenant';
-
       // Buscar operador
       const operator = await this.findOperatorBySpecialistCode(dto.specialistCode);
 
@@ -519,9 +520,9 @@ export class ApiMessagesService {
         throw new BadRequestException('Linha não possui app ou accessToken configurados');
       }
 
-      // Verificar blocklist
+      // Verificar blocklist (escopo do tenant)
       const isBlocked = await this.prisma.blockList.findFirst({
-        where: { phone: dto.phone },
+        where: { tenantId, phone: dto.phone },
       });
 
       if (isBlocked) {
@@ -534,9 +535,9 @@ export class ApiMessagesService {
         throw new BadRequestException(cpcCheck.reason || 'Bloqueado por regra CPC');
       }
 
-      // Buscar template
-      const template = await this.prisma.template.findUnique({
-        where: { id: dto.templateId },
+      // Buscar template (escopado por tenant)
+      const template = await this.prisma.template.findFirst({
+        where: { id: dto.templateId, tenantId },
       });
 
       if (!template) {

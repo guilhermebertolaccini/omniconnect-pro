@@ -13,20 +13,22 @@ import { HealthCheckCacheModule } from '../health-check-cache/health-check-cache
 import { LineReputationModule } from '../line-reputation/line-reputation.module';
 import { PhoneValidationModule } from '../phone-validation/phone-validation.module';
 import { WhatsappCloudModule } from '../whatsapp-cloud/whatsapp-cloud.module';
+import { TenantApiKeysModule } from '../tenant-api-keys/tenant-api-keys.module';
 
 @Module({
   imports: [
-    TagsModule, 
-    ApiLogsModule, 
-    ConversationsModule, 
-    ContactsModule, 
-    HumanizationModule, 
+    TagsModule,
+    ApiLogsModule,
+    ConversationsModule,
+    ContactsModule,
+    HumanizationModule,
     RateLimitingModule,
     SpintaxModule,
     HealthCheckCacheModule,
     LineReputationModule,
     PhoneValidationModule,
     WhatsappCloudModule,
+    TenantApiKeysModule,
   ],
   controllers: [ApiMessagesController],
   providers: [ApiMessagesService, PrismaService],
