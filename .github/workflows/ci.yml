@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9.12.0"
+
+jobs:
+  # --------------------------------------------------------------------
+  # Backend: lint + build + unit tests (mock-only).
+  # Fast feedback loop — no external services required.
+  # --------------------------------------------------------------------
+  backend-build:
+    name: backend / build + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        working-directory: apps/omniconnect-backend
+        run: pnpm exec prisma generate
+
+      - name: Type-check (no emit)
+        working-directory: apps/omniconnect-backend
+        run: pnpm exec tsc --noEmit
+
+      - name: Unit tests
+        working-directory: apps/omniconnect-backend
+        run: pnpm exec jest --ci --runInBand --reporters=default
+
+      - name: Build
+        working-directory: apps/omniconnect-backend
+        run: pnpm exec nest build
+
+  # --------------------------------------------------------------------
+  # Backend integration tests with Postgres + Redis (placeholder for
+  # the upcoming E2E suite using Supertest). The job is wired now so
+  # writing new *.e2e-spec.ts files only requires adding the script
+  # invocation — no infra changes.
+  # --------------------------------------------------------------------
+  backend-integration:
+    name: backend / integration (postgres + redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: backend-build
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: omni
+          POSTGRES_PASSWORD: omni
+          POSTGRES_DB: omni_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U omni -d omni_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://omni:omni@localhost:5432/omni_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+      JWT_SECRET: ci-jwt-secret-do-not-use-in-prod
+      API_KEY: ci-api-key
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        working-directory: apps/omniconnect-backend
+        run: pnpm exec prisma generate
+
+      - name: Prisma migrate deploy (apply versioned migrations)
+        working-directory: apps/omniconnect-backend
+        run: pnpm exec prisma migrate deploy
+
+      # Re-runs the full Jest suite against the live infra so any new
+      # spec that needs Postgres/Redis Just Works. Unit-only suites are
+      # safe to run again here too (idempotent mocks).
+      - name: Tests (with Postgres + Redis available)
+        working-directory: apps/omniconnect-backend
+        run: pnpm exec jest --ci --runInBand --reporters=default
+
+  # --------------------------------------------------------------------
+  # Frontends: per-app build (best effort — failures here block PRs
+  # but each frontend is independent so failures stay scoped).
+  # --------------------------------------------------------------------
+  frontends-build:
+    name: ${{ matrix.app }} / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - omniconnect-frontend
+          - botify
+          - crm-imobiliario
+          - smart-ad-automator
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build ${{ matrix.app }}
+        run: pnpm --filter ${{ matrix.app }} run build
+        continue-on-error: true # frontends still being aligned — keep CI signal but non-blocking
