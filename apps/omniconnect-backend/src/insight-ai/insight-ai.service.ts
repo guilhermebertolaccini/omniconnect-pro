@@ -1,5 +1,7 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 import { PrismaService } from '../prisma.service';
 import { AnalyzeConversationDto } from './dto/analyze-conversation.dto';
 import { buildConversationAnalysisPrompt, PROMPT_VERSION } from './insight-ai.prompt';
@@ -8,8 +10,23 @@ import { redactPII } from './pii-redactor.util';
 
 const AI_PRICING: Record<string, { input: number; output: number }> = {
   'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
-  'gpt-4o':      { input: 0.0025,   output: 0.010 },
+  'gpt-4o': { input: 0.0025, output: 0.01 },
 };
+
+interface EnqueueResult {
+  jobId: string;
+  tenantId: string;
+  contactPhone: string;
+  status: 'queued';
+}
+
+interface JobStatusResult {
+  jobId: string;
+  status: 'queued' | 'active' | 'completed' | 'failed' | 'delayed' | 'waiting' | 'paused' | 'stuck' | 'unknown';
+  result?: unknown;
+  failedReason?: string;
+  attemptsMade?: number;
+}
 
 @Injectable()
 export class InsightAiService {
@@ -18,7 +35,60 @@ export class InsightAiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @InjectQueue('insight-ai') private readonly queue: Queue,
   ) {}
+
+  /**
+   * Enqueue a conversation analysis as a BullMQ job. Returns the jobId
+   * so the caller can poll via getJobStatus(). Uses a stable jobId
+   * derived from (tenantId, contactPhone, window) so identical
+   * requests within the dedup window do not stack up.
+   */
+  async enqueueAnalyzeByPhone(
+    tenantId: string,
+    contactPhone: string,
+    dto: AnalyzeConversationDto = {},
+  ): Promise<EnqueueResult> {
+    const job = await this.queue.add(
+      'analyze-conversation',
+      { tenantId, contactPhone, dto },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: { age: 24 * 3600, count: 500 },
+        removeOnFail: { age: 7 * 24 * 3600 },
+      },
+    );
+    return {
+      jobId: String(job.id),
+      tenantId,
+      contactPhone,
+      status: 'queued',
+    };
+  }
+
+  /**
+   * Inspect a previously enqueued job. Scoped to tenantId so a user
+   * cannot poll jobs created by another tenant — we read job.data and
+   * compare.
+   */
+  async getJobStatus(tenantId: string, jobId: string): Promise<JobStatusResult> {
+    const job = await this.queue.getJob(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job ${jobId} not found`);
+    }
+    if (job.data?.tenantId && job.data.tenantId !== tenantId) {
+      throw new NotFoundException(`Job ${jobId} not found`);
+    }
+    const state = (await job.getState()) as JobStatusResult['status'];
+    return {
+      jobId: String(job.id),
+      status: state ?? 'unknown',
+      result: job.returnvalue ?? undefined,
+      failedReason: job.failedReason ?? undefined,
+      attemptsMade: job.attemptsMade,
+    };
+  }
 
   async analyzeByPhone(tenantId: string, contactPhone: string, dto: AnalyzeConversationDto = {}) {
     const limit = dto.limit ?? 80;
@@ -67,8 +137,9 @@ export class InsightAiService {
     const response = await this.analyzeMessages(tenantId, first.id, messages);
     const result = response.result;
 
+    let persistedAnalysisId: number | null = null;
     if (dto.persist !== false) {
-      await this.persistAnalysis(tenantId, {
+      const persisted = await this.persistAnalysis(tenantId, {
         contactPhone,
         contactName: first.contactName,
         segment: first.segment,
@@ -82,6 +153,12 @@ export class InsightAiService {
         modelName: response.modelName,
         promptVersion: response.promptVersion,
       });
+      persistedAnalysisId = persisted.id;
+      if (response.usageLogId && persistedAnalysisId) {
+        await this.prisma.aIUsageLog
+          .update({ where: { id: response.usageLogId }, data: { analysisId: persistedAnalysisId } })
+          .catch((err) => this.logger.warn(`Failed to attach analysisId to usage log: ${err?.message}`));
+      }
     }
 
     return {
@@ -94,6 +171,7 @@ export class InsightAiService {
       conversationEnd: last.datetime,
       messageCount: conversations.length,
       analysis: result,
+      analysisId: persistedAnalysisId,
     };
   }
 
@@ -118,7 +196,7 @@ export class InsightAiService {
       try {
         results.push(await this.analyzeByPhone(tenantId, item.contactPhone, dto));
       } catch (error) {
-        this.logger.warn(`Falha ao analisar ${item.contactPhone}: ${error?.message ?? error}`);
+        this.logger.warn(`Falha ao analisar ${item.contactPhone}: ${(error as Error)?.message ?? error}`);
       }
     }
 
@@ -127,7 +205,7 @@ export class InsightAiService {
 
   async listAnalyses(tenantId: string, filters: { contactPhone?: string; limit?: number }) {
     const limit = Math.min(filters.limit ?? 50, 200);
-    return (this.prisma as any).conversationAIAnalysis.findMany({
+    return this.prisma.conversationAIAnalysis.findMany({
       where: { tenantId, ...(filters.contactPhone ? { contactPhone: filters.contactPhone } : {}) },
       orderBy: { createdAt: 'desc' },
       take: limit,
@@ -136,19 +214,26 @@ export class InsightAiService {
 
   async getExecutiveSummary(tenantId: string, days = 30) {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const rows = await (this.prisma as any).conversationAIAnalysis.findMany({
+    const rows = await this.prisma.conversationAIAnalysis.findMany({
       where: { tenantId, createdAt: { gte: since } },
       orderBy: { createdAt: 'desc' },
       take: 1000,
     });
 
     const count = rows.length;
-    const avg = (field: string) => count ? Math.round(rows.reduce((sum, r) => sum + (Number(r[field]) || 0), 0) / count) : 0;
-    const group = (field: string) => rows.reduce((acc, r) => {
-      const key = r[field] ?? 'indefinido';
-      acc[key] = (acc[key] ?? 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+    const avg = (field: keyof (typeof rows)[number]) =>
+      count
+        ? Math.round(rows.reduce((sum, r) => sum + (Number(r[field]) || 0), 0) / count)
+        : 0;
+    const group = (field: keyof (typeof rows)[number]) =>
+      rows.reduce(
+        (acc, r) => {
+          const key = String(r[field] ?? 'indefinido');
+          acc[key] = (acc[key] ?? 0) + 1;
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
 
     return {
       periodDays: days,
@@ -170,8 +255,7 @@ export class InsightAiService {
   }
 
   private async analyzeMessages(tenantId: string, conversationId: number | null, messages: NormalizedMessage[]) {
-    // Redact PII before sending
-    const safeMessages = messages.map(m => ({ ...m, text: redactPII(m.text) }));
+    const safeMessages = messages.map((m) => ({ ...m, text: redactPII(m.text) }));
 
     const apiKey = this.config.get<string>('OPENAI_API_KEY');
     if (!apiKey) {
@@ -181,19 +265,26 @@ export class InsightAiService {
     try {
       return await this.openAiAnalysis(tenantId, conversationId, safeMessages, apiKey);
     } catch (error) {
-      this.logger.warn(`OpenAI indisponível. Usando análise heurística. Erro: ${error?.message ?? error}`);
+      const err = error as Error;
+      this.logger.warn(`OpenAI indisponível. Usando análise heurística. Erro: ${err?.message ?? err}`);
+      await this.logUsageFailure(tenantId, conversationId, err);
       return this.heuristicAnalysis(safeMessages);
     }
   }
 
-  private async openAiAnalysis(tenantId: string, conversationId: number | null, messages: NormalizedMessage[], apiKey: string) {
+  private async openAiAnalysis(
+    tenantId: string,
+    conversationId: number | null,
+    messages: NormalizedMessage[],
+    apiKey: string,
+  ) {
     const model = this.config.get<string>('OPENAI_MODEL') || 'gpt-4o-mini';
     const prompt = buildConversationAnalysisPrompt(messages);
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -201,14 +292,18 @@ export class InsightAiService {
         temperature: 0.1,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: 'Você é um analista sênior de conversão comercial imobiliária. Responda somente JSON válido.' },
+          {
+            role: 'system',
+            content: 'Você é um analista sênior de conversão comercial imobiliária. Responda somente JSON válido.',
+          },
           { role: 'user', content: prompt },
         ],
       }),
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI HTTP ${response.status}: ${await response.text()}`);
+      const body = await response.text();
+      throw new Error(`OpenAI HTTP ${response.status}: ${body}`);
     }
 
     const data = await response.json();
@@ -221,25 +316,60 @@ export class InsightAiService {
     const pricing = AI_PRICING[model] || AI_PRICING['gpt-4o-mini'];
     const estimatedCost = (promptTokens / 1000) * pricing.input + (completionTokens / 1000) * pricing.output;
 
-    // Persist usage metrics for billing
-    await (this.prisma as any).aIUsageLog.create({
-      data: {
-        tenantId,
-        conversationId,
-        modelProvider: 'openai',
-        modelName: model,
-        promptTokens,
-        completionTokens,
-        estimatedCost,
-      }
-    }).catch(err => this.logger.error(`Failed to save AIUsageLog: ${err.message}`));
+    let usageLogId: number | undefined;
+    try {
+      const created = await this.prisma.aIUsageLog.create({
+        data: {
+          tenantId,
+          conversationId,
+          operationType: 'conversation_analysis',
+          modelProvider: 'openai',
+          modelName: model,
+          promptVersion: PROMPT_VERSION,
+          promptTokens,
+          completionTokens,
+          estimatedCost,
+          currency: 'USD',
+          status: 'success',
+        },
+        select: { id: true },
+      });
+      usageLogId = created.id;
+    } catch (err) {
+      this.logger.error(`Failed to save AIUsageLog: ${(err as Error)?.message}`);
+    }
 
     return {
       result: this.normalizeResult(JSON.parse(content)),
       modelProvider: 'openai',
       modelName: model,
       promptVersion: PROMPT_VERSION,
+      usageLogId,
     };
+  }
+
+  private async logUsageFailure(tenantId: string, conversationId: number | null, error: Error) {
+    const model = this.config.get<string>('OPENAI_MODEL') || 'gpt-4o-mini';
+    const errorCode = /HTTP (\d+)/i.exec(error?.message ?? '')?.[1] ?? 'unknown';
+    await this.prisma.aIUsageLog
+      .create({
+        data: {
+          tenantId,
+          conversationId,
+          operationType: 'conversation_analysis',
+          modelProvider: 'openai',
+          modelName: model,
+          promptVersion: PROMPT_VERSION,
+          promptTokens: 0,
+          completionTokens: 0,
+          estimatedCost: 0,
+          currency: 'USD',
+          status: 'failure',
+          errorCode,
+          errorMessage: (error?.message ?? 'unknown').slice(0, 1000),
+        },
+      })
+      .catch((err) => this.logger.error(`Failed to save AIUsageLog failure: ${(err as Error)?.message}`));
   }
 
   private heuristicAnalysis(messages: NormalizedMessage[]) {
@@ -251,9 +381,15 @@ export class InsightAiService {
       ? operatorMessages.find((m) => new Date(m.datetime).getTime() >= new Date(firstContact.datetime).getTime())
       : undefined;
 
-    const firstResponseMinutes = firstContact && firstOperatorAfterContact
-      ? Math.max(0, Math.round((new Date(firstOperatorAfterContact.datetime).getTime() - new Date(firstContact.datetime).getTime()) / 60000))
-      : null;
+    const firstResponseMinutes =
+      firstContact && firstOperatorAfterContact
+        ? Math.max(
+            0,
+            Math.round(
+              (new Date(firstOperatorAfterContact.datetime).getTime() - new Date(firstContact.datetime).getTime()) / 60000,
+            ),
+          )
+        : null;
 
     const objectionMap: Record<string, string[]> = {
       preco: ['preço', 'valor', 'caro', 'entrada', 'parcela'],
@@ -268,8 +404,12 @@ export class InsightAiService {
       .map(([name]) => name);
 
     const hasSchedulingAttempt = ['visita', 'agendar', 'agenda', 'conhecer', 'decorado'].some((t) => allText.includes(t));
-    const hasProposalOrSimulationAttempt = ['simulação', 'simular', 'proposta', 'condição', 'fluxo de pagamento'].some((t) => allText.includes(t));
-    const hasQualification = ['renda', 'financiamento', 'prazo', 'região', 'dormitório', 'quartos', 'entrada'].some((t) => allText.includes(t));
+    const hasProposalOrSimulationAttempt = ['simulação', 'simular', 'proposta', 'condição', 'fluxo de pagamento'].some((t) =>
+      allText.includes(t),
+    );
+    const hasQualification = ['renda', 'financiamento', 'prazo', 'região', 'dormitório', 'quartos', 'entrada'].some((t) =>
+      allText.includes(t),
+    );
     const hasSellerAbandonment = messages.length > 1 && messages[messages.length - 1].sender === 'contact';
     const hasLeadAbandonment = messages.length > 1 && messages[messages.length - 1].sender === 'operator';
 
@@ -280,8 +420,17 @@ export class InsightAiService {
       (hasQualification ? 20 : 0) +
       (contactMessages.length >= 3 ? 15 : 0);
 
-    const leadIntent = intentScore >= 75 ? 'quente' : intentScore >= 50 ? 'qualificado' : intentScore >= 25 ? 'pesquisa' : 'indefinido';
-    const sellerQualityScore = Math.min(100, 35 + (hasQualification ? 20 : 0) + (hasSchedulingAttempt ? 20 : 0) + (hasProposalOrSimulationAttempt ? 15 : 0) + (firstResponseMinutes !== null && firstResponseMinutes <= 10 ? 10 : 0) - (hasSellerAbandonment ? 20 : 0));
+    const leadIntent =
+      intentScore >= 75 ? 'quente' : intentScore >= 50 ? 'qualificado' : intentScore >= 25 ? 'pesquisa' : 'indefinido';
+    const sellerQualityScore = Math.min(
+      100,
+      35 +
+        (hasQualification ? 20 : 0) +
+        (hasSchedulingAttempt ? 20 : 0) +
+        (hasProposalOrSimulationAttempt ? 15 : 0) +
+        (firstResponseMinutes !== null && firstResponseMinutes <= 10 ? 10 : 0) -
+        (hasSellerAbandonment ? 20 : 0),
+    );
     const lostOpportunity = intentScore >= 50 && hasSellerAbandonment;
 
     const finalResult = this.normalizeResult({
@@ -292,7 +441,8 @@ export class InsightAiService {
       mainObjection: objections[0] ?? null,
       objections,
       sellerQualityScore,
-      responseQualityScore: firstResponseMinutes === null ? 40 : firstResponseMinutes <= 10 ? 90 : firstResponseMinutes <= 60 ? 70 : 45,
+      responseQualityScore:
+        firstResponseMinutes === null ? 40 : firstResponseMinutes <= 10 ? 90 : firstResponseMinutes <= 60 ? 70 : 45,
       qualificationScore: hasQualification ? 80 : 35,
       followUpScore: hasLeadAbandonment ? 70 : 35,
       firstResponseMinutes,
@@ -306,11 +456,18 @@ export class InsightAiService {
         ? 'Retomar contato com abordagem consultiva, recuperar contexto da conversa e propor próximo passo objetivo.'
         : 'Manter acompanhamento e conduzir para agendamento, simulação ou proposta conforme o estágio do lead.',
       evidence: [
-        hasQualification ? 'Foram encontrados sinais de qualificação na conversa.' : 'Não foram encontrados sinais suficientes de qualificação.',
+        hasQualification
+          ? 'Foram encontrados sinais de qualificação na conversa.'
+          : 'Não foram encontrados sinais suficientes de qualificação.',
         hasSchedulingAttempt ? 'Há tentativa ou menção de agendamento/visita.' : 'Não há tentativa clara de agendamento.',
         objections.length ? `Objeções detectadas: ${objections.join(', ')}.` : 'Nenhuma objeção dominante detectada.',
       ],
-      metrics: { heuristic: true, contactMessages: contactMessages.length, operatorMessages: operatorMessages.length, intentScore },
+      metrics: {
+        heuristic: true,
+        contactMessages: contactMessages.length,
+        operatorMessages: operatorMessages.length,
+        intentScore,
+      },
     });
 
     return {
@@ -318,11 +475,13 @@ export class InsightAiService {
       modelProvider: 'heuristic',
       modelName: 'regex-engine-v1',
       promptVersion: 'none',
+      usageLogId: undefined as number | undefined,
     };
   }
 
   private normalizeResult(input: any): ConversationAIResult {
-    const clamp = (n: any) => Math.max(0, Math.min(100, Number.isFinite(Number(n)) ? Math.round(Number(n)) : 0));
+    const clamp = (n: any) =>
+      Math.max(0, Math.min(100, Number.isFinite(Number(n)) ? Math.round(Number(n)) : 0));
     return {
       summary: String(input.summary ?? ''),
       leadIntent: input.leadIntent ?? 'indefinido',
@@ -334,7 +493,10 @@ export class InsightAiService {
       responseQualityScore: clamp(input.responseQualityScore),
       qualificationScore: clamp(input.qualificationScore),
       followUpScore: clamp(input.followUpScore),
-      firstResponseMinutes: input.firstResponseMinutes === null || input.firstResponseMinutes === undefined ? null : Number(input.firstResponseMinutes),
+      firstResponseMinutes:
+        input.firstResponseMinutes === null || input.firstResponseMinutes === undefined
+          ? null
+          : Number(input.firstResponseMinutes),
       hasSellerAbandonment: Boolean(input.hasSellerAbandonment),
       hasLeadAbandonment: Boolean(input.hasLeadAbandonment),
       hasQualification: Boolean(input.hasQualification),
@@ -347,22 +509,25 @@ export class InsightAiService {
     };
   }
 
-  private async persistAnalysis(tenantId: string, payload: {
-    contactPhone: string;
-    contactName?: string | null;
-    segment?: number | null;
-    userId?: number | null;
-    userName?: string | null;
-    conversationStart: Date;
-    conversationEnd: Date;
-    messageCount: number;
-    result: ConversationAIResult;
-    modelProvider: string;
-    modelName: string;
-    promptVersion: string;
-  }) {
+  private async persistAnalysis(
+    tenantId: string,
+    payload: {
+      contactPhone: string;
+      contactName?: string | null;
+      segment?: number | null;
+      userId?: number | null;
+      userName?: string | null;
+      conversationStart: Date;
+      conversationEnd: Date;
+      messageCount: number;
+      result: ConversationAIResult;
+      modelProvider: string;
+      modelName: string;
+      promptVersion: string;
+    },
+  ) {
     const r = payload.result;
-    return (this.prisma as any).conversationAIAnalysis.create({
+    return this.prisma.conversationAIAnalysis.create({
       data: {
         tenantId,
         contactPhone: payload.contactPhone,
@@ -398,17 +563,20 @@ export class InsightAiService {
         modelName: payload.modelName,
         promptVersion: payload.promptVersion,
       },
+      select: { id: true },
     });
   }
 
-  private topObjections(rows: any[]) {
+  private topObjections(rows: { objections: string | null }[]) {
     const counts: Record<string, number> = {};
     for (const row of rows) {
       try {
-        const items = JSON.parse(row.objections || '[]');
-        for (const item of items) counts[item] = (counts[item] ?? 0) + 1;
+        const items = JSON.parse(row.objections || '[]') as unknown;
+        if (Array.isArray(items)) {
+          for (const item of items) counts[String(item)] = (counts[String(item)] ?? 0) + 1;
+        }
       } catch {
-        // ignore invalid JSON
+        // ignore malformed payloads
       }
     }
     return Object.entries(counts)
