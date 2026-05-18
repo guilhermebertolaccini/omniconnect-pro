@@ -36,6 +36,15 @@ enum Speed {
   slow
 }
 
+// External ad platforms supported by the SAA (Smart Ad Automator) domain.
+// Mirrors Supabase enum `ad_platform`. Add new providers here (e.g.
+// `linkedin_ads`) before referencing them from AdPlatformConnection.
+enum AdPlatform {
+  meta
+  google_ads
+  tiktok_ads
+}
+
 // Models
 model User {
   id             Int      @id @default(autoincrement())
@@ -57,6 +66,15 @@ model User {
   systemEvents SystemEvent[]
   tenants      UserTenant[]
   apiKeys      TenantApiKey[]
+
+  // Smart Ad Automator (SAA) relations
+  invitedTenantInvitations  TenantInvitation[]    @relation("TenantInvitationInvitedBy")
+  acceptedTenantInvitations TenantInvitation[]    @relation("TenantInvitationAcceptedBy")
+  createdAdvertiserCompanies AdvertiserCompany[]  @relation("AdvertiserCompanyCreatedBy")
+  advertiserCompanyAccesses AdvertiserCompanyAccess[]
+  createdAdPlatformConnections AdPlatformConnection[]   @relation("AdPlatformConnectionCreatedBy")
+  generatedAdCampaignAIAnalyses AdCampaignAIAnalysis[] @relation("AdCampaignAIAnalysisGeneratedBy")
+  createdOrganicPostExperiments OrganicPostExperiment[] @relation("OrganicPostExperimentCreatedBy")
 
   @@index([email])
   @@index([segment])
@@ -572,6 +590,13 @@ model Tenant {
   integrationConnections IntegrationConnection[]
   integrationEvents      IntegrationEvent[]
   apiKeys                TenantApiKey[]
+
+  tenantInvitations           TenantInvitation[]
+  advertiserCompanies         AdvertiserCompany[]
+  adPlatformConnections       AdPlatformConnection[]
+  adCampaignAIAnalyses        AdCampaignAIAnalysis[]
+  organicPostExperiments      OrganicPostExperiment[]
+  organicPostExperimentVariants OrganicPostExperimentVariant[]
 }
 
 model IntegrationConnection {
@@ -712,4 +737,224 @@ model TenantApiKey {
   @@index([tenantId])
   @@index([tenantId, revokedAt])
   @@index([prefix])
+}
+
+// ---------------------------------------------------------------------------
+// Smart Ad Automator (SAA) — Sprint 2.3
+// ---------------------------------------------------------------------------
+// Migrated from the Supabase schema of the SAA standalone project. Maps:
+//   agencies              -> Tenant (1:1, no separate Agency entity)
+//   agency_members        -> UserTenant
+//   agency_invitations    -> TenantInvitation
+//   companies             -> AdvertiserCompany
+//   client_company_access -> AdvertiserCompanyAccess
+//   platform_configurations + meta_configurations -> AdPlatformConnection
+//   ai_campaign_analyses  -> AdCampaignAIAnalysis
+//   organic_post_experiments / variants -> OrganicPostExperiment(+Variant)
+//   audit_logs            -> reuses SystemEvent
+// OAuth tokens (access_token / refresh_token) are stored ENCRYPTED at rest
+// using AES-256-GCM via BridgeSecretCipher (Sprint 1.3). Plaintext tokens
+// MUST never be persisted.
+
+// Invitation to join a Tenant (agency) with a given Role. Replaces
+// Supabase's `agency_invitations`. The `token` is a single-use random
+// secret embedded in the invite URL. Acceptance creates a UserTenant
+// row and sets `acceptedAt`/`acceptedById`.
+model TenantInvitation {
+  id            String    @id @default(uuid())
+  tenantId      String
+  email         String
+  role          Role
+  token         String    @unique
+  invitedById   Int?
+  acceptedById  Int?
+  acceptedAt    DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invitedBy  User?  @relation("TenantInvitationInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  acceptedBy User?  @relation("TenantInvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, email])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// Advertiser business managed inside a tenant (agency). Holds non-token
+// metadata about the end advertiser; OAuth credentials live in
+// AdPlatformConnection. Distinct from CRM Lead/Contact: an AdvertiserCompany
+// is the *paying* end-client of the agency, not a sales prospect.
+model AdvertiserCompany {
+  id              String    @id @default(uuid())
+  tenantId        String
+  name            String
+  businessName    String
+  metaBusinessId  String?
+  currency        String    @default("BRL")
+  timezone        String    @default("America/Sao_Paulo")
+  status          String    @default("pending")
+  totalSpent      Float     @default(0)
+  activeCampaigns Int       @default(0)
+  lastSyncAt      DateTime?
+  createdById     Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy   User?  @relation("AdvertiserCompanyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  accesses             AdvertiserCompanyAccess[]
+  platformConnections  AdPlatformConnection[]
+  campaignAIAnalyses   AdCampaignAIAnalysis[]
+  organicExperiments   OrganicPostExperiment[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, name])
+}
+
+// End-client visibility: which user inside a tenant can see which
+// advertiser companies. Used to scope ClientLogin/dashboard reads.
+model AdvertiserCompanyAccess {
+  id                  String   @id @default(uuid())
+  tenantId            String
+  userId              Int
+  advertiserCompanyId String
+  createdAt           DateTime @default(now())
+
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  advertiserCompany AdvertiserCompany @relation(fields: [advertiserCompanyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, advertiserCompanyId])
+  @@index([tenantId])
+  @@index([tenantId, userId])
+  @@index([advertiserCompanyId])
+}
+
+// OAuth credentials and metadata for an external ad platform (Meta /
+// Google Ads / TikTok Ads), scoped to one AdvertiserCompany. accessToken
+// and refreshToken are NEVER stored in plaintext — both are encrypted with
+// AES-256-GCM (BridgeSecretCipher) using BRIDGE_SECRET_KEY. Tokens are
+// decrypted on demand right before outbound calls and never logged.
+// `extra` holds provider-specific fields (e.g. Meta `app_id`, `app_secret`,
+// `meta_business_id`, Google `customer_id`, TikTok `advertiser_id`).
+// Unique per (advertiserCompanyId, platform) — one connection per platform.
+model AdPlatformConnection {
+  id                       String     @id @default(uuid())
+  tenantId                 String
+  advertiserCompanyId      String
+  platform                 AdPlatform
+  accountId                String?
+  accessTokenEncrypted     String?    @db.Text
+  refreshTokenEncrypted    String?    @db.Text
+  tokenExpiresAt           DateTime?
+  isActive                 Boolean    @default(true)
+  extra                    Json?
+  createdById              Int?
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  advertiserCompany AdvertiserCompany @relation(fields: [advertiserCompanyId], references: [id], onDelete: Cascade)
+  createdBy         User?             @relation("AdPlatformConnectionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([advertiserCompanyId, platform])
+  @@index([tenantId])
+  @@index([tenantId, platform])
+  @@index([tokenExpiresAt])
+}
+
+// AI analysis result of a single ad campaign on an external platform.
+// `analysis` is the structured LLM output (recommendations, anomalies,
+// insights). Costs are tracked separately via AIUsageLog with
+// operationType='ad_campaign_analysis'.
+model AdCampaignAIAnalysis {
+  id                  String     @id @default(uuid())
+  tenantId            String
+  advertiserCompanyId String
+  platform            AdPlatform
+  campaignId          String
+  campaignName        String?
+  analysis            Json
+  modelProvider       String?
+  modelName           String?
+  promptVersion       String?
+  generatedById       Int?
+  createdAt           DateTime   @default(now())
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  advertiserCompany AdvertiserCompany @relation(fields: [advertiserCompanyId], references: [id], onDelete: Cascade)
+  generatedBy       User?             @relation("AdCampaignAIAnalysisGeneratedBy", fields: [generatedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, platform])
+  @@index([tenantId, campaignId])
+  @@index([tenantId, advertiserCompanyId, createdAt])
+  @@index([createdAt])
+}
+
+// A/B experiment on organic social posts (Meta/Instagram/TikTok).
+// `mode = retroactive|manual|publish`, `status = draft|running|completed|cancelled`.
+// `winningMetric` chooses the comparison axis (engagement_rate, reach, etc.).
+// `aiSummary` holds an optional LLM-generated narrative of the result.
+model OrganicPostExperiment {
+  id                  String     @id @default(uuid())
+  tenantId            String
+  advertiserCompanyId String
+  platform            AdPlatform @default(meta)
+  accountId           String?
+  name                String
+  hypothesis          String?    @db.Text
+  mode                String     // retroactive | manual | publish
+  winningMetric       String     @default("engagement_rate")
+  minSampleReach      Int        @default(0)
+  durationDays        Int        @default(7)
+  status              String     @default("draft") // draft|running|completed|cancelled
+  startedAt           DateTime?
+  endsAt              DateTime?
+  winnerVariantId     String?
+  aiSummary           Json?
+  createdById         Int?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  advertiserCompany AdvertiserCompany @relation(fields: [advertiserCompanyId], references: [id], onDelete: Cascade)
+  createdBy         User?             @relation("OrganicPostExperimentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  variants OrganicPostExperimentVariant[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, advertiserCompanyId])
+  @@index([tenantId, platform])
+}
+
+// A single arm of an OrganicPostExperiment. `metricsSnapshot` captures the
+// metric values at evaluation time so a re-run does not silently mutate
+// historical comparisons.
+model OrganicPostExperimentVariant {
+  id              String    @id @default(uuid())
+  tenantId        String
+  experimentId    String
+  label           String
+  note            String?   @db.Text
+  postId          String?
+  scheduledFor    DateTime?
+  caption         String?   @db.Text
+  mediaUrl        String?
+  postType        String?
+  platform        String?
+  metricsSnapshot Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  experiment OrganicPostExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([experimentId])
+  @@index([tenantId, experimentId])
 }

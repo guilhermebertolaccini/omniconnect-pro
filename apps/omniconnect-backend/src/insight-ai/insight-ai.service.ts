@@ -10,14 +10,14 @@ import { buildConversationAnalysisPrompt, PROMPT_VERSION } from './insight-ai.pr
 import { ConversationAIResult, NormalizedMessage } from '@omniconnect/ai-contracts';
 import { redactPII } from './pii-redactor.util';
 
-interface EnqueueResult {
+export interface EnqueueResult {
   jobId: string;
   tenantId: string;
   contactPhone: string;
   status: 'queued';
 }
 
-interface JobStatusResult {
+export interface JobStatusResult {
   jobId: string;
   status: 'queued' | 'active' | 'completed' | 'failed' | 'delayed' | 'waiting' | 'paused' | 'stuck' | 'unknown';
   result?: unknown;
