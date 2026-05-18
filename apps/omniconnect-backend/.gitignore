@@ -44,6 +44,6 @@ lerna-debug.log*
 # temp files
 .temp
 
-# Prisma
-prisma/migrations/*
-!prisma/migrations/.gitkeep
+# Prisma — migrations MUST be versioned (see .cursor/rules/11-prisma.mdc).
+# Only the generated client is ignored.
+# (Kept .env / secrets exclusions above.)

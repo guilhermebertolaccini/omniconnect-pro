@@ -568,23 +568,75 @@ model Tenant {
   systemEvents           SystemEvent[]
   conversationAIAnalyses ConversationAIAnalysis[]
   aiUsageLogs            AIUsageLog[]
+  integrationConnections IntegrationConnection[]
+  integrationEvents      IntegrationEvent[]
+}
+
+model IntegrationConnection {
+  id             String   @id @default(uuid())
+  tenantId       String
+  provider       String   // crm, ads, bot
+  secretHash     String
+  status         String   @default("active")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  events IntegrationEvent[]
+
+  @@index([tenantId])
+  @@index([provider])
+  @@index([tenantId, provider])
 }
 
 model AIUsageLog {
   id               Int      @id @default(autoincrement())
   tenantId         String   @default("default-tenant")
   conversationId   Int?
+  analysisId       Int?
+  operationType    String   @default("conversation_analysis")
   modelProvider    String
   modelName        String
+  promptVersion    String?
   promptTokens     Int
   completionTokens Int
   estimatedCost    Float
+  currency         String   @default("USD")
+  status           String   @default("success")
+  errorCode        String?
+  errorMessage     String?  @db.Text
   createdAt        DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, operationType])
+  @@index([tenantId, status])
   @@index([createdAt])
+}
+
+model IntegrationEvent {
+  id              String    @id @default(uuid())
+  tenantId        String
+  connectionId    String
+  provider        String
+  idempotencyKey  String    @unique
+  signature       String?
+  status          String    @default("received")
+  errorMessage    String?   @db.Text
+  payload         Json
+  createdAt       DateTime  @default(now())
+  processedAt     DateTime?
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  connection IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, provider])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@index([connectionId])
 }
 
 model UserTenant {
