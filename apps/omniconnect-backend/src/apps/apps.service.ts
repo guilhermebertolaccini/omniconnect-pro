@@ -7,10 +7,10 @@ import { UpdateAppDto } from './dto/update-app.dto';
 export class AppsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createAppDto: CreateAppDto) {
-    // Verificar se já existe um app com este nome
+  async create(tenantId: string, createAppDto: CreateAppDto) {
+    // Verificar se já existe um app com este nome no mesmo tenant
     const existingApp = await this.prisma.app.findFirst({
-      where: { name: createAppDto.name },
+      where: { name: createAppDto.name, tenantId },
     });
 
     if (existingApp) {
@@ -24,19 +24,21 @@ export class AppsService {
         appSecret: createAppDto.appSecret || null,
         webhookVerifyToken: createAppDto.webhookVerifyToken || null,
         wabaId: createAppDto.wabaId || null,
+        tenantId,
       },
     });
   }
 
-  async findAll() {
+  async findAll(tenantId: string) {
     return this.prisma.app.findMany({
+      where: { tenantId },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  async findOne(id: number) {
+  async findOne(tenantId: string, id: number) {
     const app = await this.prisma.app.findFirst({
-      where: { id },
+      where: { id, tenantId },
     });
 
     if (!app) {
@@ -46,13 +48,13 @@ export class AppsService {
     return app;
   }
 
-  async update(id: number, updateAppDto: UpdateAppDto) {
-    const app = await this.findOne(id);
+  async update(tenantId: string, id: number, updateAppDto: UpdateAppDto) {
+    const app = await this.findOne(tenantId, id);
 
     // Se está atualizando o nome, verificar se não existe outro app com o mesmo nome
     if (updateAppDto.name && updateAppDto.name !== app.name) {
       const existingApp = await this.prisma.app.findFirst({
-        where: { name: updateAppDto.name },
+        where: { name: updateAppDto.name, tenantId },
       });
 
       if (existingApp) {
@@ -72,12 +74,12 @@ export class AppsService {
     });
   }
 
-  async remove(id: number) {
-    const app = await this.findOne(id);
+  async remove(tenantId: string, id: number) {
+    const app = await this.findOne(tenantId, id);
 
     // Verificar se há linhas usando este app
     const linesUsingApp = await this.prisma.linesStock.findFirst({
-      where: { appId: id },
+      where: { appId: id, tenantId },
     });
 
     if (linesUsingApp) {

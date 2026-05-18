@@ -5,26 +5,38 @@ import { PrismaService } from '../prisma.service';
 export class CrmBridgeService {
   constructor(private readonly prisma: PrismaService) {}
 
-  verifySignature(raw: any, signature: string, integrationId: string) {
+  async authenticateAndResolveTenant(raw: any, signature: string, integrationId: string): Promise<string> {
     if (!signature || signature.trim() === '') {
       throw new UnauthorizedException('Invalid or missing signature');
     }
-    // Em produção, deve verificar HMAC usando secret do tenant
-    return true;
-  }
 
-  async resolveTenantFromIntegration(integrationId: string) {
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { id: integrationId }
+    const connection = await this.prisma.integrationConnection.findUnique({
+      where: { id: integrationId },
+      include: { tenant: true }
     });
 
-    if (!tenant || !tenant.isActive) {
+    if (!connection || connection.status !== 'active' || !connection.tenant.isActive) {
       if (process.env.NODE_ENV === 'production') {
-        throw new NotFoundException('Tenant not found or inactive');
+        throw new NotFoundException('Integration not found or inactive');
       }
       return 'default-tenant';
     }
 
-    return tenant.id;
+    if (process.env.NODE_ENV === 'production') {
+      const crypto = require('crypto');
+      const payloadString = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      const expectedSignature = crypto.createHmac('sha256', connection.secretHash).update(payloadString).digest('hex');
+      
+      try {
+        const isSignatureValid = crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+        if (!isSignatureValid) {
+          throw new UnauthorizedException('Invalid signature');
+        }
+      } catch (e) {
+        throw new UnauthorizedException('Invalid signature format');
+      }
+    }
+
+    return connection.tenantId;
   }
 }

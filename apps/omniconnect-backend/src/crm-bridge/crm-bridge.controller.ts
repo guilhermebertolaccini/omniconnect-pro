@@ -14,8 +14,7 @@ export class CrmBridgeController {
   ) {
     if (!signature || !integrationId) throw new BadRequestException('Missing headers');
     
-    this.service.verifySignature(raw, signature, integrationId);
-    const tenantId = await this.service.resolveTenantFromIntegration(integrationId);
+    const tenantId = await this.service.authenticateAndResolveTenant(raw, signature, integrationId);
 
     // TODO: queue processing
     return { received: true, tenantId };

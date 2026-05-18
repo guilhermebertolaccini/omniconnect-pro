@@ -11,13 +11,13 @@ export class ContactsService {
     private phoneValidationService: PhoneValidationService,
   ) {}
 
-  async create(createContactDto: CreateContactDto) {
+  async create(tenantId: string, createContactDto: CreateContactDto) {
     // Normalizar telefone (adicionar 55, remover caracteres especiais)
     const normalizedPhone = this.phoneValidationService.normalizePhone(createContactDto.phone);
     
     // Usar upsert para evitar duplicados - se já existir, atualiza; se não, cria
     return this.prisma.contact.upsert({
-      where: { tenantId_phone: { tenantId: 'default-tenant', phone: normalizedPhone } },
+      where: { tenantId_phone: { tenantId, phone: normalizedPhone } },
       update: {
         // Atualizar apenas se novos dados forem fornecidos
         name: createContactDto.name,
@@ -29,13 +29,15 @@ export class ContactsService {
       create: {
         ...createContactDto,
         phone: normalizedPhone,
+        tenantId,
       },
     });
   }
 
-  async findAll(search?: string, segment?: number) {
+  async findAll(tenantId: string, search?: string, segment?: number) {
     return this.prisma.contact.findMany({
       where: {
+        tenantId,
         ...(search && {
           OR: [
             { name: { contains: search, mode: 'insensitive' } },
@@ -51,26 +53,26 @@ export class ContactsService {
     });
   }
 
-  async findOne(id: number) {
+  async findOne(tenantId: string, id: number) {
     const contact = await this.prisma.contact.findFirst({
-      where: { id },
+      where: { id, tenantId },
     });
 
     if (!contact) {
-      throw new NotFoundException(`Contato com ID ${id} não encontrado`);
+      throw new NotFoundException(`Contato com ID ${id} não encontrado no tenant atual`);
     }
 
     return contact;
   }
 
-  async findByPhone(phone: string) {
+  async findByPhone(tenantId: string, phone: string) {
     return this.prisma.contact.findFirst({
-      where: { phone },
+      where: { phone, tenantId },
     });
   }
 
-  async update(id: number, updateContactDto: UpdateContactDto) {
-    await this.findOne(id);
+  async update(tenantId: string, id: number, updateContactDto: UpdateContactDto) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.contact.update({
       where: { id },
@@ -79,8 +81,8 @@ export class ContactsService {
   }
 
   // Atualizar contato por telefone (útil para atualizar durante atendimento)
-  async updateByPhone(phone: string, updateContactDto: UpdateContactDto) {
-    const contact = await this.findByPhone(phone);
+  async updateByPhone(tenantId: string, phone: string, updateContactDto: UpdateContactDto) {
+    const contact = await this.findByPhone(tenantId, phone);
     
     if (!contact) {
       throw new NotFoundException(`Contato com telefone ${phone} não encontrado`);
@@ -99,8 +101,8 @@ export class ContactsService {
     });
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(tenantId: string, id: number) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.contact.delete({
       where: { id },

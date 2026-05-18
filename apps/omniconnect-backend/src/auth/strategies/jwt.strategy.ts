@@ -26,6 +26,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException();
     }
 
-    return { ...user, tenantId: payload.tenantId || 'default-tenant' };
+    const tenantId = payload.tenantId;
+    if (process.env.NODE_ENV === 'production' && (!tenantId || tenantId === 'default-tenant')) {
+      throw new UnauthorizedException('Tenant not explicitly defined in production context');
+    }
+
+    return { ...user, tenantId: tenantId || 'default-tenant' };
   }
 }
