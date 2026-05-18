@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma.service';
 import { BridgeSecretCipher } from '../integration-events/bridge-secret-cipher';
 import { SystemEventsModule } from '../system-events/system-events.module';
 import { CrmModule } from '../crm/crm.module';
+import { CrmRealtimeModule } from '../crm-realtime/crm-realtime.module';
 import { CrmSignaturesController } from './crm-signatures.controller';
 import { CrmSignaturesWebhookController } from './crm-signatures-webhook.controller';
 import { CrmSignaturesService } from './crm-signatures.service';
@@ -20,7 +21,7 @@ import { ClicksignClient } from './clicksign.client';
  * disparar o trigger SQL on-signed quando todas as assinaturas concluem.
  */
 @Module({
-  imports: [ConfigModule, SystemEventsModule, CrmModule],
+  imports: [ConfigModule, SystemEventsModule, CrmModule, CrmRealtimeModule],
   controllers: [CrmSignaturesController, CrmSignaturesWebhookController],
   providers: [
     PrismaService,

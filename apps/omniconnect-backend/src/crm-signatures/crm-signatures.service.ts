@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 import { randomUUID } from 'crypto';
 import { CrmContractStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
+import { CrmRealtimeService } from '../crm-realtime/crm-realtime.service';
 import { BridgeSecretCipher } from '../integration-events/bridge-secret-cipher';
 import {
   EventModule,
@@ -46,6 +47,7 @@ export class CrmSignaturesService {
     private readonly clicksign: ClicksignClient,
     private readonly contracts: CrmContractsService,
     private readonly systemEvents: SystemEventsService,
+    private readonly realtime: CrmRealtimeService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -344,8 +346,12 @@ export class CrmSignaturesService {
         signedAt: info.occurredAt,
       },
     });
-    // Sincroniza snapshot JSONB do contract (app-layer signatures-sync).
     await this.syncSignaturesSnapshot(tenantId, contractId);
+    this.realtime.emitToTenant(tenantId, 'crm.signature.updated', {
+      contractId,
+      role: row.role,
+      status: 'signed',
+    });
   }
 
   private async markSignerRefused(
@@ -364,6 +370,11 @@ export class CrmSignaturesService {
       data: { status: 'refused' },
     });
     await this.syncSignaturesSnapshot(tenantId, contractId);
+    this.realtime.emitToTenant(tenantId, 'crm.signature.updated', {
+      contractId,
+      role: row.role,
+      status: 'refused',
+    });
   }
 
   private async syncSignaturesSnapshot(tenantId: string, contractId: string) {

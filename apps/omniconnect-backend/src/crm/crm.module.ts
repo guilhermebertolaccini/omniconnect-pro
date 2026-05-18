@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import { CrmRealtimeModule } from '../crm-realtime/crm-realtime.module';
 import { CrmClientsController } from './clients/crm-clients.controller';
 import { CrmClientsService } from './clients/crm-clients.service';
 import { CrmContractsController } from './contracts/crm-contracts.controller';
@@ -34,6 +35,7 @@ import { CrmUnitsService } from './units/crm-units.service';
  * sempre puxado de `req.user.tenantId` (jamais do body).
  */
 @Module({
+  imports: [CrmRealtimeModule],
   controllers: [
     CrmPropertiesController,
     CrmUnitsController,

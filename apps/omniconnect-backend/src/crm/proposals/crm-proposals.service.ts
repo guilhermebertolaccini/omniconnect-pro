@@ -11,6 +11,7 @@ import {
   Role,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma.service';
+import { CrmRealtimeService } from '../../crm-realtime/crm-realtime.service';
 import { CrmActor, effectiveRole } from '../common/actor';
 import {
   CreateCrmProposalDto,
@@ -30,7 +31,10 @@ const STATUS_TRANSITIONS: Record<CrmProposalStatus, CrmProposalStatus[]> = {
 
 @Injectable()
 export class CrmProposalsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: CrmRealtimeService,
+  ) {}
 
   private brokerScope(actor: CrmActor): Prisma.CrmProposalWhereInput {
     return effectiveRole(actor) === Role.broker
@@ -163,8 +167,8 @@ export class CrmProposalsService {
         `Cannot transition proposal from ${existing.status} to ${dto.status}`,
       );
     }
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.crmProposal.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.crmProposal.update({
         where: { id },
         data: { status: dto.status },
       });
@@ -179,7 +183,6 @@ export class CrmProposalsService {
           createdById: actor.id,
         },
       });
-      // Side effect: reserva unit ao aceitar (não vende — venda só com contrato signed).
       if (
         dto.status === CrmProposalStatus.accepted &&
         existing.status !== CrmProposalStatus.accepted
@@ -198,8 +201,14 @@ export class CrmProposalsService {
           },
         });
       }
-      return updated;
+      return u;
     });
+    this.realtime.emitToTenant(tenantId, 'crm.proposal.transitioned', {
+      id,
+      fromStatus: existing.status,
+      toStatus: dto.status,
+    });
+    return updated;
   }
 
   async remove(tenantId: string, id: string, actor: CrmActor) {

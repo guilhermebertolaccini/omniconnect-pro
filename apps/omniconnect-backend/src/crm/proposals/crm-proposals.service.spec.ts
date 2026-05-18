@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { CrmContractStatus, CrmProposalStatus, CrmUnitStatus, Role } from '@prisma/client';
 import { CrmProposalsService } from './crm-proposals.service';
 import { PrismaService } from '../../prisma.service';
+import { CrmRealtimeService } from '../../crm-realtime/crm-realtime.service';
 
 /**
  * Smoke test do CrmProposalsService cobrindo:
@@ -126,6 +127,10 @@ describe('CrmProposalsService — tenant + broker isolation', () => {
       providers: [
         CrmProposalsService,
         { provide: PrismaService, useValue: prismaMock },
+        {
+          provide: CrmRealtimeService,
+          useValue: { emitToTenant: jest.fn(), emitToBroker: jest.fn() },
+        },
       ],
     }).compile();
     service = moduleRef.get(CrmProposalsService);

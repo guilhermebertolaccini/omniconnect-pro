@@ -13,6 +13,7 @@ import { CrmContractsService } from '../crm/contracts/crm-contracts.service';
 import {
   SystemEventsService,
 } from '../system-events/system-events.service';
+import { CrmRealtimeService } from '../crm-realtime/crm-realtime.service';
 
 describe('CrmSignaturesService', () => {
   let service: CrmSignaturesService;
@@ -21,6 +22,7 @@ describe('CrmSignaturesService', () => {
   let clicksignMock: any;
   let contractsMock: any;
   let systemEventsMock: any;
+  let realtimeMock: any;
 
   beforeEach(async () => {
     const contracts = new Map<string, any>([
@@ -164,6 +166,10 @@ describe('CrmSignaturesService', () => {
       markSignedInternal: jest.fn(async () => undefined),
     };
     systemEventsMock = { logEvent: jest.fn(async () => undefined) };
+    realtimeMock = {
+      emitToTenant: jest.fn(),
+      emitToBroker: jest.fn(),
+    };
 
     const moduleRef: TestingModule = await Test.createTestingModule({
       providers: [
@@ -173,6 +179,7 @@ describe('CrmSignaturesService', () => {
         { provide: ClicksignClient, useValue: clicksignMock },
         { provide: CrmContractsService, useValue: contractsMock },
         { provide: SystemEventsService, useValue: systemEventsMock },
+        { provide: CrmRealtimeService, useValue: realtimeMock },
       ],
     }).compile();
     service = moduleRef.get(CrmSignaturesService);

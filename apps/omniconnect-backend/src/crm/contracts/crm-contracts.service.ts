@@ -12,6 +12,7 @@ import {
   Role,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma.service';
+import { CrmRealtimeService } from '../../crm-realtime/crm-realtime.service';
 import { CrmActor, effectiveRole } from '../common/actor';
 import {
   CreateCrmContractDto,
@@ -34,7 +35,10 @@ const STATUS_TRANSITIONS: Record<CrmContractStatus, CrmContractStatus[]> = {
 
 @Injectable()
 export class CrmContractsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: CrmRealtimeService,
+  ) {}
 
   private brokerScope(actor: CrmActor): Prisma.CrmContractWhereInput {
     return effectiveRole(actor) === Role.broker
@@ -170,8 +174,8 @@ export class CrmContractsService {
         'signed status is only set by the Signatures module after the provider confirms all signatures',
       );
     }
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.crmContract.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.crmContract.update({
         where: { id },
         data: { status: dto.status },
       });
@@ -186,8 +190,14 @@ export class CrmContractsService {
           createdById: actor.id,
         },
       });
-      return updated;
+      return u;
     });
+    this.realtime.emitToTenant(tenantId, 'crm.contract.transitioned', {
+      id,
+      fromStatus: existing.status,
+      toStatus: dto.status,
+    });
+    return updated;
   }
 
   async remove(tenantId: string, id: string, actor: CrmActor) {
@@ -241,5 +251,43 @@ export class CrmContractsService {
         },
       });
     });
+    // O trigger SQL gerou CrmPayment/CrmCommission. Lê de volta para emitir
+    // realtime — útil para o dashboard atualizar saldos e o broker ver a
+    // comissão sem precisar refresh.
+    const [payments, commissions] = await Promise.all([
+      this.prisma.crmPayment.findMany({
+        where: { tenantId, contractId },
+        select: { id: true, contractId: true, type: true, amount: true, dueDate: true },
+      }),
+      this.prisma.crmCommission.findMany({
+        where: { tenantId, contractId },
+        select: {
+          id: true,
+          contractId: true,
+          brokerId: true,
+          commissionValue: true,
+          status: true,
+        },
+      }),
+    ]);
+    this.realtime.emitToTenant(tenantId, 'crm.contract.signed', {
+      id: contractId,
+      paymentsCount: payments.length,
+      commissionsCount: commissions.length,
+    });
+    for (const p of payments) {
+      this.realtime.emitToTenant(tenantId, 'crm.payment.created', p);
+    }
+    for (const c of commissions) {
+      this.realtime.emitToTenant(tenantId, 'crm.commission.created', c);
+      if (c.brokerId) {
+        this.realtime.emitToBroker(
+          tenantId,
+          c.brokerId,
+          'crm.commission.created.self',
+          c,
+        );
+      }
+    }
   }
 }

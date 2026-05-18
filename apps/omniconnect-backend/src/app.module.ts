@@ -46,6 +46,7 @@ import { CrmModule } from './crm/crm.module';
 import { CrmSignaturesModule } from './crm-signatures/crm-signatures.module';
 import { CrmStorageModule } from './crm-storage/crm-storage.module';
 import { CrmPdfParserModule } from './crm-pdf-parser/crm-pdf-parser.module';
+import { CrmRealtimeModule } from './crm-realtime/crm-realtime.module';
 
 @Module({
   imports: [
@@ -100,6 +101,7 @@ import { CrmPdfParserModule } from './crm-pdf-parser/crm-pdf-parser.module';
     AdPlatformTokensModule,
     TenantInvitationsModule,
     OAuthModule,
+    CrmRealtimeModule,
     CrmModule,
     CrmSignaturesModule,
     CrmStorageModule,
