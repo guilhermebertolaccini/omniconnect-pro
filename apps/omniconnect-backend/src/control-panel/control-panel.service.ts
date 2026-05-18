@@ -488,7 +488,7 @@ export class ControlPanelService {
           availableLines = nullSegmentLines;
         } else {
           // Se não encontrou linhas com segmento null, buscar segmento "Padrão"
-          const defaultSegment = await tx.segment.findUnique({
+          const defaultSegment = await tx.segment.findFirst({
             where: { name: 'Padrão' },
           });
 
@@ -547,7 +547,7 @@ export class ControlPanelService {
 
         // Se operador tem linha, verificar se é de uma evolution ativa
         if (currentLineId) {
-          const currentLine = await tx.linesStock.findUnique({
+          const currentLine = await tx.linesStock.findFirst({
             where: { id: currentLineId },
           });
           
@@ -758,7 +758,7 @@ export class ControlPanelService {
       console.log('🔄 [Desatribuição em Massa] Iniciando desatribuição de todas as linhas...');
 
       // 1. Buscar segmento "Padrão"
-      const defaultSegment = await this.prisma.segment.findUnique({
+      const defaultSegment = await this.prisma.segment.findFirst({
         where: { name: 'Padrão' },
       });
 

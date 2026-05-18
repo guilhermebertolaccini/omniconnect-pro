@@ -65,12 +65,13 @@ model User {
 
 model Segment {
   id        Int      @id @default(autoincrement())
-  name      String   @unique
+  name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   tenantId  String   @default("default-tenant")
   tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
+  @@unique([tenantId, name])
   @@index([name])
   @@index([tenantId])
 }
@@ -97,7 +98,7 @@ model Tabulation {
 model Contact {
   id        Int       @id @default(autoincrement())
   name      String
-  phone     String    @unique // Telefone único - não permite duplicados
+  phone     String // Telefone único - não permite duplicados
   segment   Int?
   cpf       String?
   contract  String?
@@ -108,6 +109,7 @@ model Contact {
   tenantId  String    @default("default-tenant")
   tenant    Tenant    @relation(fields: [tenantId], references: [id])
 
+  @@unique([tenantId, phone])
   @@index([phone])
   @@index([cpf])
   @@index([segment])
@@ -163,7 +165,7 @@ model BlockList {
 // App Meta (WhatsApp Business App)
 model App {
   id                 Int      @id @default(autoincrement())
-  name               String   @unique
+  name               String
   accessToken        String // Token de acesso do WhatsApp Cloud API
   appSecret          String? // App Secret para validação de assinatura do webhook
   webhookVerifyToken String? // Token de verificação do webhook
@@ -173,13 +175,14 @@ model App {
   tenantId           String   @default("default-tenant")
   tenant             Tenant   @relation(fields: [tenantId], references: [id])
 
+  @@unique([tenantId, name])
   @@index([name])
   @@index([tenantId])
 }
 
 model LinesStock {
   id           Int        @id @default(autoincrement())
-  phone        String     @unique
+  phone        String
   lineStatus   LineStatus @default(active)
   segment      Int?
   linkedTo     Int? // Mantido para compatibilidade (deprecated - usar LineOperators)
@@ -197,6 +200,7 @@ model LinesStock {
   tenantId  String         @default("default-tenant")
   tenant    Tenant         @relation(fields: [tenantId], references: [id])
 
+  @@unique([tenantId, phone])
   @@index([phone])
   @@index([lineStatus])
   @@index([segment])
@@ -262,7 +266,7 @@ model Conversation {
 
 model Tag {
   id          Int      @id @default(autoincrement())
-  name        String   @unique
+  name        String
   description String?
   segment     Int?
   createdAt   DateTime @default(now())
@@ -270,6 +274,7 @@ model Tag {
   tenantId    String   @default("default-tenant")
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
 
+  @@unique([tenantId, name])
   @@index([name])
   @@index([segment])
   @@index([tenantId])
@@ -391,7 +396,7 @@ model ControlPanel {
   tenantId  String   @default("default-tenant")
   tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
-  @@unique([segmentId])
+  @@unique([tenantId, segmentId])
   @@index([segmentId])
   @@index([tenantId])
 }
@@ -515,6 +520,9 @@ model ConversationAIAnalysis {
   evidence                       String?  @db.Text
   metrics                        String?  @db.Text
   rawResult                      String?  @db.Text
+  modelProvider                  String?
+  modelName                      String?
+  promptVersion                  String?
   createdAt                      DateTime @default(now())
   updatedAt                      DateTime @updatedAt
 
@@ -559,6 +567,24 @@ model Tenant {
   messageQueues          MessageQueue[]
   systemEvents           SystemEvent[]
   conversationAIAnalyses ConversationAIAnalysis[]
+  aiUsageLogs            AIUsageLog[]
+}
+
+model AIUsageLog {
+  id               Int      @id @default(autoincrement())
+  tenantId         String   @default("default-tenant")
+  conversationId   Int?
+  modelProvider    String
+  modelName        String
+  promptTokens     Int
+  completionTokens Int
+  estimatedCost    Float
+  createdAt        DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([createdAt])
 }
 
 model UserTenant {

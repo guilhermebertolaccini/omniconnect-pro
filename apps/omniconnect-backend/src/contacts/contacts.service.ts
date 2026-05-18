@@ -17,7 +17,7 @@ export class ContactsService {
     
     // Usar upsert para evitar duplicados - se já existir, atualiza; se não, cria
     return this.prisma.contact.upsert({
-      where: { phone: normalizedPhone },
+      where: { tenantId_phone: { tenantId: 'default-tenant', phone: normalizedPhone } },
       update: {
         // Atualizar apenas se novos dados forem fornecidos
         name: createContactDto.name,
@@ -52,7 +52,7 @@ export class ContactsService {
   }
 
   async findOne(id: number) {
-    const contact = await this.prisma.contact.findUnique({
+    const contact = await this.prisma.contact.findFirst({
       where: { id },
     });
 

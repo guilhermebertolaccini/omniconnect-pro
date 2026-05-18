@@ -8,7 +8,7 @@ export class TagsService {
   constructor(private prisma: PrismaService) {}
 
   async create(createTagDto: CreateTagDto) {
-    const existingTag = await this.prisma.tag.findUnique({
+    const existingTag = await this.prisma.tag.findFirst({
       where: { name: createTagDto.name },
     });
 
@@ -43,7 +43,7 @@ export class TagsService {
   }
 
   async findOne(id: number) {
-    const tag = await this.prisma.tag.findUnique({
+    const tag = await this.prisma.tag.findFirst({
       where: { id },
     });
 
@@ -55,7 +55,7 @@ export class TagsService {
   }
 
   async findByName(name: string) {
-    return this.prisma.tag.findUnique({
+    return this.prisma.tag.findFirst({
       where: { name },
     });
   }

@@ -1,14 +1,30 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma.service';
 
 @Injectable()
 export class AdsBridgeService {
+  constructor(private readonly prisma: PrismaService) {}
+
   verifySignature(raw: any, signature: string, integrationId: string) {
-    // TODO: implement signature verification
+    if (!signature || signature.trim() === '') {
+      throw new UnauthorizedException('Invalid or missing signature');
+    }
+    // Em produção, deve verificar HMAC usando secret do tenant
     return true;
   }
 
   async resolveTenantFromIntegration(integrationId: string) {
-    // TODO: implement tenant resolution
-    return "default-tenant";
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: integrationId }
+    });
+
+    if (!tenant || !tenant.isActive) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new NotFoundException('Tenant not found or inactive');
+      }
+      return 'default-tenant';
+    }
+
+    return tenant.id;
   }
 }

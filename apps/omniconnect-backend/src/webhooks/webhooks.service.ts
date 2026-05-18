@@ -244,7 +244,7 @@ export class WebhooksService {
         // Buscar nome do operador se houver
         let operatorName: string | null = null;
         if (finalOperatorId) {
-          const operator = await this.prisma.user.findUnique({
+          const operator = await this.prisma.user.findFirst({
             where: { id: finalOperatorId },
           });
           operatorName = operator?.name || null;
@@ -332,7 +332,7 @@ export class WebhooksService {
 
           if (line) {
             // Verificar se a linha é padrão (segmento "Padrão") e precisa de um segmento
-            const defaultSegment = await this.prisma.segment.findUnique({
+            const defaultSegment = await this.prisma.segment.findFirst({
               where: { name: 'Padrão' },
             });
 

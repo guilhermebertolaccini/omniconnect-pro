@@ -1,5 +1,7 @@
 import { NormalizedMessage } from '@omniconnect/ai-contracts';
 
+export const PROMPT_VERSION = 'insight-ai-conversation-analysis-v1';
+
 export function buildConversationAnalysisPrompt(messages: NormalizedMessage[]) {
   const transcript = messages
     .map((m) => `[${new Date(m.datetime).toISOString()}] ${m.sender === 'contact' ? 'LEAD' : 'CORRETOR/ATENDENTE'}: ${m.text}`)

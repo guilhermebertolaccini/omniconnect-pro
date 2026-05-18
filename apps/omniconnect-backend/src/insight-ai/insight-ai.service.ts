@@ -2,8 +2,14 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 import { AnalyzeConversationDto } from './dto/analyze-conversation.dto';
-import { buildConversationAnalysisPrompt } from './insight-ai.prompt';
+import { buildConversationAnalysisPrompt, PROMPT_VERSION } from './insight-ai.prompt';
 import { ConversationAIResult, NormalizedMessage } from '@omniconnect/ai-contracts';
+import { redactPII } from './pii-redactor.util';
+
+const AI_PRICING: Record<string, { input: number; output: number }> = {
+  'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
+  'gpt-4o':      { input: 0.0025,   output: 0.010 },
+};
 
 @Injectable()
 export class InsightAiService {
@@ -14,13 +20,14 @@ export class InsightAiService {
     private readonly config: ConfigService,
   ) {}
 
-  async analyzeByPhone(contactPhone: string, dto: AnalyzeConversationDto = {}) {
+  async analyzeByPhone(tenantId: string, contactPhone: string, dto: AnalyzeConversationDto = {}) {
     const limit = dto.limit ?? 80;
     const days = dto.days ?? 30;
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
     const conversations = await this.prisma.conversation.findMany({
       where: {
+        tenantId,
         contactPhone,
         datetime: { gte: since },
         ...(dto.segment ? { segment: dto.segment } : {}),
@@ -54,12 +61,14 @@ export class InsightAiService {
       userName: c.userName,
     }));
 
-    const result = await this.analyzeMessages(messages);
     const first = conversations[0];
     const last = conversations[conversations.length - 1];
 
+    const response = await this.analyzeMessages(tenantId, first.id, messages);
+    const result = response.result;
+
     if (dto.persist !== false) {
-      await this.persistAnalysis({
+      await this.persistAnalysis(tenantId, {
         contactPhone,
         contactName: first.contactName,
         segment: first.segment,
@@ -69,6 +78,9 @@ export class InsightAiService {
         conversationEnd: last.datetime,
         messageCount: conversations.length,
         result,
+        modelProvider: response.modelProvider,
+        modelName: response.modelName,
+        promptVersion: response.promptVersion,
       });
     }
 
@@ -85,11 +97,12 @@ export class InsightAiService {
     };
   }
 
-  async analyzeManyPending(dto: AnalyzeConversationDto = {}) {
+  async analyzeManyPending(tenantId: string, dto: AnalyzeConversationDto = {}) {
     const days = dto.days ?? 30;
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const phones = await this.prisma.conversation.findMany({
       where: {
+        tenantId,
         datetime: { gte: since },
         ...(dto.segment ? { segment: dto.segment } : {}),
         ...(dto.userId ? { userId: dto.userId } : {}),
@@ -103,7 +116,7 @@ export class InsightAiService {
     const results = [];
     for (const item of phones) {
       try {
-        results.push(await this.analyzeByPhone(item.contactPhone, dto));
+        results.push(await this.analyzeByPhone(tenantId, item.contactPhone, dto));
       } catch (error) {
         this.logger.warn(`Falha ao analisar ${item.contactPhone}: ${error?.message ?? error}`);
       }
@@ -112,19 +125,19 @@ export class InsightAiService {
     return { total: results.length, results };
   }
 
-  async listAnalyses(filters: { contactPhone?: string; limit?: number }) {
+  async listAnalyses(tenantId: string, filters: { contactPhone?: string; limit?: number }) {
     const limit = Math.min(filters.limit ?? 50, 200);
     return (this.prisma as any).conversationAIAnalysis.findMany({
-      where: filters.contactPhone ? { contactPhone: filters.contactPhone } : {},
+      where: { tenantId, ...(filters.contactPhone ? { contactPhone: filters.contactPhone } : {}) },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
   }
 
-  async getExecutiveSummary(days = 30) {
+  async getExecutiveSummary(tenantId: string, days = 30) {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const rows = await (this.prisma as any).conversationAIAnalysis.findMany({
-      where: { createdAt: { gte: since } },
+      where: { tenantId, createdAt: { gte: since } },
       orderBy: { createdAt: 'desc' },
       take: 1000,
     });
@@ -156,21 +169,24 @@ export class InsightAiService {
     };
   }
 
-  private async analyzeMessages(messages: NormalizedMessage[]): Promise<ConversationAIResult> {
+  private async analyzeMessages(tenantId: string, conversationId: number | null, messages: NormalizedMessage[]) {
+    // Redact PII before sending
+    const safeMessages = messages.map(m => ({ ...m, text: redactPII(m.text) }));
+
     const apiKey = this.config.get<string>('OPENAI_API_KEY');
     if (!apiKey) {
-      return this.heuristicAnalysis(messages);
+      return this.heuristicAnalysis(safeMessages);
     }
 
     try {
-      return await this.openAiAnalysis(messages, apiKey);
+      return await this.openAiAnalysis(tenantId, conversationId, safeMessages, apiKey);
     } catch (error) {
       this.logger.warn(`OpenAI indisponível. Usando análise heurística. Erro: ${error?.message ?? error}`);
-      return this.heuristicAnalysis(messages);
+      return this.heuristicAnalysis(safeMessages);
     }
   }
 
-  private async openAiAnalysis(messages: NormalizedMessage[], apiKey: string): Promise<ConversationAIResult> {
+  private async openAiAnalysis(tenantId: string, conversationId: number | null, messages: NormalizedMessage[], apiKey: string) {
     const model = this.config.get<string>('OPENAI_MODEL') || 'gpt-4o-mini';
     const prompt = buildConversationAnalysisPrompt(messages);
 
@@ -197,12 +213,36 @@ export class InsightAiService {
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
+    const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
     if (!content) throw new Error('Resposta vazia da OpenAI.');
 
-    return this.normalizeResult(JSON.parse(content));
+    const promptTokens = usage.prompt_tokens;
+    const completionTokens = usage.completion_tokens;
+    const pricing = AI_PRICING[model] || AI_PRICING['gpt-4o-mini'];
+    const estimatedCost = (promptTokens / 1000) * pricing.input + (completionTokens / 1000) * pricing.output;
+
+    // Persist usage metrics for billing
+    await (this.prisma as any).aIUsageLog.create({
+      data: {
+        tenantId,
+        conversationId,
+        modelProvider: 'openai',
+        modelName: model,
+        promptTokens,
+        completionTokens,
+        estimatedCost,
+      }
+    }).catch(err => this.logger.error(`Failed to save AIUsageLog: ${err.message}`));
+
+    return {
+      result: this.normalizeResult(JSON.parse(content)),
+      modelProvider: 'openai',
+      modelName: model,
+      promptVersion: PROMPT_VERSION,
+    };
   }
 
-  private heuristicAnalysis(messages: NormalizedMessage[]): ConversationAIResult {
+  private heuristicAnalysis(messages: NormalizedMessage[]) {
     const allText = messages.map((m) => m.text.toLowerCase()).join(' ');
     const contactMessages = messages.filter((m) => m.sender === 'contact');
     const operatorMessages = messages.filter((m) => m.sender === 'operator');
@@ -244,7 +284,7 @@ export class InsightAiService {
     const sellerQualityScore = Math.min(100, 35 + (hasQualification ? 20 : 0) + (hasSchedulingAttempt ? 20 : 0) + (hasProposalOrSimulationAttempt ? 15 : 0) + (firstResponseMinutes !== null && firstResponseMinutes <= 10 ? 10 : 0) - (hasSellerAbandonment ? 20 : 0));
     const lostOpportunity = intentScore >= 50 && hasSellerAbandonment;
 
-    return this.normalizeResult({
+    const finalResult = this.normalizeResult({
       summary: `Conversa analisada automaticamente com ${messages.length} mensagens. Intenção estimada: ${leadIntent}.`,
       leadIntent,
       opportunityStatus: lostOpportunity ? 'pronta_para_retomada' : hasSellerAbandonment ? 'em_risco' : 'ativa',
@@ -272,6 +312,13 @@ export class InsightAiService {
       ],
       metrics: { heuristic: true, contactMessages: contactMessages.length, operatorMessages: operatorMessages.length, intentScore },
     });
+
+    return {
+      result: finalResult,
+      modelProvider: 'heuristic',
+      modelName: 'regex-engine-v1',
+      promptVersion: 'none',
+    };
   }
 
   private normalizeResult(input: any): ConversationAIResult {
@@ -300,7 +347,7 @@ export class InsightAiService {
     };
   }
 
-  private async persistAnalysis(payload: {
+  private async persistAnalysis(tenantId: string, payload: {
     contactPhone: string;
     contactName?: string | null;
     segment?: number | null;
@@ -310,10 +357,14 @@ export class InsightAiService {
     conversationEnd: Date;
     messageCount: number;
     result: ConversationAIResult;
+    modelProvider: string;
+    modelName: string;
+    promptVersion: string;
   }) {
     const r = payload.result;
     return (this.prisma as any).conversationAIAnalysis.create({
       data: {
+        tenantId,
         contactPhone: payload.contactPhone,
         contactName: payload.contactName,
         segment: payload.segment,
@@ -343,6 +394,9 @@ export class InsightAiService {
         evidence: JSON.stringify(r.evidence),
         metrics: JSON.stringify(r.metrics),
         rawResult: JSON.stringify(r),
+        modelProvider: payload.modelProvider,
+        modelName: payload.modelName,
+        promptVersion: payload.promptVersion,
       },
     });
   }

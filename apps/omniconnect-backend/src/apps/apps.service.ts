@@ -9,7 +9,7 @@ export class AppsService {
 
   async create(createAppDto: CreateAppDto) {
     // Verificar se já existe um app com este nome
-    const existingApp = await this.prisma.app.findUnique({
+    const existingApp = await this.prisma.app.findFirst({
       where: { name: createAppDto.name },
     });
 
@@ -35,7 +35,7 @@ export class AppsService {
   }
 
   async findOne(id: number) {
-    const app = await this.prisma.app.findUnique({
+    const app = await this.prisma.app.findFirst({
       where: { id },
     });
 
@@ -51,7 +51,7 @@ export class AppsService {
 
     // Se está atualizando o nome, verificar se não existe outro app com o mesmo nome
     if (updateAppDto.name && updateAppDto.name !== app.name) {
-      const existingApp = await this.prisma.app.findUnique({
+      const existingApp = await this.prisma.app.findFirst({
         where: { name: updateAppDto.name },
       });
 

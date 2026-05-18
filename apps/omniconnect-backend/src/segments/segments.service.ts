@@ -10,7 +10,7 @@ export class SegmentsService {
   constructor(private prisma: PrismaService) {}
 
   async create(createSegmentDto: CreateSegmentDto) {
-    const existing = await this.prisma.segment.findUnique({
+    const existing = await this.prisma.segment.findFirst({
       where: { name: createSegmentDto.name },
     });
 
@@ -48,7 +48,7 @@ export class SegmentsService {
   }
 
   async findOne(id: number) {
-    const segment = await this.prisma.segment.findUnique({
+    const segment = await this.prisma.segment.findFirst({
       where: { id },
     });
 

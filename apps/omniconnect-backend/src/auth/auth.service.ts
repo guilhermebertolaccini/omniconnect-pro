@@ -59,7 +59,12 @@ export class AuthService {
       });
     }
 
-    const payload = { email: user.email, sub: user.id, role: user.role };
+    const userTenants = await this.prisma.userTenant.findMany({
+      where: { userId: user.id }
+    });
+    const activeTenantId = userTenants.length > 0 ? userTenants[0].tenantId : 'default-tenant';
+
+    const payload = { email: user.email, sub: user.id, role: user.role, tenantId: activeTenantId };
     return {
       access_token: this.jwtService.sign(payload),
       user: {
@@ -71,6 +76,7 @@ export class AuthService {
         line: user.line,
         status: user.role === 'operator' ? 'Online' : user.status,
         oneToOneActive: user.oneToOneActive,
+        tenantId: activeTenantId,
       },
     };
   }
