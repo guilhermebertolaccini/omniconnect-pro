@@ -20,7 +20,11 @@ export class ArchivingService {
   }
 
   /**
-   * Job agendado: arquiva conversas antigas diariamente às 2h da manhã
+   * Job agendado: arquiva conversas antigas diariamente às 2h da manhã.
+   * Operação global multi-tenant — uma única passagem cobre todas as
+   * conversas elegíveis pela política de retenção. A query é uniforme
+   * (não cross-tenant data), apenas marca como `archived`. Tenants são
+   * preservados pelo próprio registro.
    */
   @Cron(CronExpression.EVERY_DAY_AT_2AM)
   async archiveOldConversations() {
@@ -33,18 +37,17 @@ export class ArchivingService {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - this.ARCHIVE_AFTER_DAYS);
 
-      // Buscar conversas antigas que ainda não foram arquivadas
       const oldConversations = await this.prisma.conversation.findMany({
         where: {
           datetime: {
             lt: cutoffDate,
           },
-          archived: (false as any), // Temporário até migration ser aplicada
+          archived: false,
         },
         select: {
           id: true,
         },
-        take: 10000, // Processar em lotes de 10k
+        take: 10000,
       });
 
       if (oldConversations.length === 0) {
@@ -52,7 +55,6 @@ export class ArchivingService {
         return { archived: 0, message: 'Nenhuma conversa arquivada' };
       }
 
-      // Marcar como arquivadas
       const result = await this.prisma.conversation.updateMany({
         where: {
           id: {
@@ -60,8 +62,8 @@ export class ArchivingService {
           },
         },
         data: {
-          archived: (true as any), // Temporário até migration ser aplicada
-          archivedAt: (new Date() as any), // Temporário até migration ser aplicada
+          archived: true,
+          archivedAt: new Date(),
         },
       });
 
@@ -104,12 +106,10 @@ export class ArchivingService {
 
       const archivedConversations = await this.prisma.conversation.findMany({
         where: {
-          archived: (true as any), // Temporário até migration ser aplicada
-          archivedAt: ({
-            lt: thirtyDaysAgo,
-          } as any), // Temporário até migration ser aplicada
+          archived: true,
+          archivedAt: { lt: thirtyDaysAgo },
         },
-        take: 5000, // Processar em lotes
+        take: 5000,
       });
 
       if (archivedConversations.length === 0) {
@@ -164,10 +164,8 @@ export class ArchivingService {
 
       const result = await this.prisma.conversation.deleteMany({
         where: {
-          archived: (true as any), // Temporário até migration ser aplicada
-          archivedAt: ({
-            lt: ninetyDaysAgo,
-          } as any), // Temporário até migration ser aplicada
+          archived: true,
+          archivedAt: { lt: ninetyDaysAgo },
         },
       });
 
@@ -193,23 +191,27 @@ export class ArchivingService {
   }
 
   /**
-   * Obtém estatísticas de arquivamento
+   * Estatísticas de arquivamento escopadas por tenant (chamado pelo
+   * endpoint admin do tenant). O job cron continua global porque a
+   * política de retenção é uniforme entre tenants.
    */
-  async getArchivingStats() {
+  async getArchivingStats(tenantId: string) {
+    if (!tenantId) {
+      throw new Error('ArchivingService.getArchivingStats requires tenantId');
+    }
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - this.ARCHIVE_AFTER_DAYS);
 
     const [total, archived, pendingArchive] = await Promise.all([
-      this.prisma.conversation.count(),
+      this.prisma.conversation.count({ where: { tenantId } }),
       this.prisma.conversation.count({
-        where: { archived: (true as any) }, // Temporário até migration ser aplicada
+        where: { tenantId, archived: true },
       }),
       this.prisma.conversation.count({
         where: {
-          archived: (false as any), // Temporário até migration ser aplicada
-          datetime: {
-            lt: cutoffDate,
-          },
+          tenantId,
+          archived: false,
+          datetime: { lt: cutoffDate },
         },
       }),
     ]);

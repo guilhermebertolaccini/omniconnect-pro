@@ -3,6 +3,8 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ensureTenant } from '../common/utils/tenant-context';
 import { Role } from '@prisma/client';
 import { ArchivingService } from './archiving.service';
 
@@ -15,10 +17,10 @@ export class ArchivingController {
   constructor(private archivingService: ArchivingService) { }
 
   @Get('stats')
-  @ApiOperation({ summary: 'Obter estatísticas de arquivamento' })
+  @ApiOperation({ summary: 'Obter estatísticas de arquivamento do tenant' })
   @ApiResponse({ status: 200, description: 'Estatísticas de arquivamento' })
-  async getStats() {
-    return await this.archivingService.getArchivingStats();
+  async getStats(@CurrentUser() user: any) {
+    return await this.archivingService.getArchivingStats(ensureTenant(user));
   }
 }
 

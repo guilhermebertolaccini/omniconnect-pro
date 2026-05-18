@@ -118,9 +118,12 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       // Enviar conversas ativas ao conectar (apenas para operators)
       // Buscar por userId mesmo se não tiver linha, pois as conversas estão vinculadas ao operador
       if (user.role === 'operator') {
-        // Buscar conversas apenas por userId (não por userLine)
-        // Isso permite que as conversas continuem aparecendo mesmo se a linha foi banida
-        const activeConversations = await this.conversationsService.findActiveConversations(undefined, user.id);
+        // Buscar conversas escopadas pelo tenant do JWT do socket.
+        const activeConversations = await this.conversationsService.findActiveConversations(
+          user.tenantId,
+          undefined,
+          user.id,
+        );
         client.emit('active-conversations', activeConversations);
 
         // Processar mensagens pendentes na fila quando operador fica online
@@ -205,7 +208,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
           data: { status: 'Offline' },
         });
 
-        // Registrar evento de desconexão
+        // Registrar evento de desconexão (tenant do user no socket).
         if (client.data.user.role === 'operator') {
           await this.systemEventsService.logEvent(
             EventType.OPERATOR_DISCONNECTED,
@@ -213,6 +216,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
             { userId: userId, userName: client.data.user.name, email: client.data.user.email },
             userId,
             EventSeverity.INFO,
+            client.data.user.tenantId,
           );
         }
 
@@ -567,6 +571,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
           },
           user.id,
           EventSeverity.INFO,
+          user.tenantId,
         ).catch(err => console.warn('Erro ao registrar evento:', err)),
 
         // Health check: Validar credenciais Cloud API (assíncrono, não bloqueia envio)
@@ -619,6 +624,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         },
         user.id,
         EventSeverity.ERROR,
+        user.tenantId,
       );
 
       // Falhou - notificar operador

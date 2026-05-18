@@ -1,29 +1,29 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
 export enum EventType {
   // Operador
   OPERATOR_CONNECTED = 'operator_connected',
   OPERATOR_DISCONNECTED = 'operator_disconnected',
-  
+
   // Linhas
   LINE_CREATED = 'line_created',
   LINE_ASSIGNED = 'line_assigned',
   LINE_REALLOCATED = 'line_reallocated',
   LINE_BANNED = 'line_banned',
   LINE_UNASSIGNED = 'line_unassigned',
-  
+
   // Mensagens
   MESSAGE_SENT = 'message_sent',
   MESSAGE_RECEIVED = 'message_received',
   MESSAGE_QUEUED = 'message_queued',
   MESSAGE_PROCESSED = 'message_processed',
-  
+
   // Erros
   API_ERROR = 'api_error',
   TIMEOUT_ERROR = 'timeout_error',
   HEALTH_CHECK_FAILED = 'health_check_failed',
-  
+
   // Sistema
   CPC_TRIGGERED = 'cpc_triggered',
   REPESCAGEM_TRIGGERED = 'repescagem_triggered',
@@ -48,23 +48,44 @@ export enum EventModule {
   AUTO_MESSAGE = 'auto_message',
 }
 
+interface EventFilters {
+  type?: string;
+  module?: string;
+  userId?: number;
+  severity?: string;
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+interface MetricFilters {
+  startDate?: Date;
+  endDate?: Date;
+  groupBy?: 'type' | 'module' | 'severity' | 'hour' | 'day';
+}
+
 @Injectable()
 export class SystemEventsService {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Registra um evento no sistema
+   * Registra um evento no sistema. `tenantId` é obrigatório — callers
+   * que ainda não conseguem resolver o tenant devem passar o sentinel
+   * ('default-tenant') explicitamente para que seja visível em logs.
    */
   async logEvent(
     type: EventType,
     module: EventModule,
-    data?: any,
-    userId?: number,
+    data: any,
+    userId: number | null | undefined,
     severity: EventSeverity = EventSeverity.INFO,
+    tenantId: string = 'default-tenant',
   ): Promise<void> {
     try {
-      await (this.prisma as any).systemEvent.create({
+      await this.prisma.systemEvent.create({
         data: {
+          tenantId,
           type,
           module,
           data: data ? JSON.stringify(data) : null,
@@ -79,48 +100,27 @@ export class SystemEventsService {
   }
 
   /**
-   * Busca eventos com filtros
+   * Busca eventos com filtros, escopados por tenant.
    */
-  async findEvents(filters: {
-    type?: string;
-    module?: string;
-    userId?: number;
-    severity?: string;
-    startDate?: Date;
-    endDate?: Date;
-    limit?: number;
-    offset?: number;
-  }) {
-    const where: any = {};
-
-    if (filters.type) {
-      where.type = filters.type;
+  async findEvents(tenantId: string, filters: EventFilters) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
     }
+    const where: any = { tenantId };
 
-    if (filters.module) {
-      where.module = filters.module;
-    }
-
-    if (filters.userId) {
-      where.userId = filters.userId;
-    }
-
-    if (filters.severity) {
-      where.severity = filters.severity;
-    }
+    if (filters.type) where.type = filters.type;
+    if (filters.module) where.module = filters.module;
+    if (filters.userId) where.userId = filters.userId;
+    if (filters.severity) where.severity = filters.severity;
 
     if (filters.startDate || filters.endDate) {
       where.createdAt = {};
-      if (filters.startDate) {
-        where.createdAt.gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        where.createdAt.lte = filters.endDate;
-      }
+      if (filters.startDate) where.createdAt.gte = filters.startDate;
+      if (filters.endDate) where.createdAt.lte = filters.endDate;
     }
 
     const [events, total] = await Promise.all([
-      (this.prisma as any).systemEvent.findMany({
+      this.prisma.systemEvent.findMany({
         where,
         include: {
           user: {
@@ -138,11 +138,11 @@ export class SystemEventsService {
         take: filters.limit || 100,
         skip: filters.offset || 0,
       }),
-      (this.prisma as any).systemEvent.count({ where }),
+      this.prisma.systemEvent.count({ where }),
     ]);
 
     return {
-      events: events.map(event => ({
+      events: events.map((event) => ({
         ...event,
         data: event.data ? JSON.parse(event.data) : null,
       })),
@@ -151,26 +151,21 @@ export class SystemEventsService {
   }
 
   /**
-   * Busca métricas agregadas
+   * Busca métricas agregadas (escopadas por tenant).
    */
-  async getMetrics(filters: {
-    startDate?: Date;
-    endDate?: Date;
-    groupBy?: 'type' | 'module' | 'severity' | 'hour' | 'day';
-  }) {
-    const where: any = {};
+  async getMetrics(tenantId: string, filters: MetricFilters) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+    const where: any = { tenantId };
 
     if (filters.startDate || filters.endDate) {
       where.createdAt = {};
-      if (filters.startDate) {
-        where.createdAt.gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        where.createdAt.lte = filters.endDate;
-      }
+      if (filters.startDate) where.createdAt.gte = filters.startDate;
+      if (filters.endDate) where.createdAt.lte = filters.endDate;
     }
 
-    const events = await (this.prisma as any).systemEvent.findMany({
+    const events = await this.prisma.systemEvent.findMany({
       where,
       select: {
         type: true,
@@ -180,12 +175,10 @@ export class SystemEventsService {
       },
     });
 
-    // Agrupar por tipo, módulo, severidade ou tempo
     const grouped: Record<string, number> = {};
 
     for (const event of events) {
       let key: string;
-
       switch (filters.groupBy) {
         case 'type':
           key = event.type;
@@ -197,17 +190,14 @@ export class SystemEventsService {
           key = event.severity;
           break;
         case 'hour':
-          const hour = new Date(event.createdAt).toISOString().slice(0, 13) + ':00:00';
-          key = hour;
+          key = new Date(event.createdAt).toISOString().slice(0, 13) + ':00:00';
           break;
         case 'day':
-          const day = new Date(event.createdAt).toISOString().slice(0, 10);
-          key = day;
+          key = new Date(event.createdAt).toISOString().slice(0, 10);
           break;
         default:
           key = event.type;
       }
-
       grouped[key] = (grouped[key] || 0) + 1;
     }
 
@@ -215,35 +205,26 @@ export class SystemEventsService {
   }
 
   /**
-   * Busca eventos por minuto (para gráfico de eventos/minuto)
+   * Eventos por minuto, escopados por tenant.
    */
-  async getEventsPerMinute(filters: {
-    startDate?: Date;
-    endDate?: Date;
-  }) {
-    const where: any = {};
+  async getEventsPerMinute(tenantId: string, filters: { startDate?: Date; endDate?: Date }) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+    const where: any = { tenantId };
 
     if (filters.startDate || filters.endDate) {
       where.createdAt = {};
-      if (filters.startDate) {
-        where.createdAt.gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        where.createdAt.lte = filters.endDate;
-      }
+      if (filters.startDate) where.createdAt.gte = filters.startDate;
+      if (filters.endDate) where.createdAt.lte = filters.endDate;
     }
 
-    const events = await (this.prisma as any).systemEvent.findMany({
+    const events = await this.prisma.systemEvent.findMany({
       where,
-      select: {
-        createdAt: true,
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
+      select: { createdAt: true },
+      orderBy: { createdAt: 'asc' },
     });
 
-    // Agrupar por minuto
     const perMinute: Record<string, number> = {};
 
     for (const event of events) {
@@ -258,21 +239,18 @@ export class SystemEventsService {
   }
 
   /**
-   * Limpa eventos antigos (manter apenas últimos N dias)
+   * Limpa eventos antigos. Tarefa global (não escopada por tenant) —
+   * o retention policy é uniforme. Mantém aceitando tenantId opcional
+   * para uso por tenant-admin no futuro.
    */
-  async cleanOldEvents(daysToKeep: number = 30) {
+  async cleanOldEvents(daysToKeep: number = 30, tenantId?: string) {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
-    const result = await (this.prisma as any).systemEvent.deleteMany({
-      where: {
-        createdAt: {
-          lt: cutoffDate,
-        },
-      },
-    });
+    const where: any = { createdAt: { lt: cutoffDate } };
+    if (tenantId) where.tenantId = tenantId;
 
+    const result = await this.prisma.systemEvent.deleteMany({ where });
     return result.count;
   }
 }
-

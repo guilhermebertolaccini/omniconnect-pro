@@ -3,6 +3,8 @@ import { SystemEventsService } from './system-events.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ensureTenant } from '../common/utils/tenant-context';
 import { Transform } from 'class-transformer';
 import { IsOptional, IsString, IsNumber, IsDateString } from 'class-validator';
 
@@ -73,8 +75,8 @@ export class SystemEventsController {
   constructor(private readonly systemEventsService: SystemEventsService) {}
 
   @Get()
-  async getEvents(@Query() query: GetEventsQueryDto) {
-    return this.systemEventsService.findEvents({
+  async getEvents(@CurrentUser() user: any, @Query() query: GetEventsQueryDto) {
+    return this.systemEventsService.findEvents(ensureTenant(user), {
       type: query.type,
       module: query.module,
       userId: query.userId,
@@ -87,8 +89,8 @@ export class SystemEventsController {
   }
 
   @Get('metrics')
-  async getMetrics(@Query() query: GetMetricsQueryDto) {
-    return this.systemEventsService.getMetrics({
+  async getMetrics(@CurrentUser() user: any, @Query() query: GetMetricsQueryDto) {
+    return this.systemEventsService.getMetrics(ensureTenant(user), {
       startDate: query.startDate ? new Date(query.startDate) : undefined,
       endDate: query.endDate ? new Date(query.endDate) : undefined,
       groupBy: query.groupBy || 'type',
@@ -96,8 +98,8 @@ export class SystemEventsController {
   }
 
   @Get('events-per-minute')
-  async getEventsPerMinute(@Query() query: GetMetricsQueryDto) {
-    return this.systemEventsService.getEventsPerMinute({
+  async getEventsPerMinute(@CurrentUser() user: any, @Query() query: GetMetricsQueryDto) {
+    return this.systemEventsService.getEventsPerMinute(ensureTenant(user), {
       startDate: query.startDate ? new Date(query.startDate) : undefined,
       endDate: query.endDate ? new Date(query.endDate) : undefined,
     });

@@ -1,5 +1,4 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { LinesService } from './lines.service';
 import { CreateLineDto } from './dto/create-line.dto';
 import { UpdateLineDto } from './dto/update-line.dto';
@@ -8,6 +7,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ensureTenant } from '../common/utils/tenant-context';
 
 @Controller('lines')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -17,14 +17,13 @@ export class LinesController {
   @Post()
   @Roles(Role.admin, Role.ativador)
   create(@Body() createLineDto: CreateLineDto, @CurrentUser() user: any) {
-    console.log('📝 Dados recebidos para criar linha:', createLineDto);
-    return this.linesService.create(createLineDto, user.id);
+    return this.linesService.create(ensureTenant(user), createLineDto, user.id);
   }
 
   @Get()
   @Roles(Role.admin, Role.supervisor, Role.ativador)
-  findAll(@Query() filters: any) {
-    return this.linesService.findAll(filters);
+  findAll(@CurrentUser() user: any, @Query() filters: any) {
+    return this.linesService.findAll(ensureTenant(user), filters);
   }
 
   @Get('schema')
@@ -55,8 +54,8 @@ export class LinesController {
 
   @Get('available/:segment')
   @Roles(Role.admin)
-  getAvailable(@Param('segment') segment: string) {
-    return this.linesService.getAvailableLines(+segment);
+  getAvailable(@CurrentUser() user: any, @Param('segment') segment: string) {
+    return this.linesService.getAvailableLines(ensureTenant(user), +segment);
   }
 
   @Get('segment/:segmentId')
@@ -65,52 +64,51 @@ export class LinesController {
     @Param('segmentId') segmentId: string,
     @CurrentUser() user: any,
   ) {
-    // Validar que operador só pode ver linhas do próprio segmento
     if (user.role === Role.operator && user.segment !== +segmentId) {
       throw new Error('Você só pode acessar linhas do seu segmento');
     }
-    return this.linesService.getAvailableLinesForSegment(+segmentId);
+    return this.linesService.getAvailableLinesForSegment(ensureTenant(user), +segmentId);
   }
 
   @Get('activators-productivity')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  getActivatorsProductivity() {
-    return this.linesService.getActivatorsProductivity();
+  getActivatorsProductivity(@CurrentUser() user: any) {
+    return this.linesService.getActivatorsProductivity(ensureTenant(user));
   }
 
   @Get('allocation-stats')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  getAllocationStats() {
-    return this.linesService.getLinesAllocationStats();
+  getAllocationStats(@CurrentUser() user: any) {
+    return this.linesService.getLinesAllocationStats(ensureTenant(user));
   }
 
   @Get(':id')
   @Roles(Role.admin, Role.ativador)
-  findOne(@Param('id') id: string) {
-    return this.linesService.findOne(+id);
+  findOne(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.linesService.findOne(ensureTenant(user), +id);
   }
 
   @Get(':id/test-connection')
   @Roles(Role.admin, Role.ativador)
-  testConnection(@Param('id') id: string) {
-    return this.linesService.testConnection(+id);
+  testConnection(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.linesService.testConnection(ensureTenant(user), +id);
   }
 
   @Patch(':id')
   @Roles(Role.admin)
-  update(@Param('id') id: string, @Body() updateLineDto: UpdateLineDto) {
-    return this.linesService.update(+id, updateLineDto);
+  update(@CurrentUser() user: any, @Param('id') id: string, @Body() updateLineDto: UpdateLineDto) {
+    return this.linesService.update(ensureTenant(user), +id, updateLineDto);
   }
 
   @Post(':id/ban')
   @Roles(Role.admin)
-  handleBan(@Param('id') id: string) {
-    return this.linesService.handleBannedLine(+id);
+  handleBan(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.linesService.handleBannedLine(ensureTenant(user), +id);
   }
 
   @Delete(':id')
   @Roles(Role.admin)
-  remove(@Param('id') id: string) {
-    return this.linesService.remove(+id);
+  remove(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.linesService.remove(ensureTenant(user), +id);
   }
 }

@@ -306,8 +306,8 @@ export class CloudApiWebhookService {
         });
       }
 
-      // Distribuir mensagem usando algoritmo inteligente
-      const finalOperatorId = await this.linesService.distributeInboundMessage(line.id, from);
+      // Distribuir mensagem usando algoritmo inteligente (tenant trusted)
+      const finalOperatorId = await this.linesService.distributeInboundMessage(tenantId, line.id, from);
 
       // Se ainda não encontrou operador online, adicionar à fila
       if (!finalOperatorId) {
@@ -336,6 +336,7 @@ export class CloudApiWebhookService {
           },
           null,
           EventSeverity.WARNING,
+          tenantId,
         );
 
         return { status: 'queued' };
@@ -374,6 +375,7 @@ export class CloudApiWebhookService {
         },
         finalOperatorId || undefined,
         blockedByPhrase ? EventSeverity.WARNING : EventSeverity.INFO,
+        tenantId,
       );
 
       // Emitir via WebSocket

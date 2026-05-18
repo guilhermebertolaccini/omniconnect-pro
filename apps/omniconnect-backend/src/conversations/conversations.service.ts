@@ -1,8 +1,28 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+
+const CONVERSATION_SELECT = {
+  id: true,
+  contactName: true,
+  contactPhone: true,
+  segment: true,
+  userName: true,
+  userLine: true,
+  userId: true,
+  message: true,
+  sender: true,
+  datetime: true,
+  tabulation: true,
+  messageType: true,
+  mediaUrl: true,
+  archived: true,
+  archivedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 @Injectable()
 export class ConversationsService {
@@ -12,211 +32,131 @@ export class ConversationsService {
     private websocketGateway: WebsocketGateway,
   ) { }
 
-  async create(tenantId: string, createConversationDto: CreateConversationDto) {
+  private requireTenant(tenantId: string) {
     if (!tenantId) {
-      throw new Error('ConversationsService.create requires tenantId');
+      throw new BadRequestException('tenantId is required');
     }
+  }
+
+  async create(tenantId: string, createConversationDto: CreateConversationDto) {
+    this.requireTenant(tenantId);
     const conversation = await this.prisma.conversation.create({
       data: {
         ...createConversationDto,
         tenantId,
         datetime: createConversationDto.datetime || new Date(),
       },
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        // messageId omitido temporariamente até confirmar que a coluna existe no banco
-      },
+      select: CONVERSATION_SELECT,
     });
     return conversation;
   }
 
-  async findAll(filters?: any) {
-    // Remover campos inválidos que não existem no schema
+  async findAll(tenantId: string, filters?: any) {
+    this.requireTenant(tenantId);
     const { search, ...validFilters } = filters || {};
 
-    // Se houver busca por texto, aplicar filtros
-    const where = search
+    const where: any = search
       ? {
         ...validFilters,
+        tenantId,
         OR: [
           { contactName: { contains: search, mode: 'insensitive' } },
           { contactPhone: { contains: search } },
           { message: { contains: search, mode: 'insensitive' } },
         ],
       }
-      : validFilters;
+      : { ...validFilters, tenantId };
 
     return this.prisma.conversation.findMany({
       where,
-      orderBy: {
-        datetime: 'desc',
-      },
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      orderBy: { datetime: 'desc' },
+      select: CONVERSATION_SELECT,
     });
   }
 
   /**
-   * Buscar conversas filtrando por domínio de email dos operadores
-   * Usado por admin e supervisor para ver apenas conversas do mesmo domínio
+   * Busca conversas filtrando por domínio de email dos operadores
+   * (supervisor mode). Sempre escopado por tenant.
    */
-  async findAllByEmailDomain(filters: any, emailDomain: string) {
+  async findAllByEmailDomain(tenantId: string, filters: any, emailDomain: string) {
+    this.requireTenant(tenantId);
     const { search, ...validFilters } = filters || {};
 
-    // Buscar IDs de usuários (operadores) com o mesmo domínio de email
     const usersWithSameDomain = await this.prisma.user.findMany({
       where: {
-        email: {
-          endsWith: `@${emailDomain}`,
-        },
+        email: { endsWith: `@${emailDomain}` },
+        tenants: { some: { tenantId } },
       },
       select: { id: true },
     });
 
-    const userIds = usersWithSameDomain.map(u => u.id);
-
-    // Se não houver usuários do domínio, retornar vazio
+    const userIds = usersWithSameDomain.map((u) => u.id);
     if (userIds.length === 0) {
       return [];
     }
 
-    // Aplicar filtro de userId na busca de conversas
+    const baseWhere: any = {
+      ...validFilters,
+      tenantId,
+      userId: { in: userIds },
+    };
+
     const where = search
       ? {
-        ...validFilters,
-        userId: { in: userIds }, // Filtrar por operadores do mesmo domínio
+        ...baseWhere,
         OR: [
           { contactName: { contains: search, mode: 'insensitive' } },
           { contactPhone: { contains: search } },
           { message: { contains: search, mode: 'insensitive' } },
         ],
       }
-      : {
-        ...validFilters,
-        userId: { in: userIds }, // Filtrar por operadores do mesmo domínio
-      };
+      : baseWhere;
 
     return this.prisma.conversation.findMany({
       where,
-      orderBy: {
-        datetime: 'desc',
-      },
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      orderBy: { datetime: 'desc' },
+      select: CONVERSATION_SELECT,
     });
   }
 
-  async findByContactPhone(contactPhone: string, tabulated: boolean = false, userLine?: number) {
+  async findByContactPhone(tenantId: string, contactPhone: string, tabulated: boolean = false, userLine?: number) {
+    this.requireTenant(tenantId);
     const where: any = {
+      tenantId,
       contactPhone,
       tabulation: tabulated ? { not: null } : null,
     };
-
-    // Se for operador, filtrar apenas conversas da sua linha
     if (userLine) {
       where.userLine = userLine;
     }
 
     return this.prisma.conversation.findMany({
       where,
-      orderBy: {
-        datetime: 'asc',
-      },
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      orderBy: { datetime: 'asc' },
+      select: CONVERSATION_SELECT,
     });
   }
 
-  async findActiveConversations(userLine?: number, userId?: number, daysToFilter: number = 3, segmentId?: number) {
+  async findActiveConversations(
+    tenantId: string,
+    userLine?: number,
+    userId?: number,
+    daysToFilter: number = 3,
+    segmentId?: number,
+  ) {
+    this.requireTenant(tenantId);
     const where: any = {
+      tenantId,
       tabulation: null,
     };
 
-    // Calcular data limite (X dias atrás)
     const dateLimitMs = Date.now() - (daysToFilter * 24 * 60 * 60 * 1000);
-    const dateLimit = new Date(dateLimitMs);
-
-    where.datetime = {
-      gte: dateLimit,
-    };
-
-    // Logica de filtro:
-    // 1. Se tiver userId e segmentId (Operador no novo modelo Pool):
-    //    Traz conversas DELE (userId) OU conversas SEM DONO do segmento DELE (userId: null, segment: segmentId)
-    // 2. Se tiver apenas userId: Traz apenas as DELE
-    // 3. Se tiver userLine (legado): Traz por userLine
+    where.datetime = { gte: new Date(dateLimitMs) };
 
     if (userId && segmentId) {
       where.OR = [
-        { userId: userId },
-        { userId: null, segment: segmentId }
+        { userId },
+        { userId: null, segment: segmentId },
       ];
     } else if (userId) {
       where.userId = userId;
@@ -224,77 +164,49 @@ export class ConversationsService {
       where.userLine = userLine;
     }
 
-    // Retornar TODAS as mensagens não tabuladas dos últimos X dias (o frontend vai agrupar)
-    // Usar select explícito para evitar problemas com campos que podem não existir no banco
-    const conversations = await this.prisma.conversation.findMany({
+    return this.prisma.conversation.findMany({
       where,
-      orderBy: {
-        datetime: 'asc', // Ordem cronológica para histórico
-      },
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        // messageId omitido temporariamente até confirmar que a coluna existe no banco
-      },
+      orderBy: { datetime: 'asc' },
+      select: CONVERSATION_SELECT,
     });
-
-    return conversations;
   }
 
-  // Limite máximo de conversas simultâneas por operador
   private readonly MAX_CONVERSATIONS_PER_OPERATOR = 15;
 
-  /**
-   * Conta quantas conversas ativas (não tabuladas) um operador tem
-   */
-  async getActiveConversationCount(userId: number): Promise<number> {
+  async getActiveConversationCount(tenantId: string, userId: number): Promise<number> {
+    this.requireTenant(tenantId);
     const count = await this.prisma.conversation.groupBy({
       by: ['contactPhone'],
       where: {
-        userId: userId,
+        tenantId,
+        userId,
         tabulation: null,
       },
     });
-    return count.length; // Número de contatos distintos
+    return count.length;
   }
 
   /**
-   * Reclama (claim) um lote de conversas sem dono do segmento para o operador.
-   * Isso implementa a distribuição controlada: em vez de dar todas as conversas
-   * pendentes para o primeiro operador, distribui em lotes pequenos.
-   * Respeita o limite de MAX_CONVERSATIONS_PER_OPERATOR conversas simultâneas.
+   * Reclama (claim) um lote de conversas sem dono do segmento. Sempre
+   * escopado por tenant (operador só pode pegar conversas do próprio
+   * tenant — caso esteja em múltiplos, o caller decide qual).
    */
-  async claimPendingConversations(userId: number, segmentId: number, operatorName: string, limit: number = 3): Promise<number> {
-    // Verificar quantas conversas o operador já tem
-    const currentCount = await this.getActiveConversationCount(userId);
+  async claimPendingConversations(
+    tenantId: string,
+    userId: number,
+    segmentId: number,
+    operatorName: string,
+    limit: number = 3,
+  ): Promise<number> {
+    this.requireTenant(tenantId);
+    const currentCount = await this.getActiveConversationCount(tenantId, userId);
     const availableSlots = this.MAX_CONVERSATIONS_PER_OPERATOR - currentCount;
+    if (availableSlots <= 0) return 0;
 
-    if (availableSlots <= 0) {
-      console.log(`⚠️ [ClaimPending] ${operatorName} já tem ${currentCount} conversas (limite: ${this.MAX_CONVERSATIONS_PER_OPERATOR})`);
-      return 0;
-    }
-
-    // Ajustar o limite para não ultrapassar o máximo permitido
     const effectiveLimit = Math.min(limit, availableSlots);
-
-    // Buscar as conversas mais antigas sem dono do segmento (uma por contato)
     const pendingConversations = await this.prisma.conversation.findMany({
       where: {
+        tenantId,
         userId: null,
         segment: segmentId,
         tabulation: null,
@@ -307,100 +219,55 @@ export class ConversationsService {
 
     if (pendingConversations.length === 0) return 0;
 
-    const phonesToClaim = pendingConversations.map(c => c.contactPhone);
-    console.log(`📥 [ClaimPending] ${operatorName} reclamando ${phonesToClaim.length} conversas (atual: ${currentCount}, limite: ${this.MAX_CONVERSATIONS_PER_OPERATOR})`);
-
-    // Atualizar TODAS as mensagens desses contatos para pertencerem ao operador
+    const phonesToClaim = pendingConversations.map((c) => c.contactPhone);
     const result = await this.prisma.conversation.updateMany({
       where: {
+        tenantId,
         contactPhone: { in: phonesToClaim },
         userId: null,
         segment: segmentId,
         tabulation: null,
       },
-      data: { userId: userId, userName: operatorName },
+      data: { userId, userName: operatorName },
     });
 
-    console.log(`✅ [ClaimPending] ${result.count} mensagens atualizadas`);
+    console.log(`✅ [ClaimPending] ${result.count} mensagens atualizadas para ${operatorName}`);
     return phonesToClaim.length;
   }
 
-  async findTabulatedConversations(userLine?: number, userId?: number, daysToFilter: number = 3) {
+  async findTabulatedConversations(
+    tenantId: string,
+    userLine?: number,
+    userId?: number,
+    daysToFilter: number = 3,
+  ) {
+    this.requireTenant(tenantId);
     const where: any = {
+      tenantId,
       tabulation: { not: null },
     };
 
-    // IMPORTANTE: Para operadores, buscar apenas por userId (não por userLine)
-    // Isso permite que as conversas tabuladas continuem aparecendo mesmo se a linha foi banida
     if (userId) {
       where.userId = userId;
     } else if (userLine) {
-      // Fallback: se não tiver userId, usar userLine (para compatibilidade)
       where.userLine = userLine;
     }
 
-    // Filtrar conversas tabuladas dos últimos X dias
     const dateLimitMs = Date.now() - (daysToFilter * 24 * 60 * 60 * 1000);
-    const dateLimit = new Date(dateLimitMs);
+    where.datetime = { gte: new Date(dateLimitMs) };
 
-    where.datetime = {
-      gte: dateLimit,
-    };
-
-    // Retornar TODAS as mensagens tabuladas dos últimos X dias (o frontend vai agrupar)
-    // Usar select explícito para evitar problemas com campos que podem não existir no banco
-    const conversations = await this.prisma.conversation.findMany({
+    return this.prisma.conversation.findMany({
       where,
-      orderBy: {
-        datetime: 'asc', // Ordem cronológica para histórico
-      },
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        // messageId omitido temporariamente até confirmar que a coluna existe no banco
-      },
+      orderBy: { datetime: 'asc' },
+      select: CONVERSATION_SELECT,
     });
-
-    return conversations;
   }
 
-  async findOne(id: number) {
-    const conversation = await this.prisma.conversation.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+  async findOne(tenantId: string, id: number) {
+    this.requireTenant(tenantId);
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId },
+      select: CONVERSATION_SELECT,
     });
 
     if (!conversation) {
@@ -410,72 +277,46 @@ export class ConversationsService {
     return conversation;
   }
 
-  async update(id: number, updateConversationDto: UpdateConversationDto) {
-    await this.findOne(id);
+  async update(tenantId: string, id: number, updateConversationDto: UpdateConversationDto) {
+    await this.findOne(tenantId, id);
 
     return this.prisma.conversation.update({
       where: { id },
       data: updateConversationDto,
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: CONVERSATION_SELECT,
     });
   }
 
-  async tabulateConversation(contactPhone: string, tabulationId: number, userLine?: number) {
-    // Construir WHERE clause - se userLine foi fornecido, tabular apenas a conversa específica
+  async tabulateConversation(tenantId: string, contactPhone: string, tabulationId: number, userLine?: number) {
+    this.requireTenant(tenantId);
     const where: any = {
+      tenantId,
       contactPhone,
       tabulation: null,
     };
-
-    // Se userLine foi fornecido, adicionar ao filtro para tabular apenas essa linha
     if (userLine !== undefined && userLine !== null) {
       where.userLine = userLine;
-      console.log(`📋 [Tabulate] Tabulando conversa específica: ${contactPhone} na linha ${userLine}`);
-    } else {
-      console.log(`📋 [Tabulate] Tabulando TODAS as conversas de: ${contactPhone}`);
     }
 
     return this.prisma.conversation.updateMany({
       where,
-      data: {
-        tabulation: tabulationId,
-      },
+      data: { tabulation: tabulationId },
     });
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
-
-    return this.prisma.conversation.delete({
-      where: { id },
-    });
+  async remove(tenantId: string, id: number) {
+    await this.findOne(tenantId, id);
+    return this.prisma.conversation.delete({ where: { id } });
   }
 
   /**
-   * Deletar todas as conversas de um contato (por telefone)
-   * Usado por admin e digital para limpar conversas
+   * Deletar todas as conversas de um contato (apenas admin/digital).
+   * Sempre escopado por tenant para evitar varredura cross-tenant.
    */
-  async deleteByContactPhone(contactPhone: string) {
+  async deleteByContactPhone(tenantId: string, contactPhone: string) {
+    this.requireTenant(tenantId);
     const result = await this.prisma.conversation.deleteMany({
-      where: { contactPhone },
+      where: { tenantId, contactPhone },
     });
 
     return {
@@ -486,149 +327,126 @@ export class ConversationsService {
     };
   }
 
-  async getConversationsBySegment(segment: number, tabulated: boolean = false) {
+  async getConversationsBySegment(tenantId: string, segment: number, tabulated: boolean = false) {
+    this.requireTenant(tenantId);
     return this.prisma.conversation.findMany({
       where: {
+        tenantId,
         segment,
         tabulation: tabulated ? { not: null } : null,
       },
-      orderBy: {
-        datetime: 'desc',
-      },
+      orderBy: { datetime: 'desc' },
     });
   }
 
   /**
-   * Rechamar contato após linha banida
-   * Cria uma nova conversa ativa para o contato na nova linha do operador
+   * Rechamar contato após linha banida. Cria uma nova conversa ativa.
    */
-  async recallContact(contactPhone: string, userId: number, userLine: number | null) {
+  async recallContact(tenantId: string, contactPhone: string, userId: number, userLine: number | null) {
+    this.requireTenant(tenantId);
     if (!userLine) {
       throw new NotFoundException('Operador não possui linha atribuída');
     }
 
-    // Buscar contato
     const contact = await this.prisma.contact.findFirst({
-      where: { phone: contactPhone },
+      where: { tenantId, phone: contactPhone },
     });
 
     if (!contact) {
       throw new NotFoundException('Contato não encontrado');
     }
 
-    // Buscar última conversa com este contato para pegar dados
     const lastConversation = await this.prisma.conversation.findFirst({
-      where: { contactPhone },
+      where: { tenantId, contactPhone },
       orderBy: { datetime: 'desc' },
     });
 
-    // Buscar dados do operador
-    const operator = await this.prisma.user.findUnique({
-      where: { id: userId },
+    const operator = await this.prisma.user.findFirst({
+      where: { id: userId, tenants: { some: { tenantId } } },
     });
 
     if (!operator) {
       throw new NotFoundException('Operador não encontrado');
     }
 
-    // Criar nova conversa ativa (não tabulada) na nova linha
     const newConversation = await this.prisma.conversation.create({
       data: {
+        tenantId,
         contactName: contact.name,
         contactPhone: contact.phone,
         segment: contact.segment || lastConversation?.segment || operator.segment,
         userName: operator.name,
-        userLine: userLine,
-        userId: userId,
+        userLine,
+        userId,
         message: 'Contato rechamado após linha banida',
         sender: 'operator',
         messageType: 'text',
-        tabulation: null, // Conversa ativa
+        tabulation: null,
       },
-      select: {
-        id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
-        userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: CONVERSATION_SELECT,
     });
 
     return newConversation;
   }
 
   /**
-   * Transfere todas as conversas ativas de um contato para outro operador
-   * Usado por supervisores para redistribuir atendimentos
+   * Transfere todas as conversas ativas de um contato para outro
+   * operador. Sempre escopado por tenant — supervisor não pode
+   * transferir para fora do próprio tenant.
    */
   async transferConversation(
+    tenantId: string,
     contactPhone: string,
     targetOperatorId: number,
     currentUser: any,
   ) {
-    // Validar que usuário é supervisor
+    this.requireTenant(tenantId);
     if (currentUser.role !== 'supervisor' && currentUser.role !== 'admin') {
-      throw new Error('Apenas supervisores podem transferir conversas');
+      throw new ForbiddenException('Apenas supervisores podem transferir conversas');
     }
 
-    // Buscar operador destino
-    const targetOperator = await this.prisma.user.findUnique({
-      where: { id: targetOperatorId },
+    const targetOperator = await this.prisma.user.findFirst({
+      where: {
+        id: targetOperatorId,
+        tenants: { some: { tenantId } },
+      },
     });
 
     if (!targetOperator || targetOperator.role !== 'operator') {
-      throw new Error('Operador destino não encontrado ou inválido');
+      throw new ForbiddenException('Operador destino não encontrado ou inválido');
     }
 
-    // Validar que operador destino está no mesmo segmento do supervisor
     if (currentUser.role === 'supervisor' && currentUser.segment !== targetOperator.segment) {
-      throw new Error('Operador destino deve estar no mesmo segmento');
+      throw new ForbiddenException('Operador destino deve estar no mesmo segmento');
     }
 
-    // Buscar todas as conversas ativas do contato
     const activeConversations = await this.prisma.conversation.findMany({
       where: {
+        tenantId,
         contactPhone,
-        tabulation: null, // Apenas conversas ativas
+        tabulation: null,
       },
     });
 
     if (activeConversations.length === 0) {
-      throw new Error('Nenhuma conversa ativa encontrada para este contato');
+      throw new NotFoundException('Nenhuma conversa ativa encontrada para este contato');
     }
 
-    // Buscar linha da primeira conversa (assumindo que todas são da mesma linha)
     const firstConversation = activeConversations[0];
-    const lineId = firstConversation.userLine;
 
-    // Atualizar todas as conversas ativas para o novo operador
     const updatedConversations = await this.prisma.$transaction(
-      activeConversations.map(conversation =>
+      activeConversations.map((conversation) =>
         this.prisma.conversation.update({
           where: { id: conversation.id },
           data: {
             userId: targetOperatorId,
             userName: targetOperator.name,
           },
-        })
-      )
+        }),
+      ),
     );
 
-    // Emitir eventos WebSocket para notificar ambos operadores
     if (firstConversation.userId) {
-      // Notificar operador origem sobre a transferência
       this.websocketGateway.emitToUser(firstConversation.userId, 'conversation-transferred', {
         contactPhone,
         toOperatorId: targetOperatorId,
@@ -636,14 +454,12 @@ export class ConversationsService {
       });
     }
 
-    // Notificar operador destino sobre a nova conversa
     this.websocketGateway.emitToUser(targetOperatorId, 'conversation-received', {
       contactPhone,
       contactName: activeConversations[0]?.contactName || 'Contato',
       fromOperatorId: firstConversation.userId,
     });
 
-    // Emitir atualização de conversa para ambos
     if (updatedConversations.length > 0) {
       const updatedConversation = updatedConversations[0];
       await this.websocketGateway.emitNewMessage({

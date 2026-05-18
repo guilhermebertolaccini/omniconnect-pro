@@ -6,7 +6,6 @@ import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { ControlPanelService } from '../control-panel/control-panel.service';
 import { SystemEventsService, EventType, EventModule, EventSeverity } from '../system-events/system-events.service';
 import { WhatsappCloudService } from '../whatsapp-cloud/whatsapp-cloud.service';
-import axios from 'axios';
 
 @Injectable()
 export class LinesService {
@@ -19,10 +18,15 @@ export class LinesService {
     private whatsappCloudService: WhatsappCloudService,
   ) { }
 
-  async create(createLineDto: CreateLineDto, createdBy?: number) {
-    console.log('📝 Dados recebidos no service:', JSON.stringify(createLineDto, null, 2));
+  private requireTenant(tenantId: string) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+  }
 
-    // Validar campos obrigatórios
+  async create(tenantId: string, createLineDto: CreateLineDto, createdBy?: number) {
+    this.requireTenant(tenantId);
+
     if (!createLineDto.appId) {
       throw new BadRequestException('AppId é obrigatório');
     }
@@ -30,36 +34,33 @@ export class LinesService {
       throw new BadRequestException('NumberId é obrigatório');
     }
 
-    // Buscar o App
-    const app = await (this.prisma as any).app.findUnique({
-      where: { id: createLineDto.appId },
+    // Buscar o App escopado por tenant.
+    const app = await this.prisma.app.findFirst({
+      where: { id: createLineDto.appId, tenantId },
     });
 
     if (!app) {
       throw new BadRequestException(`App com ID ${createLineDto.appId} não encontrado`);
     }
 
-    // Verificar se já existe uma linha com este telefone
-    const existingLine = await (this.prisma as any).linesStock.findUnique({
-      where: { phone: createLineDto.phone },
+    // Telefone único por tenant.
+    const existingLine = await this.prisma.linesStock.findFirst({
+      where: { phone: createLineDto.phone, tenantId },
     });
 
     if (existingLine) {
       throw new BadRequestException('Já existe uma linha com este telefone');
     }
 
-    // Verificar se já existe uma linha com este numberId
-    const existingNumberId = await (this.prisma as any).linesStock.findFirst({
-      where: { numberId: createLineDto.numberId },
+    const existingNumberId = await this.prisma.linesStock.findFirst({
+      where: { numberId: createLineDto.numberId, tenantId },
     });
 
     if (existingNumberId) {
       throw new BadRequestException('Já existe uma linha com este NumberId');
     }
 
-    // Validar credenciais via Meta API usando o accessToken do App
     try {
-      console.log('🔍 Validando credenciais via Meta API...');
       const isValid = await this.whatsappCloudService.validateCredentials(
         app.accessToken,
         createLineDto.numberId,
@@ -68,23 +69,20 @@ export class LinesService {
       if (!isValid) {
         throw new BadRequestException('Credenciais inválidas. Verifique o accessToken do app e o numberId.');
       }
-
-      console.log('✅ Credenciais validadas com sucesso');
     } catch (error) {
-      console.error('❌ Erro ao validar credenciais:', error.message);
       throw new BadRequestException(
         `Erro ao validar credenciais: ${error.message || 'AccessToken do app ou NumberId inválidos'}`
       );
     }
 
-    // Criar linha no banco
     try {
-      const newLine = await (this.prisma as any).linesStock.create({
+      const newLine = await this.prisma.linesStock.create({
         data: {
+          tenantId,
           phone: createLineDto.phone,
           lineStatus: createLineDto.lineStatus || 'active',
           segment: createLineDto.segment,
-          oficial: true, // Todas as linhas são oficiais (Cloud API)
+          oficial: true,
           appId: createLineDto.appId,
           numberId: createLineDto.numberId,
           receiveMedia: createLineDto.receiveMedia || false,
@@ -92,7 +90,6 @@ export class LinesService {
         },
       });
 
-      // Registrar evento
       await this.systemEventsService.logEvent(
         EventType.LINE_CREATED,
         EventModule.LINES,
@@ -103,16 +100,11 @@ export class LinesService {
         },
         createdBy || undefined,
         EventSeverity.INFO,
+        tenantId,
       );
-
-      // Remoção do vínculo automático: agora as linhas pertencem ao pool do segmento
-      // e são acessadas por qualquer operador do segmento.
-
 
       return newLine;
     } catch (error) {
-      console.error('❌ Erro ao criar linha:', error);
-
       if (error.code === 'P2002') {
         throw new BadRequestException('Telefone ou NumberId já cadastrado');
       }
@@ -121,22 +113,22 @@ export class LinesService {
     }
   }
 
-  async findAll(filters?: any) {
-    // Remover campos inválidos que não existem no schema
+  async findAll(tenantId: string, filters?: any) {
+    this.requireTenant(tenantId);
     const { search, ...validFilters } = filters || {};
 
-    // Se houver busca por texto, aplicar filtros
-    const where = search
+    const where: any = search
       ? {
         ...validFilters,
+        tenantId,
         OR: [
           { phone: { contains: search } },
           { numberId: { contains: search } },
         ],
       }
-      : validFilters;
+      : { ...validFilters, tenantId };
 
-    const lines = await (this.prisma as any).linesStock.findMany({
+    const lines = await this.prisma.linesStock.findMany({
       where,
       orderBy: {
         createdAt: 'desc',
@@ -156,14 +148,12 @@ export class LinesService {
       },
     });
 
-    // Buscar os Apps para cada linha
     const appIds = [...new Set(lines.map(l => l.appId))];
-    const apps = await (this.prisma as any).app.findMany({
-      where: { id: { in: appIds } },
+    const apps = await this.prisma.app.findMany({
+      where: { id: { in: appIds }, tenantId },
     });
     const appsMap = new Map(apps.map(a => [a.id, a]));
 
-    // Mapear para incluir operadores vinculados e app
     return lines.map(line => ({
       ...line,
       app: appsMap.get(line.appId) || null,
@@ -175,18 +165,18 @@ export class LinesService {
     }));
   }
 
-  async findOne(id: number) {
-    const line = await (this.prisma as any).linesStock.findUnique({
-      where: { id },
+  async findOne(tenantId: string, id: number) {
+    this.requireTenant(tenantId);
+    const line = await this.prisma.linesStock.findFirst({
+      where: { id, tenantId },
     });
 
     if (!line) {
       throw new NotFoundException(`Linha com ID ${id} não encontrada`);
     }
 
-    // Buscar o App
-    const app = await (this.prisma as any).app.findUnique({
-      where: { id: line.appId },
+    const app = await this.prisma.app.findFirst({
+      where: { id: line.appId, tenantId },
     });
 
     return {
@@ -199,16 +189,15 @@ export class LinesService {
    * Testa conexão com Meta API
    * Cloud API não usa QR Code - este método valida as credenciais
    */
-  async testConnection(id: number) {
-    const line = await this.findOne(id);
+  async testConnection(tenantId: string, id: number) {
+    const line = await this.findOne(tenantId, id);
 
     if (!line.appId || !line.numberId) {
       throw new BadRequestException('Linha não possui appId ou numberId configurados');
     }
 
-    // Buscar o App para obter o accessToken
-    const app = await (this.prisma as any).app.findUnique({
-      where: { id: line.appId },
+    const app = await this.prisma.app.findFirst({
+      where: { id: line.appId, tenantId },
     });
 
     if (!app) {
@@ -235,23 +224,20 @@ export class LinesService {
     }
   }
 
-  async update(id: number, updateLineDto: UpdateLineDto) {
-    const currentLine = await this.findOne(id);
+  async update(tenantId: string, id: number, updateLineDto: UpdateLineDto) {
+    const currentLine = await this.findOne(tenantId, id);
 
-    // Se receiveMedia foi alterado, reconfigurar webhook
     if (updateLineDto.receiveMedia !== undefined && updateLineDto.receiveMedia !== currentLine.receiveMedia) {
       await this.updateWebhookConfig(currentLine, updateLineDto.receiveMedia);
     }
 
-    // Filtrar apenas campos válidos do DTO
     const { phone, appId, numberId, segment, lineStatus, receiveMedia } = updateLineDto;
     const updateData: any = {};
 
     if (phone !== undefined) updateData.phone = phone;
     if (appId !== undefined) {
-      // Validar que o App existe
-      const app = await (this.prisma as any).app.findUnique({
-        where: { id: appId },
+      const app = await this.prisma.app.findFirst({
+        where: { id: appId, tenantId },
       });
       if (!app) {
         throw new BadRequestException(`App com ID ${appId} não encontrado`);
@@ -260,12 +246,10 @@ export class LinesService {
     }
     if (numberId !== undefined) updateData.numberId = numberId;
     if (segment !== undefined && segment !== currentLine.segment) {
-      // Buscar o segmento "Padrão" para validar a regra
-      const defaultSegment = await (this.prisma as any).segment.findUnique({
-        where: { name: 'Padrão' },
+      const defaultSegment = await this.prisma.segment.findFirst({
+        where: { name: 'Padrão', tenantId },
       });
 
-      // Regra: Linha nunca pode trocar de segmento, exceto se for linha "Padrão"
       if (currentLine.segment !== defaultSegment?.id) {
         throw new BadRequestException('Esta linha já possui um segmento fixo e não pode ser alterada. Apenas linhas do segmento "Padrão" permitem troca.');
       }
@@ -276,47 +260,41 @@ export class LinesService {
     if (lineStatus !== undefined) updateData.lineStatus = lineStatus;
     if (receiveMedia !== undefined) updateData.receiveMedia = receiveMedia;
 
-    return (this.prisma as any).linesStock.update({
+    return this.prisma.linesStock.update({
       where: { id },
       data: updateData,
     });
   }
 
-  // Cloud API não requer atualização de webhook base64 - webhook é configurado via Meta Business API
   private async updateWebhookConfig(line: any, enableBase64: boolean) {
-    // Webhook é configurado via Meta Business API, não requer atualização manual
-    console.log(`ℹ️ Webhook Cloud API configurado via Meta Business API para linha ${line.phone}`);
+    // Webhook é configurado via Meta Business API; nada a fazer aqui.
   }
 
-  async remove(id: number) {
-    const line = await this.findOne(id);
+  async remove(tenantId: string, id: number) {
+    await this.findOne(tenantId, id);
 
-    // Cloud API não requer deletar instância - apenas remover do banco
-    // Webhook será desativado automaticamente quando a linha for removida
-
-    return (this.prisma as any).linesStock.delete({
+    return this.prisma.linesStock.delete({
       where: { id },
     });
   }
 
-  // Lógica automática de troca de linhas banidas
-  async handleBannedLine(lineId: number) {
-    const line = await this.findOne(lineId);
+  /**
+   * Lógica automática de troca de linhas banidas. Pode ser chamada
+   * tanto do controller (com tenant do JWT) quanto do webhook handler
+   * (com tenant resolvido via App).
+   */
+  async handleBannedLine(tenantId: string, lineId: number) {
+    const line = await this.findOne(tenantId, lineId);
 
-    // Buscar todos os operadores vinculados à linha (tabela LineOperator)
-    const lineOperators = await (this.prisma as any).lineOperator.findMany({
+    const lineOperators = await this.prisma.lineOperator.findMany({
       where: { lineId },
       include: {
         user: true,
       },
     });
 
-    const operatorIds = lineOperators.map(lo => lo.userId);
+    await this.update(tenantId, lineId, { lineStatus: 'ban' });
 
-    // Marcar linha como banida
-    await this.update(lineId, { lineStatus: 'ban' });
-
-    // Registrar evento de linha banida
     await this.systemEventsService.logEvent(
       EventType.LINE_BANNED,
       EventModule.LINES,
@@ -326,27 +304,27 @@ export class LinesService {
       },
       null,
       EventSeverity.ERROR,
+      tenantId,
     );
 
-    // Desvincular todos os operadores da tabela LineOperator para esta linha
-    await (this.prisma as any).lineOperator.deleteMany({
+    await this.prisma.lineOperator.deleteMany({
       where: { lineId },
     });
 
-    // Buscar uma nova linha ativa do mesmo segmento para herdar as conversas ativas
-    const availableLine = await (this.prisma as any).linesStock.findFirst({
+    const availableLine = await this.prisma.linesStock.findFirst({
       where: {
+        tenantId,
         lineStatus: 'active',
         segment: line.segment,
       },
     });
 
     if (availableLine) {
-      // Atualizar todas as conversas ativas da linha banida para a nova linha do pool
-      const updatedCount = await (this.prisma as any).conversation.updateMany({
+      const updatedCount = await this.prisma.conversation.updateMany({
         where: {
+          tenantId,
           userLine: lineId,
-          tabulation: null, // Apenas conversas ativas
+          tabulation: null,
         },
         data: {
           userLine: availableLine.id,
@@ -355,16 +333,14 @@ export class LinesService {
       console.log(`🔄 [handleBannedLine] ${updatedCount.count} conversas migradas da linha banida ${line.phone} para a linha ${availableLine.phone}`);
     } else {
       console.warn(`⚠️ [handleBannedLine] Nenhuma outra linha disponível no segmento ${line.segment} para migrar conversas.`);
-
-      // Se não há linha, as conversas ativas ficam "órfãs" de linha (o operador verá, mas não poderá responder outbound até ter uma linha)
-      // O frontend costuma filtrar por linhas ativas, então isso é tratado lá.
     }
-    console.log(`✅ [handleBannedLine] Linha ${lineId} marcada como banida e operadores desvinculados`);
   }
 
-  async getAvailableLines(segment: number) {
-    return (this.prisma as any).linesStock.findMany({
+  async getAvailableLines(tenantId: string, segment: number) {
+    this.requireTenant(tenantId);
+    return this.prisma.linesStock.findMany({
       where: {
+        tenantId,
         lineStatus: 'active',
         segment,
         linkedTo: null,
@@ -375,9 +351,11 @@ export class LinesService {
   /**
    * Retorna linhas disponíveis para um segmento (sem necessidade de vinculação)
    */
-  async getAvailableLinesForSegment(segmentId: number): Promise<any[]> {
-    return (this.prisma as any).linesStock.findMany({
+  async getAvailableLinesForSegment(tenantId: string, segmentId: number): Promise<any[]> {
+    this.requireTenant(tenantId);
+    return this.prisma.linesStock.findMany({
       where: {
+        tenantId,
         lineStatus: 'active',
         segment: segmentId,
       },
@@ -394,60 +372,69 @@ export class LinesService {
     });
   }
 
-  async getActivatorsProductivity() {
-    const productivity = await (this.prisma as any).linesStock.groupBy({
+  async getActivatorsProductivity(tenantId: string) {
+    this.requireTenant(tenantId);
+    const productivity = await this.prisma.linesStock.groupBy({
       by: ['createdBy'],
       _count: {
         id: true,
       },
       where: {
+        tenantId,
         createdBy: { not: null },
       },
     });
 
-    // Buscar nomes dos usuários
-    const userIds = productivity.map(p => p.createdBy);
-    const users = await (this.prisma as any).user.findMany({
-      where: { id: { in: userIds } },
+    const userIds = productivity.map(p => p.createdBy).filter((id): id is number => id !== null);
+    const users = await this.prisma.user.findMany({
+      where: {
+        id: { in: userIds },
+        tenants: { some: { tenantId } },
+      },
       select: { id: true, name: true },
     });
     const usersMap = new Map(users.map(u => [u.id, u.name]));
 
     return productivity.map(p => ({
       activatorId: p.createdBy,
-      activatorName: usersMap.get(p.createdBy) || 'Desconhecido',
+      activatorName: (p.createdBy && usersMap.get(p.createdBy)) || 'Desconhecido',
       count: p._count.id,
     }));
   }
 
-  async getLinesAllocationStats() {
-    const lines = await (this.prisma as any).linesStock.findMany({
+  async getLinesAllocationStats(tenantId: string) {
+    this.requireTenant(tenantId);
+    const lines = await this.prisma.linesStock.findMany({
+      where: { tenantId },
       include: {
         operators: true,
       },
     });
 
-    const stats = {
+    return {
       total: lines.length,
       active: lines.filter(l => l.lineStatus === 'active').length,
       banned: lines.filter(l => l.lineStatus === 'ban').length,
       allocated: lines.filter(l => l.operators.length > 0).length,
       unallocated: lines.filter(l => l.operators.length === 0).length,
     };
-
-    return stats;
   }
 
   /**
    * Distribui mensagem inbound de forma inteligente baseado em:
-   * - Tempo logado (mais tempo = prioridade)
-   * - Carga de trabalho (menos de 5 atendimentos = prioridade)
-   * - Balanceamento entre operadores
+   * - Conversa existente (sticky)
+   * - Carga de trabalho
+   * - Tempo logado
+   *
+   * `tenantId` é resolvido pelo caller (webhook handler trusted) e
+   * todas as queries são escopadas — incluindo a recuperação dos
+   * operadores online.
    */
-  async distributeInboundMessage(lineId: number, contactPhone: string): Promise<number | null> {
-    // Buscar a linha e seu segmento
-    const line = await (this.prisma as any).linesStock.findUnique({
-      where: { id: lineId },
+  async distributeInboundMessage(tenantId: string, lineId: number, contactPhone: string): Promise<number | null> {
+    this.requireTenant(tenantId);
+
+    const line = await this.prisma.linesStock.findFirst({
+      where: { id: lineId, tenantId },
     });
 
     if (!line || !line.segment) {
@@ -455,89 +442,62 @@ export class LinesService {
       return null;
     }
 
-    // Buscar todos operadores online do segmento (será usado se não houver conversa existente)
-    const segmentOperators = await (this.prisma as any).user.findMany({
+    // Operadores online do segmento, restritos ao tenant via UserTenant.
+    const segmentOperators = await this.prisma.user.findMany({
       where: {
         role: 'operator',
         status: 'Online',
         segment: line.segment,
+        tenants: { some: { tenantId } },
       },
     });
 
-    // 1. PRIMEIRO: Verificar se já existe conversa ativa com QUALQUER operador (não só online)
-    // Isso é crucial para o fluxo 1x1 - o operador envia template, depois pode sair offline, 
-    // mas quando o cliente responder, precisa ir para o mesmo operador
-    console.log(`🔍 [LinesService] Procurando conversa existente para ${contactPhone} na linha ${lineId}`);
-
-    // Tentar normalizar o telefone para garantir match (caso venha diferente do webhook)
     const phoneVariants = [contactPhone];
     if (contactPhone.startsWith('55') && contactPhone.length > 11) {
-      phoneVariants.push(contactPhone.substring(2)); // Sem 55
+      phoneVariants.push(contactPhone.substring(2));
     } else if (!contactPhone.startsWith('55')) {
-      phoneVariants.push(`55${contactPhone}`); // Com 55
+      phoneVariants.push(`55${contactPhone}`);
     }
-    console.log(`🔍 [LinesService] Variantes de telefone: ${phoneVariants.join(', ')}`);
 
-    const existingConversation = await (this.prisma as any).conversation.findFirst({
+    const existingConversation = await this.prisma.conversation.findFirst({
       where: {
+        tenantId,
         contactPhone: { in: phoneVariants },
         userLine: lineId,
         tabulation: null,
-        userId: { not: null }, // Qualquer operador atribuído
+        userId: { not: null },
       },
       orderBy: {
         datetime: 'desc',
       },
       select: {
         id: true,
-        contactName: true,
-        contactPhone: true,
-        segment: true,
-        userName: true,
-        userLine: true,
         userId: true,
-        message: true,
-        sender: true,
-        datetime: true,
-        tabulation: true,
-        messageType: true,
-        mediaUrl: true,
-        archived: true,
-        archivedAt: true,
-        createdAt: true,
-        updatedAt: true,
       },
     });
 
-    // Se já existe conversa ativa com um operador, manter com ele (mesmo se offline)
     if (existingConversation?.userId) {
-      console.log(`✅ [LinesService] Mantendo conversa com operador existente: ${existingConversation.userId}`);
       return existingConversation.userId;
     }
 
-    // 2. Se não tem operador online no segmento, retornar null (vai para fila)
     if (segmentOperators.length === 0) {
-      console.log(`⚠️ [LinesService] Nenhum operador online no segmento ${line.segment} e sem conversa existente`);
       return null;
     }
 
-    // Calcular prioridade de cada operador
-    // Limite máximo de conversas simultâneas por operador
     const MAX_CONVERSATIONS_PER_OPERATOR = 15;
 
     const operatorPriorities = await Promise.all(
       segmentOperators.map(async (operator) => {
-        // Contar atendimentos em andamento (conversas não tabuladas, por contato distinto)
-        const activeConversationsRaw = await (this.prisma as any).conversation.groupBy({
+        const activeConversationsRaw = await this.prisma.conversation.groupBy({
           by: ['contactPhone'],
           where: {
+            tenantId,
             userId: operator.id,
             tabulation: null,
           },
         });
         const activeConversations = activeConversationsRaw.length;
 
-        // Obter tempo logado do WebSocketGateway
         const connectionTime = this.websocketGateway.getOperatorConnectionTime(operator.id);
         const timeLogged = connectionTime ? Date.now() - connectionTime : 0;
 
@@ -551,32 +511,19 @@ export class LinesService {
       })
     );
 
-    // Filtrar operadores com capacidade (menos de 15 atendimentos)
     const operatorsWithCapacity = operatorPriorities.filter(op => op.hasCapacity);
 
-    let selectedOperator;
-
-    if (operatorsWithCapacity.length > 0) {
-      // Se há operadores com capacidade, escolher o com:
-      // 1. Menor número de atendimentos
-      // 2. Maior tempo logado (em caso de empate)
-      operatorsWithCapacity.sort((a, b) => {
-        if (a.activeConversations !== b.activeConversations) {
-          return a.activeConversations - b.activeConversations;
-        }
-        return b.timeLogged - a.timeLogged; // Mais tempo logado primeiro
-      });
-      selectedOperator = operatorsWithCapacity[0];
-    } else {
-      // TODOS os operadores estão no limite de 15 conversas
-      // Mensagem vai para o LIMBO (sem dono) até alguém finalizar uma conversa
-      console.log(`⚠️ [LinesService] Todos os ${operatorPriorities.length} operadores estão no limite de ${MAX_CONVERSATIONS_PER_OPERATOR} conversas. Mensagem vai para o LIMBO.`);
+    if (operatorsWithCapacity.length === 0) {
       return null;
     }
 
-    console.log(`✅ [LinesService] Mensagem distribuída para ${selectedOperator.operatorName} (ID: ${selectedOperator.operatorId}) - ${selectedOperator.activeConversations}/${MAX_CONVERSATIONS_PER_OPERATOR} atendimentos, ${Math.round(selectedOperator.timeLogged / 1000 / 60)}min logado`);
+    operatorsWithCapacity.sort((a, b) => {
+      if (a.activeConversations !== b.activeConversations) {
+        return a.activeConversations - b.activeConversations;
+      }
+      return b.timeLogged - a.timeLogged;
+    });
 
-    return selectedOperator.operatorId;
+    return operatorsWithCapacity[0].operatorId;
   }
-
 }

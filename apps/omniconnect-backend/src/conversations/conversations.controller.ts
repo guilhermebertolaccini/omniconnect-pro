@@ -31,113 +31,99 @@ export class ConversationsController {
   @Get()
   @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
   findAll(@Query() filters: any, @CurrentUser() user: any) {
+    const tenantId = ensureTenant(user);
     const where: any = { ...filters };
 
-    // Aplicar filtros baseados no papel do usuário
     if (user.role === Role.operator && user.line) {
-      // Operador só vê conversas da sua linha E do seu userId específico
       where.userLine = user.line;
-      where.userId = user.id; // Filtrar apenas conversas atribuídas a ele
+      where.userId = user.id;
     } else if (user.role === Role.supervisor && user.segment) {
-      // Supervisor só vê conversas do seu segmento
       where.segment = user.segment;
     }
-    // Admin e digital não têm filtro - veem todas as conversas
 
-    return this.conversationsService.findAll(where);
+    return this.conversationsService.findAll(tenantId, where);
   }
 
   @Get('active')
   @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
   async getActiveConversations(@CurrentUser() user: any, @Query('days') days?: string) {
-    const daysToFilter = days ? parseInt(days) : 3; // Padrão: 3 dias
-    console.log(`📋 [GET /conversations/active] Usuário: ${user.name} (${user.role}), line: ${user.line}, segment: ${user.segment}, days: ${daysToFilter}`);
+    const tenantId = ensureTenant(user);
+    const daysToFilter = days ? parseInt(days) : 3;
 
-    // Admin e Digital veem TODAS as conversas ativas sem restrição de domínio
     if (user.role === Role.admin || user.role === Role.digital) {
       const where: any = { tabulation: null };
       if (days) {
-        const dateLimitMs = Date.now() - (daysToFilter * 24 * 60 * 60 * 1000);
-        const dateLimit = new Date(dateLimitMs);
+        const dateLimit = new Date(Date.now() - daysToFilter * 24 * 60 * 60 * 1000);
         where.datetime = { gte: dateLimit };
       }
-      return this.conversationsService.findAll(where);
+      return this.conversationsService.findAll(tenantId, where);
     }
 
-    // Supervisor vê apenas conversas do seu segmento e mesmo domínio de email
     if (user.role === Role.supervisor) {
       const userDomain = getEmailDomain(user.email);
-      const dateLimitMs = Date.now() - (daysToFilter * 24 * 60 * 60 * 1000);
-      const dateLimit = new Date(dateLimitMs);
+      const dateLimit = new Date(Date.now() - daysToFilter * 24 * 60 * 60 * 1000);
       const where: any = {
         segment: user.segment,
         tabulation: null,
-        datetime: { gte: dateLimit }
+        datetime: { gte: dateLimit },
       };
-
-      // Buscar apenas conversas de operadores do mesmo domínio
-      return this.conversationsService.findAllByEmailDomain(where, userDomain);
+      return this.conversationsService.findAllByEmailDomain(tenantId, where, userDomain);
     }
 
-    // Operador: primeiro reclamar um lote de conversas pendentes
-    // Depois buscar todas as conversas dele (incluindo as recém-reclamadas)
     if (user.segment) {
       const claimed = await this.conversationsService.claimPendingConversations(
+        tenantId,
         user.id,
         user.segment,
         user.name,
-        3 // Limite de conversas por lote
+        3,
       );
       if (claimed > 0) {
         console.log(`📥 Operador ${user.name} reclamou ${claimed} conversas pendentes`);
       }
     }
 
-    return this.conversationsService.findActiveConversations(undefined, user.id, daysToFilter, user.segment);
+    return this.conversationsService.findActiveConversations(tenantId, undefined, user.id, daysToFilter, user.segment);
   }
 
   @Get('tabulated')
   @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
   async getTabulatedConversations(@CurrentUser() user: any, @Query('days') days?: string) {
-    const daysToFilter = days ? parseInt(days) : 3; // Padrão: 3 dias
-    console.log(`📋 [GET /conversations/tabulated] Usuário: ${user.name} (${user.role}), line: ${user.line}, segment: ${user.segment}, days: ${daysToFilter}`);
+    const tenantId = ensureTenant(user);
+    const daysToFilter = days ? parseInt(days) : 3;
 
-    // Admin e Digital veem TODAS as conversas tabuladas sem restrição de domínio
     if (user.role === Role.admin || user.role === Role.digital) {
       const where: any = { tabulation: { not: null } };
       if (days) {
-        const dateLimitMs = Date.now() - (daysToFilter * 24 * 60 * 60 * 1000);
-        const dateLimit = new Date(dateLimitMs);
+        const dateLimit = new Date(Date.now() - daysToFilter * 24 * 60 * 60 * 1000);
         where.datetime = { gte: dateLimit };
       }
-      return this.conversationsService.findAll(where);
+      return this.conversationsService.findAll(tenantId, where);
     }
 
-    // Supervisor vê apenas conversas tabuladas do seu segmento e mesmo domínio
     if (user.role === Role.supervisor) {
       const userDomain = getEmailDomain(user.email);
-      const dateLimitMs = Date.now() - (daysToFilter * 24 * 60 * 60 * 1000);
-      const dateLimit = new Date(dateLimitMs);
+      const dateLimit = new Date(Date.now() - daysToFilter * 24 * 60 * 60 * 1000);
       const where: any = {
         segment: user.segment,
         tabulation: { not: null },
-        datetime: { gte: dateLimit }
+        datetime: { gte: dateLimit },
       };
-      return this.conversationsService.findAllByEmailDomain(where, userDomain);
+      return this.conversationsService.findAllByEmailDomain(tenantId, where, userDomain);
     }
 
-    // Operador: buscar conversas tabuladas apenas por userId (não por userLine)
-    // Isso permite que as conversas tabuladas continuem aparecendo mesmo se a linha foi banida
-    return this.conversationsService.findTabulatedConversations(undefined, user.id, daysToFilter);
+    return this.conversationsService.findTabulatedConversations(tenantId, undefined, user.id, daysToFilter);
   }
 
   @Get('segment/:segment')
   @Roles(Role.supervisor, Role.admin, Role.digital)
   getBySegment(
+    @CurrentUser() user: any,
     @Param('segment') segment: string,
     @Query('tabulated') tabulated?: string,
   ) {
     return this.conversationsService.getConversationsBySegment(
+      ensureTenant(user),
       +segment,
       tabulated === 'true',
     );
@@ -146,21 +132,21 @@ export class ConversationsController {
   @Get('contact/:phone')
   @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
   getByContactPhone(
+    @CurrentUser() user: any,
     @Param('phone') phone: string,
     @Query('tabulated') tabulated?: string,
-    @CurrentUser() user?: any,
   ) {
-    // Admin, digital e Supervisor podem ver qualquer contato
-    // Operador só pode ver contatos da sua linha
+    const tenantId = ensureTenant(user);
     if (user?.role === Role.operator && user?.line) {
-      // Verificar se o contato tem conversas na linha do operador
       return this.conversationsService.findByContactPhone(
+        tenantId,
         phone,
         tabulated === 'true',
-        user.line, // Passar a linha como filtro adicional
+        user.line,
       );
     }
     return this.conversationsService.findByContactPhone(
+      tenantId,
       phone,
       tabulated === 'true',
     );
@@ -168,23 +154,29 @@ export class ConversationsController {
 
   @Get(':id')
   @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
-  findOne(@Param('id') id: string) {
-    return this.conversationsService.findOne(+id);
+  findOne(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.conversationsService.findOne(ensureTenant(user), +id);
   }
 
   @Patch(':id')
   @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
-  update(@Param('id') id: string, @Body() updateConversationDto: UpdateConversationDto) {
-    return this.conversationsService.update(+id, updateConversationDto);
+  update(@CurrentUser() user: any, @Param('id') id: string, @Body() updateConversationDto: UpdateConversationDto) {
+    return this.conversationsService.update(ensureTenant(user), +id, updateConversationDto);
   }
 
   @Post('tabulate/:phone')
   @Roles(Role.admin, Role.supervisor, Role.operator, Role.digital)
   tabulate(
+    @CurrentUser() user: any,
     @Param('phone') phone: string,
     @Body() tabulateDto: TabulateConversationDto,
   ) {
-    return this.conversationsService.tabulateConversation(phone, tabulateDto.tabulationId, tabulateDto.userLine);
+    return this.conversationsService.tabulateConversation(
+      ensureTenant(user),
+      phone,
+      tabulateDto.tabulationId,
+      tabulateDto.userLine,
+    );
   }
 
   @Post('recall/:phone')
@@ -193,21 +185,18 @@ export class ConversationsController {
     @Param('phone') phone: string,
     @CurrentUser() user: any,
   ) {
-    console.log(`📞 [POST /conversations/recall/:phone] Operador ${user.name} rechamando contato ${phone}`);
-
-    // Buscar linha atual do operador (pode estar na tabela LineOperator ou no campo legacy)
+    const tenantId = ensureTenant(user);
     let userLine = user.line;
 
-    // Se não tiver no campo legacy, buscar na tabela LineOperator
     if (!userLine) {
-      const lineOperator = await (this.prisma as any).lineOperator.findFirst({
+      const lineOperator = await this.prisma.lineOperator.findFirst({
         where: { userId: user.id },
         select: { lineId: true },
       });
       userLine = lineOperator?.lineId || null;
     }
 
-    return this.conversationsService.recallContact(phone, user.id, userLine);
+    return this.conversationsService.recallContact(tenantId, phone, user.id, userLine);
   }
 
   @Post(':id/transfer')
@@ -218,13 +207,14 @@ export class ConversationsController {
     @Body() body: { targetOperatorId: number },
     @CurrentUser() user: any,
   ) {
-    // Buscar a conversa para obter o contactPhone
-    const conversation = await this.conversationsService.findOne(+id);
+    const tenantId = ensureTenant(user);
+    const conversation = await this.conversationsService.findOne(tenantId, +id);
     if (!conversation) {
       throw new Error('Conversa não encontrada');
     }
 
     return this.conversationsService.transferConversation(
+      tenantId,
       conversation.contactPhone,
       body.targetOperatorId,
       user,
@@ -238,13 +228,12 @@ export class ConversationsController {
     @Param('phone') phone: string,
     @CurrentUser() user: any,
   ) {
-    console.log(`🗑️ [DELETE /conversations/contact/:phone] Usuário: ${user.name} (${user.role}) deletando conversas do contato ${phone}`);
-    return this.conversationsService.deleteByContactPhone(phone);
+    return this.conversationsService.deleteByContactPhone(ensureTenant(user), phone);
   }
 
   @Delete(':id')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  remove(@Param('id') id: string) {
-    return this.conversationsService.remove(+id);
+  remove(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.conversationsService.remove(ensureTenant(user), +id);
   }
 }

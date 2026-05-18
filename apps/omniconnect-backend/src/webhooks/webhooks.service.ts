@@ -209,8 +209,8 @@ export class WebhooksService {
           console.log('✅ Contato adicionado à blocklist:', from);
         }
 
-        // Distribuir mensagem usando algoritmo inteligente
-        const finalOperatorId = await this.linesService.distributeInboundMessage(line.id, from);
+        // Distribuir mensagem usando algoritmo inteligente (tenant trusted)
+        const finalOperatorId = await this.linesService.distributeInboundMessage(tenantId, line.id, from);
         console.log(`📋 [Webhook] Mensagem de ${from} atribuída ao operador ${finalOperatorId || 'nenhum (sem operadores online)'}`);
 
         // Se ainda não encontrou operador online, adicionar à fila de mensagens
@@ -244,6 +244,7 @@ export class WebhooksService {
             },
             null,
             EventSeverity.WARNING,
+            tenantId,
           );
 
           return { status: 'queued', message: 'Mensagem adicionada à fila (nenhum operador online)' };
@@ -287,6 +288,7 @@ export class WebhooksService {
           },
           finalOperatorId || undefined,
           blockedByPhrase ? EventSeverity.WARNING : EventSeverity.INFO,
+          tenantId,
         );
 
         // Emitir via WebSocket (incluir flag de bloqueio se aplicável)
@@ -318,8 +320,14 @@ export class WebhooksService {
           });
 
           if (line) {
-            // Marcar como banida e trocar automaticamente
-            await this.linesService.handleBannedLine(line.id);
+            // Resolver tenantId via App da linha (trusted) antes de chamar o service.
+            const lineApp = await this.prisma.app.findUnique({
+              where: { id: line.appId },
+              select: { tenantId: true },
+            });
+            const lineTenantId: string =
+              lineApp?.tenantId || line.tenantId || 'default-tenant';
+            await this.linesService.handleBannedLine(lineTenantId, line.id);
           }
 
           return { status: 'line_disconnected', lineId: line?.id };
