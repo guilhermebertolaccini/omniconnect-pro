@@ -33,6 +33,7 @@ apps/
 packages/
 ├── ai-contracts/             # Tipos InsightAI compartilhados
 ├── shared-types/             # DTOs comuns entre apps
+├── api-client/               # Helpers HTTP compartilhados (ex.: bridge emit)
 └── tsconfig/                 # tsconfig base
 ```
 

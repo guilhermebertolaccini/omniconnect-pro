@@ -28,6 +28,24 @@
 | CRM backend (Sprint 3) — schema + domain + signatures + storage + pdf-parser + realtime | ✅ |
 | CRM frontend (Sprint 3.1) — auth + contexts + storage/parser + cleanup Supabase | ✅ |
 | CRM hardening (Sprint 3.2) — timelines + document audit via backend | ✅ |
+| InsightAI Sprint 5 — dashboard + custo multi-provider | ✅ |
+| Bridge processors (Sprint 4) — handlers + emitters + `IntegrationEntityLink` | ✅ |
+
+## Próximo foco — Sprint 6 (Botify) e continuidade
+
+Sprint 5 (InsightAI v2) está **concluída** — ver `docs/migration/sprint-5-insight-ai-v2.md`
+(`GET /insight-ai/dashboard/summary`, `GET /insight-ai/dashboard/usage`, `GET /insight-ai/analyses`,
+UI `/inteligencia` no `omniconnect-frontend`).
+
+| Bloco | Resumo |
+| --- | --- |
+| **1** ✅ | Contrato `InsightAiLlmProvider` + `OpenAiInsightProvider`; env `INSIGHT_AI_DEFAULT_PROVIDER`. |
+| **2** ✅ | Anthropic + Gemini (`google`); resolver; flags disable; `ModelPricing` + migration. |
+| **3** ✅ | Dashboard: filtros de período/segmento, `AIUsageLog` agregado por provedor; UI Inteligência. |
+| **4** ✅ | Docs de governança, padrões de API, runbook (`DEPLOYMENT.md`) com envs. |
+
+O roadmap macro aponta **Sprint 6 — Botify** (segurança e alinhamento com bridges + API keys —
+ver lista em “Roadmap longo” abaixo).
 
 ## Sprint 1.3 — Hardening final pré-Sprint 2 ✅ CONCLUÍDA
 
@@ -197,9 +215,10 @@ Detalhamento completo: ver `docs/migration/sprint-3-2-crm-hardening.md`.
 
 ## Roadmap longo (depois da Sprint 3.2)
 
-1. **Sprint 4** — Bridges processors reais (consumir `IntegrationEvent`
-   e propagar para `CrmLead`, `CrmContact` etc). Hoje só persistimos +
-   enfileiramos; o processor concreto ainda é stub.
+1. **Sprint 4** — Bridges processors reais, fechada em
+   `docs/migration/sprint-4-bridge-processors.md` (inclui
+   `@omniconnect/api-client`, smoke emit→`CrmLead`, doc operacional de
+   `IntegrationConnection`).
 2. **Sprint 5** — InsightAI v2: multi-provider (Anthropic, Gemini)
    plug-in, dashboard com filtros, custo agregado por tenant.
 3. **Sprint 6** — Botify: revisar segurança, alinhar ao mesmo padrão

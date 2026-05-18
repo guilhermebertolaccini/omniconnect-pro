@@ -30,7 +30,7 @@ omniconnect-pro/
 │   ├── ai-contracts/             # tipos InsightAI
 │   ├── shared-types/             # DTOs entre apps
 │   ├── ui/                       # componentes compartilhados (futuro)
-│   ├── api-client/               # SDK do backend (futuro)
+│   ├── api-client/               # SDK leve (p.ex. bridge JWT) p/ apps satélite
 │   ├── tsconfig/                 # tsconfig base
 │   └── eslint-config/            # ESLint base
 ├── docs/

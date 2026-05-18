@@ -25,6 +25,36 @@ InsightAI pode produzir:
 - `conversationSummary` — resumo executivo
 - `confidence` — confiança do modelo (0..1)
 
+## Provider selection (InsightAI)
+
+- **`INSIGHT_AI_DEFAULT_PROVIDER`** — `openai` (default) | `anthropic` | `gemini` | `google`
+  (mesmo que Gemini). Valor **desconhecido** → heurística + `warn`.
+- **Desligar adapters sem remover env:**
+  - `INSIGHT_AI_ANTHROPIC_DISABLED=1`
+  - `INSIGHT_AI_GEMINI_DISABLED=1`
+- **Chaves e modelos**
+  - OpenAI: `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`).
+  - Anthropic: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-3-5-haiku-20241022`).
+  - Google Gemini: `GEMINI_API_KEY` **ou** `GOOGLE_AI_API_KEY`, `GEMINI_MODEL`
+    (default `gemini-2.0-flash`). Em `AIUsageLog` / `ModelPricing`, provider =
+    **`google`**.
+- Se o provider escolhido estiver desativado, sem chave ou com erro HTTP → **heurística**
+  (com `AIUsageLog` `failure` quando a tentativa LLM falha após chamada).
+
+Implementação: `apps/omniconnect-backend/src/insight-ai/providers/`.
+
+## Dashboard API (métricas e custo)
+
+Endpoints somente leitura, escopo estrito ao `tenantId` do JWT:
+
+- `GET /insight-ai/dashboard/summary` — agregados sobre `ConversationAIAnalysis` (amostra máx. 2000 no período).
+- `GET /insight-ai/dashboard/usage` — agregados e linhas paginadas em `AIUsageLog` (por `modelProvider`).
+- `GET /insight-ai/analyses` — lista paginada de análises do tenant.
+
+UI operações: `omniconnect-frontend` → `/inteligencia`. Contrato detalhado: `docs/06-api-standards.md`.
+
+**Operação:** troca de provedor default via `INSIGHT_AI_DEFAULT_PROVIDER`; envs por provedor em `apps/omniconnect-backend/DEPLOYMENT.md`. Rate limiting dedicado nos endpoints InsightAI é **melhoria futura** (hoje aplicar limite de uso via fila + política de produto).
+
 ## Required metadata
 
 Toda análise persistida **deve** incluir:
@@ -34,7 +64,7 @@ Toda análise persistida **deve** incluir:
   tenantId: string;
   conversationId: string;
   leadId?: string;
-  modelProvider: 'openai' | 'anthropic' | 'heuristic';
+  modelProvider: 'openai' | 'anthropic' | 'google' | 'heuristic';
   modelName: string;             // 'gpt-4o-mini'
   promptVersion: string;         // 'insight-ai-conversation-analysis-v3'
   outputSchemaVersion: string;   // 'v1'

@@ -9,10 +9,16 @@ import {
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { AdsBridgeService } from './ads-bridge.service';
+import { RateLimitingService } from '../rate-limiting/rate-limiting.service';
+
+const BRIDGE_WEBHOOK_RATE_LIMIT = { maxRequests: 120, windowMs: 60_000 };
 
 @Controller('webhooks/ads')
 export class AdsBridgeController {
-  constructor(private readonly service: AdsBridgeService) {}
+  constructor(
+    private readonly service: AdsBridgeService,
+    private readonly rateLimiting: RateLimitingService,
+  ) {}
 
   @Post()
   @HttpCode(200)
@@ -25,6 +31,10 @@ export class AdsBridgeController {
     if (!signature || !integrationId) {
       throw new BadRequestException('Missing headers');
     }
+    this.rateLimiting.assertWebhookAllowed(
+      `bridge:ads:${integrationId}`,
+      BRIDGE_WEBHOOK_RATE_LIMIT,
+    );
     const rawBody = req.rawBody;
     if (!rawBody || rawBody.length === 0) {
       throw new BadRequestException('Missing raw body');

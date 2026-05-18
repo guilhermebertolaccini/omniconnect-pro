@@ -27,6 +27,7 @@ import PainelControle from "./pages/PainelControle";
 import ProdutividadeAtivadores from "./pages/ProdutividadeAtivadores";
 import Acompanhamento from "./pages/Acompanhamento";
 import Apps from "./pages/Apps";
+import Inteligencia from "./pages/Inteligencia";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -77,6 +78,15 @@ function AcompanhamentoRoute() {
   return <Acompanhamento />;
 }
 
+function InteligenciaRoute() {
+  const { user } = useAuth();
+  const allowed = user?.role === "admin" || user?.role === "supervisor" || user?.role === "digital";
+  if (!allowed) {
+    return <Navigate to="/" replace />;
+  }
+  return <Inteligencia />;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -99,6 +109,7 @@ function AppRoutes() {
       <Route path="/painel-controle" element={<ProtectedRoute><PainelControle /></ProtectedRoute>} />
       <Route path="/produtividade-ativadores" element={<ProtectedRoute><ProdutividadeAtivadores /></ProtectedRoute>} />
       <Route path="/acompanhamento" element={<ProtectedRoute><AcompanhamentoRoute /></ProtectedRoute>} />
+      <Route path="/inteligencia" element={<ProtectedRoute><InteligenciaRoute /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

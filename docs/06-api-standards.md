@@ -82,6 +82,18 @@ GET /leads?status=qualified&source=whatsapp&assignedTo=user-123
 
 DTOs validam cada filtro. Filtros desconhecidos → `VALIDATION_FAILED`.
 
+## InsightAI — dashboard (Sprint 5)
+
+Leitura agregada, sempre com `tenantId` do JWT (roles: `admin`, `supervisor`, `digital`):
+
+| Método | Path | Notas |
+| --- | --- | --- |
+| `GET` | `/insight-ai/dashboard/summary` | `days` (1–365) *ou* par `from` + `to` (ISO 8601); `segment` opcional. Resposta: `period`, `periodDays`, `sampleCap` (2000), métricas agregadas. |
+| `GET` | `/insight-ai/dashboard/usage` | Mesma janela; `status`: `success`, `failed` ou `all` (default `success`); `limit`/`offset` na lista de linhas; `byProvider` agrega tokens e custo. |
+| `GET` | `/insight-ai/analyses` | Paginação `limit` (≤200) + `offset`; `from`/`to` opcionais (ambos obrigatórios se usar); `contactPhone`, `segment`. Corpo: `{ items, meta }`. |
+
+`from` sem `to` (ou o inverso) → `400`.
+
 ## Sorting
 
 ```

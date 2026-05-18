@@ -1,10 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getQueueToken } from '@nestjs/bull';
 import { InsightAiService } from './insight-ai.service';
 import { PrismaService } from '../prisma.service';
 import { ModelPricingService } from '../model-pricing/model-pricing.service';
+import { InsightAiLlmResolver } from './providers/insight-ai-llm.resolver';
 
 describe('InsightAiService — job lifecycle (tenant isolation + dedup)', () => {
   let service: InsightAiService;
@@ -24,6 +25,10 @@ describe('InsightAiService — job lifecycle (tenant isolation + dedup)', () => 
         { provide: PrismaService, useValue: {} },
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: ModelPricingService, useValue: {} },
+        {
+          provide: InsightAiLlmResolver,
+          useValue: { resolve: jest.fn().mockReturnValue(null) },
+        },
         { provide: getQueueToken('insight-ai'), useValue: queue },
       ],
     }).compile();
@@ -113,5 +118,60 @@ describe('InsightAiService — job lifecycle (tenant isolation + dedup)', () => 
         attemptsMade: 1,
       });
     });
+  });
+});
+
+describe('InsightAiService — dashboard query validation', () => {
+  let service: InsightAiService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      conversationAIAnalysis: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
+      aIUsageLog: {
+        groupBy: jest.fn().mockResolvedValue([]),
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        InsightAiService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: ModelPricingService, useValue: {} },
+        {
+          provide: InsightAiLlmResolver,
+          useValue: { resolve: jest.fn().mockReturnValue(null) },
+        },
+        { provide: getQueueToken('insight-ai'), useValue: { add: jest.fn(), getJob: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get(InsightAiService);
+  });
+
+  it('getExecutiveSummary rejects partial date range (from without to)', async () => {
+    await expect(
+      service.getExecutiveSummary('tenant-x', {
+        from: '2026-01-01T00:00:00.000Z',
+      } as any),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('listAnalyses rejects partial date range (to without from)', async () => {
+    await expect(
+      service.listAnalyses('tenant-x', {
+        to: '2026-01-02T00:00:00.000Z',
+      } as any),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('listAnalyses calls prisma with offset/limit', async () => {
+    await service.listAnalyses('tenant-x', { limit: 10, offset: 5 } as any);
+    expect(prisma.conversationAIAnalysis.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 5, take: 10 }),
+    );
   });
 });

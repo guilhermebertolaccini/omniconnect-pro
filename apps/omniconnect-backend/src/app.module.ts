@@ -47,6 +47,7 @@ import { CrmSignaturesModule } from './crm-signatures/crm-signatures.module';
 import { CrmStorageModule } from './crm-storage/crm-storage.module';
 import { CrmPdfParserModule } from './crm-pdf-parser/crm-pdf-parser.module';
 import { CrmRealtimeModule } from './crm-realtime/crm-realtime.module';
+import { IntegrationBridgeEmitModule } from './integration-bridge-emit/integration-bridge-emit.module';
 
 @Module({
   imports: [
@@ -106,6 +107,7 @@ import { CrmRealtimeModule } from './crm-realtime/crm-realtime.module';
     CrmSignaturesModule,
     CrmStorageModule,
     CrmPdfParserModule,
+    IntegrationBridgeEmitModule,
   ],
   controllers: [HealthController],
   providers: [PrismaService],

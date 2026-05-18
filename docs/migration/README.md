@@ -20,6 +20,11 @@ Documentação de contexto e plano de migração para unificar 4 produtos num ú
 | 07 | [`07-import-taticaofc-plan.md`](./07-import-taticaofc-plan.md) | Plano do próximo passo: importar backend + frontend do `taticaofc` em `apps/` |
 | 2.3 | [`sprint-2-saa.md`](./sprint-2-saa.md) | Sprint 2.3 — SAA backend migration (Supabase → NestJS/Prisma) |
 | 2.4 | [`sprint-2-4-saa-frontend.md`](./sprint-2-4-saa-frontend.md) | Sprint 2.4 — SAA frontend cutover (tenant invites, refresh tokens, OAuth pickup) |
+| 3 | [`sprint-3-crm.md`](./sprint-3-crm.md) | Sprint 3 — CRM Imobiliário backend |
+| 3.1 | [`sprint-3-1-crm-frontend.md`](./sprint-3-1-crm-frontend.md) | Sprint 3.1 — CRM frontend cutover |
+| 3.2 | [`sprint-3-2-crm-hardening.md`](./sprint-3-2-crm-hardening.md) | Sprint 3.2 — CRM hardening (audit/timelines) |
+| 4 | [`sprint-4-bridge-processors.md`](./sprint-4-bridge-processors.md) | Sprint 4 — Bridge processors + emitters |
+| 5 | [`sprint-5-insight-ai-v2.md`](./sprint-5-insight-ai-v2.md) | Sprint 5 — InsightAI v2 (planejada) |
 
 ## Como usar
 

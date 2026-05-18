@@ -690,6 +690,7 @@ model Tenant {
   aiUsageLogs            AIUsageLog[]
   integrationConnections IntegrationConnection[]
   integrationEvents      IntegrationEvent[]
+  integrationEntityLinks IntegrationEntityLink[]
   apiKeys                TenantApiKey[]
 
   tenantInvitations             TenantInvitation[]
@@ -799,6 +800,25 @@ model IntegrationEvent {
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
   @@index([connectionId])
+}
+
+model IntegrationEntityLink {
+  id         String   @id @default(uuid())
+  tenantId   String
+  provider   String
+  externalId String
+  entityType String
+  entityId   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, provider, externalId, entityType])
+  @@index([tenantId])
+  @@index([tenantId, provider])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, provider, externalId])
 }
 
 model UserTenant {

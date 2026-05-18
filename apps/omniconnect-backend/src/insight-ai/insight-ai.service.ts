@@ -3,12 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import * as crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { ModelPricingService } from '../model-pricing/model-pricing.service';
 import { AnalyzeConversationDto } from './dto/analyze-conversation.dto';
+import { DashboardSummaryQueryDto } from './dto/dashboard-summary-query.dto';
+import { DashboardUsageQueryDto } from './dto/dashboard-usage-query.dto';
+import { ListAnalysesQueryDto } from './dto/list-analyses-query.dto';
 import { buildConversationAnalysisPrompt, PROMPT_VERSION } from './insight-ai.prompt';
 import { ConversationAIResult, NormalizedMessage } from '@omniconnect/ai-contracts';
 import { redactPII } from './pii-redactor.util';
+import { InsightAiLlmResolver } from './providers/insight-ai-llm.resolver';
+import type { InsightAiLlmProvider } from './providers/insight-ai-llm.types';
 
 export interface EnqueueResult {
   jobId: string;
@@ -25,6 +31,9 @@ export interface JobStatusResult {
   attemptsMade?: number;
 }
 
+/** Cap for in-memory aggregation of ConversationAIAnalysis (dashboard summary). */
+const SUMMARY_ANALYSIS_SAMPLE_MAX = 2000;
+
 @Injectable()
 export class InsightAiService {
   private readonly logger = new Logger(InsightAiService.name);
@@ -33,6 +42,7 @@ export class InsightAiService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly pricing: ModelPricingService,
+    private readonly llmResolver: InsightAiLlmResolver,
     @InjectQueue('insight-ai') private readonly queue: Queue,
   ) {}
 
@@ -237,21 +247,47 @@ export class InsightAiService {
     return { total: results.length, results };
   }
 
-  async listAnalyses(tenantId: string, filters: { contactPhone?: string; limit?: number }) {
-    const limit = Math.min(filters.limit ?? 50, 200);
-    return this.prisma.conversationAIAnalysis.findMany({
-      where: { tenantId, ...(filters.contactPhone ? { contactPhone: filters.contactPhone } : {}) },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+  async listAnalyses(tenantId: string, query: ListAnalysesQueryDto = {}) {
+    const dateFilter = this.resolveOptionalListDateFilter({ from: query.from, to: query.to });
+    const limit = Math.min(query.limit ?? 50, 200);
+    const offset = Math.max(0, query.offset ?? 0);
+    const where: Prisma.ConversationAIAnalysisWhereInput = {
+      tenantId,
+      ...(query.contactPhone ? { contactPhone: query.contactPhone } : {}),
+      ...(query.segment !== undefined && query.segment !== null ? { segment: query.segment } : {}),
+      ...(dateFilter ? { createdAt: { gte: dateFilter.gte, lte: dateFilter.lte } } : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.conversationAIAnalysis.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+      this.prisma.conversationAIAnalysis.count({ where }),
+    ]);
+
+    return { items, meta: { total, limit, offset } };
   }
 
-  async getExecutiveSummary(tenantId: string, days = 30) {
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  async getExecutiveSummary(tenantId: string, query: DashboardSummaryQueryDto = {}) {
+    const { from, to, periodDays } = this.resolveBoundedWindowForAggregations({
+      days: query.days,
+      from: query.from,
+      to: query.to,
+    });
+
+    const where: Prisma.ConversationAIAnalysisWhereInput = {
+      tenantId,
+      createdAt: { gte: from, lte: to },
+      ...(query.segment !== undefined && query.segment !== null ? { segment: query.segment } : {}),
+    };
+
     const rows = await this.prisma.conversationAIAnalysis.findMany({
-      where: { tenantId, createdAt: { gte: since } },
+      where,
       orderBy: { createdAt: 'desc' },
-      take: 1000,
+      take: SUMMARY_ANALYSIS_SAMPLE_MAX,
     });
 
     const count = rows.length;
@@ -270,7 +306,9 @@ export class InsightAiService {
       );
 
     return {
-      periodDays: days,
+      period: { from: from.toISOString(), to: to.toISOString() },
+      periodDays,
+      sampleCap: SUMMARY_ANALYSIS_SAMPLE_MAX,
       analyzedConversations: count,
       averageSellerQualityScore: avg('sellerQualityScore'),
       averageResponseQualityScore: avg('responseQualityScore'),
@@ -288,67 +326,215 @@ export class InsightAiService {
     };
   }
 
+  /**
+   * Tenant-scoped usage + cost aggregates from AIUsageLog (grouped by modelProvider)
+   * and a paginated row list for drill-down.
+   */
+  async getDashboardUsage(tenantId: string, query: DashboardUsageQueryDto = {}) {
+    const { from, to, periodDays } = this.resolveBoundedWindowForAggregations({
+      days: query.days,
+      from: query.from,
+      to: query.to,
+    });
+
+    const status = query.status ?? 'success';
+    const limit = Math.min(query.limit ?? 50, 200);
+    const offset = Math.max(0, query.offset ?? 0);
+
+    const where: Prisma.AIUsageLogWhereInput = {
+      tenantId,
+      createdAt: { gte: from, lte: to },
+      ...(status === 'all' ? {} : { status }),
+    };
+
+    const [grouped, rows, total] = await Promise.all([
+      this.prisma.aIUsageLog.groupBy({
+        by: ['modelProvider'],
+        where,
+        _sum: {
+          promptTokens: true,
+          completionTokens: true,
+          estimatedCost: true,
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.aIUsageLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+        select: {
+          id: true,
+          createdAt: true,
+          modelProvider: true,
+          modelName: true,
+          operationType: true,
+          promptTokens: true,
+          completionTokens: true,
+          estimatedCost: true,
+          currency: true,
+          status: true,
+          analysisId: true,
+          conversationId: true,
+        },
+      }),
+      this.prisma.aIUsageLog.count({ where }),
+    ]);
+
+    const byProvider = grouped.map((g) => ({
+      modelProvider: g.modelProvider,
+      calls: g._count._all,
+      promptTokens: g._sum.promptTokens ?? 0,
+      completionTokens: g._sum.completionTokens ?? 0,
+      estimatedCost: g._sum.estimatedCost ?? 0,
+    }));
+
+    const totals = byProvider.reduce(
+      (acc, p) => {
+        acc.calls += p.calls;
+        acc.promptTokens += p.promptTokens;
+        acc.completionTokens += p.completionTokens;
+        acc.estimatedCost += p.estimatedCost;
+        return acc;
+      },
+      { calls: 0, promptTokens: 0, completionTokens: 0, estimatedCost: 0 },
+    );
+
+    return {
+      period: { from: from.toISOString(), to: to.toISOString(), days: periodDays },
+      statusFilter: status,
+      byProvider,
+      totals,
+      rows,
+      meta: { total, limit, offset },
+    };
+  }
+
+  /**
+   * Rolling window (`days` ending now) or explicit [from, to]. Used for aggregations.
+   */
+  private resolveBoundedWindowForAggregations(input: { days?: number; from?: string; to?: string }): {
+    from: Date;
+    to: Date;
+    periodDays: number;
+  } {
+    const hasFrom = input.from != null && input.from !== '';
+    const hasTo = input.to != null && input.to !== '';
+    if (hasFrom !== hasTo) {
+      throw new BadRequestException('Informe from e to juntos, ou omita ambos para usar days.');
+    }
+
+    const to = hasTo ? new Date(input.to!) : new Date();
+    if (Number.isNaN(+to)) {
+      throw new BadRequestException('Data final inválida.');
+    }
+
+    if (hasFrom) {
+      const from = new Date(input.from!);
+      if (Number.isNaN(+from)) {
+        throw new BadRequestException('Data inicial inválida.');
+      }
+      if (from > to) {
+        throw new BadRequestException('from deve ser anterior ou igual a to.');
+      }
+      const periodDays = Math.max(1, Math.ceil((+to - +from) / 86_400_000));
+      return { from, to, periodDays };
+    }
+
+    const days = Math.min(Math.max(input.days ?? 30, 1), 365);
+    const from = new Date(+to - days * 86_400_000);
+    return { from, to, periodDays: days };
+  }
+
+  /** Optional createdAt range for list endpoints (omit both = no date filter). */
+  private resolveOptionalListDateFilter(input: { from?: string; to?: string }):
+    | { gte: Date; lte: Date }
+    | undefined {
+    const hasFrom = input.from != null && input.from !== '';
+    const hasTo = input.to != null && input.to !== '';
+    if (hasFrom !== hasTo) {
+      throw new BadRequestException('Informe from e to juntos, ou omita ambos.');
+    }
+    if (!hasFrom) {
+      return undefined;
+    }
+    const from = new Date(input.from!);
+    const to = new Date(input.to!);
+    if (Number.isNaN(+from) || Number.isNaN(+to)) {
+      throw new BadRequestException('Datas inválidas.');
+    }
+    if (from > to) {
+      throw new BadRequestException('from deve ser anterior ou igual a to.');
+    }
+    return { gte: from, lte: to };
+  }
+
   private async analyzeMessages(tenantId: string, conversationId: number | null, messages: NormalizedMessage[]) {
     const safeMessages = messages.map((m) => ({ ...m, text: redactPII(m.text) }));
 
-    const apiKey = this.config.get<string>('OPENAI_API_KEY');
-    if (!apiKey) {
+    const configuredProvider =
+      this.config.get<string>('INSIGHT_AI_DEFAULT_PROVIDER')?.trim().toLowerCase() || 'openai';
+
+    const provider = this.llmResolver.resolve(configuredProvider);
+    if (!provider) {
+      this.logger.warn(
+        `INSIGHT_AI_DEFAULT_PROVIDER=${configuredProvider} is unknown, disabled, or unsupported; using heuristic analysis`,
+      );
+      return this.heuristicAnalysis(safeMessages);
+    }
+
+    if (!provider.isConfigured()) {
+      this.logger.warn(
+        `InsightAI provider "${provider.id}" selected but API key/env missing; using heuristic analysis`,
+      );
       return this.heuristicAnalysis(safeMessages);
     }
 
     try {
-      return await this.openAiAnalysis(tenantId, conversationId, safeMessages, apiKey);
+      return await this.runLlmAnalysis(tenantId, conversationId, safeMessages, provider);
     } catch (error) {
       const err = error as Error;
-      this.logger.warn(`OpenAI indisponível. Usando análise heurística. Erro: ${err?.message ?? err}`);
-      await this.logUsageFailure(tenantId, conversationId, err);
+      this.logger.warn(
+        `LLM provider ${provider.id} indisponível. Usando análise heurística. Erro: ${err?.message ?? err}`,
+      );
+      const modelName = this.resolveModelForProvider(provider);
+      await this.logUsageFailure(tenantId, conversationId, err, provider.id, modelName);
       return this.heuristicAnalysis(safeMessages);
     }
   }
 
-  private async openAiAnalysis(
+  private resolveModelForProvider(provider: InsightAiLlmProvider): string {
+    switch (provider.id) {
+      case 'openai':
+        return this.config.get<string>('OPENAI_MODEL') || 'gpt-4o-mini';
+      case 'anthropic':
+        return this.config.get<string>('ANTHROPIC_MODEL') || 'claude-3-5-haiku-20241022';
+      case 'google':
+        return this.config.get<string>('GEMINI_MODEL') || 'gemini-2.0-flash';
+      default:
+        return 'gpt-4o-mini';
+    }
+  }
+
+  private async runLlmAnalysis(
     tenantId: string,
     conversationId: number | null,
     messages: NormalizedMessage[],
-    apiKey: string,
+    provider: InsightAiLlmProvider,
   ) {
-    const model = this.config.get<string>('OPENAI_MODEL') || 'gpt-4o-mini';
-    const prompt = buildConversationAnalysisPrompt(messages);
+    const model = this.resolveModelForProvider(provider);
+    const userPrompt = buildConversationAnalysisPrompt(messages);
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.1,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: 'Você é um analista sênior de conversão comercial imobiliária. Responda somente JSON válido.',
-          },
-          { role: 'user', content: prompt },
-        ],
-      }),
+    const completion = await provider.completeJson({
+      tenantId,
+      userPrompt,
+      modelRef: model,
     });
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`OpenAI HTTP ${response.status}: ${body}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
-    if (!content) throw new Error('Resposta vazia da OpenAI.');
-
-    const promptTokens = usage.prompt_tokens;
-    const completionTokens = usage.completion_tokens;
+    const promptTokens = completion.promptTokens;
+    const completionTokens = completion.completionTokens;
     const { cost: estimatedCost, pricing: resolvedPricing } = await this.pricing.estimateCost(
-      'openai',
+      provider.id,
       model,
       promptTokens,
       completionTokens,
@@ -361,7 +547,7 @@ export class InsightAiService {
           tenantId,
           conversationId,
           operationType: 'conversation_analysis',
-          modelProvider: 'openai',
+          modelProvider: provider.id,
           modelName: model,
           promptVersion: PROMPT_VERSION,
           promptTokens,
@@ -378,16 +564,21 @@ export class InsightAiService {
     }
 
     return {
-      result: this.normalizeResult(JSON.parse(content)),
-      modelProvider: 'openai',
+      result: this.normalizeResult(JSON.parse(completion.rawText)),
+      modelProvider: provider.id,
       modelName: model,
       promptVersion: PROMPT_VERSION,
       usageLogId,
     };
   }
 
-  private async logUsageFailure(tenantId: string, conversationId: number | null, error: Error) {
-    const model = this.config.get<string>('OPENAI_MODEL') || 'gpt-4o-mini';
+  private async logUsageFailure(
+    tenantId: string,
+    conversationId: number | null,
+    error: Error,
+    modelProvider: string,
+    modelName: string,
+  ) {
     const errorCode = /HTTP (\d+)/i.exec(error?.message ?? '')?.[1] ?? 'unknown';
     await this.prisma.aIUsageLog
       .create({
@@ -395,8 +586,8 @@ export class InsightAiService {
           tenantId,
           conversationId,
           operationType: 'conversation_analysis',
-          modelProvider: 'openai',
-          modelName: model,
+          modelProvider,
+          modelName,
           promptVersion: PROMPT_VERSION,
           promptTokens: 0,
           completionTokens: 0,

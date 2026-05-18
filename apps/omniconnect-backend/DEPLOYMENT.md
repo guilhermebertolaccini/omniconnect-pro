@@ -108,6 +108,18 @@ APP_URL="https://seu-dominio.com"
 # CORS
 CORS_ORIGINS="https://seu-frontend.com"
 
+# InsightAI — LLM (opcional; sem chave → heurística)
+INSIGHT_AI_DEFAULT_PROVIDER="openai"
+# INSIGHT_AI_ANTHROPIC_DISABLED=1
+# INSIGHT_AI_GEMINI_DISABLED=1
+OPENAI_API_KEY=""
+OPENAI_MODEL="gpt-4o-mini"
+ANTHROPIC_API_KEY=""
+ANTHROPIC_MODEL="claude-3-5-haiku-20241022"
+GEMINI_API_KEY=""
+# ou: GOOGLE_AI_API_KEY=""
+GEMINI_MODEL="gemini-2.0-flash"
+
 # Meta WhatsApp
 META_WEBHOOK_TOKEN="seu-token"
 META_APP_SECRET="seu-secret"

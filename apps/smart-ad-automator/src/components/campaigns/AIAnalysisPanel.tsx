@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { analyzeCampaignWithAI } from '@/services/aiAnalysisService';
+import { tryEmitAdsBridgeLeadFromCampaignAnalysis } from '@/lib/bridgeEmit';
 import { useCompany } from '@/contexts/CompanyContext';
 import { toast } from 'sonner';
 
@@ -584,6 +585,11 @@ export function AIAnalysisPanel({ campaign, onClose }: AIAnalysisPanelProps) {
         platform: selectedPlatform,
       });
       setAnalysis(result);
+      void tryEmitAdsBridgeLeadFromCampaignAnalysis({
+        companyId: selectedCompanyId,
+        campaign,
+        analysis: result,
+      }).catch(() => {});
       loadHistory();
     } catch (err) {
       console.error('AI analysis failed, using fallback:', err);

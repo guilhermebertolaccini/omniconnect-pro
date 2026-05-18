@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
+import type { LoadedIntegrationEvent } from './bridge-event-contract';
 
 export type IntegrationProvider = 'crm' | 'ads' | 'bot';
 
@@ -71,18 +72,39 @@ export class IntegrationEventsService {
     return { eventId: event.id, alreadyProcessed: false };
   }
 
-  async markProcessed(eventId: string) {
-    await this.prisma.integrationEvent.update({
-      where: { id: eventId },
+  async getEventForProcessing(
+    eventId: string,
+    tenantId: string,
+    provider: IntegrationProvider,
+  ): Promise<LoadedIntegrationEvent> {
+    const event = await this.prisma.integrationEvent.findFirst({
+      where: { id: eventId, tenantId, provider },
+      select: {
+        id: true,
+        tenantId: true,
+        provider: true,
+        status: true,
+        payload: true,
+      },
+    });
+    if (!event) {
+      throw new Error('IntegrationEvent not found for tenant/provider');
+    }
+    return event as LoadedIntegrationEvent;
+  }
+
+  async markProcessed(eventId: string, tenantId: string) {
+    await this.prisma.integrationEvent.updateMany({
+      where: { id: eventId, tenantId },
       data: { status: 'processed', processedAt: new Date(), errorMessage: null },
     });
   }
 
-  async markFailed(eventId: string, error: unknown) {
+  async markFailed(eventId: string, tenantId: string, error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     await this.prisma.integrationEvent
-      .update({
-        where: { id: eventId },
+      .updateMany({
+        where: { id: eventId, tenantId },
         data: { status: 'failed', processedAt: new Date(), errorMessage: message.slice(0, 1000) },
       })
       .catch((err) => this.logger.error(`Failed to mark event ${eventId} as failed: ${err?.message}`));

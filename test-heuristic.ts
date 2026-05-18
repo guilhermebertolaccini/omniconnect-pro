@@ -22,7 +22,7 @@ async function run() {
   (aiService as any).logger = new Logger('Test');
 
   console.log('--- TESTANDO DASHBOARD EXECUTIVE ---');
-  const summary = await aiService.getExecutiveSummary();
+  const summary = await aiService.getExecutiveSummary('default-tenant', {});
   console.log('Summary:', summary);
 
   console.log('\n--- TESTANDO HEURÍSTICA ---');

@@ -1296,3 +1296,122 @@ export const controlPanelService = {
     });
   },
 };
+
+// ==================== INSIGHT AI (tenant dashboard) ====================
+
+function insightAiQuery(params: Record<string, string | number | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === '') continue;
+    q.set(k, String(v));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
+export interface InsightExecutiveSummary {
+  period: { from: string; to: string };
+  periodDays: number;
+  sampleCap: number;
+  analyzedConversations: number;
+  averageSellerQualityScore: number;
+  averageResponseQualityScore: number;
+  averageQualificationScore: number;
+  averageFollowUpScore: number;
+  lostOpportunities: number;
+  sellerAbandonments: number;
+  leadAbandonments: number;
+  schedulingAttempts: number;
+  proposalOrSimulationAttempts: number;
+  byLeadIntent: Record<string, number>;
+  byOpportunityStatus: Record<string, number>;
+  byRisk: Record<string, number>;
+  topObjections: Array<{ objection: string; count: number }>;
+}
+
+export interface InsightUsageByProvider {
+  modelProvider: string;
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  estimatedCost: number;
+}
+
+export interface InsightAiUsageRow {
+  id: number;
+  createdAt: string;
+  modelProvider: string;
+  modelName: string;
+  operationType: string;
+  promptTokens: number;
+  completionTokens: number;
+  estimatedCost: number;
+  currency: string;
+  status: string;
+  analysisId: number | null;
+  conversationId: number | null;
+}
+
+export interface InsightAiUsageResponse {
+  period: { from: string; to: string; days: number };
+  statusFilter: string;
+  byProvider: InsightUsageByProvider[];
+  totals: {
+    calls: number;
+    promptTokens: number;
+    completionTokens: number;
+    estimatedCost: number;
+  };
+  rows: InsightAiUsageRow[];
+  meta: { total: number; limit: number; offset: number };
+}
+
+export interface InsightAiAnalysisRow {
+  id: number;
+  tenantId: string;
+  contactPhone: string;
+  segment: number | null;
+  leadIntent: string;
+  createdAt: string;
+}
+
+export interface InsightAiAnalysesResponse {
+  items: InsightAiAnalysisRow[];
+  meta: { total: number; limit: number; offset: number };
+}
+
+export const insightAiService = {
+  getSummary: async (params: {
+    days?: number;
+    from?: string;
+    to?: string;
+    segment?: number;
+  }): Promise<InsightExecutiveSummary> => {
+    const q = insightAiQuery(params);
+    return apiRequest<InsightExecutiveSummary>(`/insight-ai/dashboard/summary${q}`);
+  },
+
+  getUsage: async (params: {
+    days?: number;
+    from?: string;
+    to?: string;
+    status?: 'success' | 'failed' | 'all';
+    limit?: number;
+    offset?: number;
+  }): Promise<InsightAiUsageResponse> => {
+    const q = insightAiQuery(params);
+    return apiRequest<InsightAiUsageResponse>(`/insight-ai/dashboard/usage${q}`);
+  },
+
+  listAnalyses: async (params: {
+    contactPhone?: string;
+    limit?: number;
+    offset?: number;
+    from?: string;
+    to?: string;
+    segment?: number;
+  }): Promise<InsightAiAnalysesResponse> => {
+    const q = insightAiQuery(params);
+    return apiRequest<InsightAiAnalysesResponse>(`/insight-ai/analyses${q}`);
+  },
+};

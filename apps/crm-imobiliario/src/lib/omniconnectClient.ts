@@ -11,8 +11,7 @@
  *   - Sem dependência do React — fica em `src/lib/` justamente para poder
  *     ser usado fora de componentes (loaders, services).
  *
- * Quando esta sprint terminar, este arquivo + o do SAA serão promovidos
- * a `packages/api-client` (decisão adiada para não inflar a Sprint 3.1).
+ * Bridge emit compartilhado: `@omniconnect/api-client` (`postBridgeEvent`).
  *
  * Endpoints CRM-específicos vivem em src/lib/api/crm-*.ts. O cliente
  * aqui só expõe os primitivos (`request`, `getAccessToken`, sessão,

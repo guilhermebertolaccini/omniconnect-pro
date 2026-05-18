@@ -62,6 +62,14 @@ describe('ModelPricingService', () => {
       expect(out.source).toBe('fallback');
     });
 
+    it('falls back for anthropic default model when DB empty', async () => {
+      prisma.modelPricing.findFirst.mockResolvedValue(null);
+      const out = await service.getPrice('anthropic', 'claude-3-5-haiku-20241022');
+      expect(out.source).toBe('fallback');
+      expect(out.inputPer1k).toBe(0.0008);
+      expect(out.outputPer1k).toBe(0.004);
+    });
+
     it('caches subsequent calls for the same model on the same day', async () => {
       prisma.modelPricing.findFirst.mockResolvedValue({
         modelProvider: 'openai',

@@ -14,8 +14,9 @@ describe('IntegrationEventsService', () => {
     prisma = {
       integrationEvent: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
         create: jest.fn(),
-        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     const makeQueue = () => ({ add: jest.fn().mockResolvedValue({ id: 'jid' }) });
@@ -119,6 +120,54 @@ describe('IntegrationEventsService', () => {
       expect(adsQueue.add).toHaveBeenCalled();
       expect(crmQueue.add).not.toHaveBeenCalled();
       expect(botQueue.add).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('processing helpers', () => {
+    it('loads an event scoped by eventId + tenantId + provider', async () => {
+      prisma.integrationEvent.findFirst.mockResolvedValue({
+        id: 'evt-1',
+        tenantId: 'tenant-a',
+        provider: 'crm',
+        status: 'received',
+        payload: { eventType: 'crm.lead.created' },
+      });
+      const event = await service.getEventForProcessing('evt-1', 'tenant-a', 'crm');
+      expect(event.id).toBe('evt-1');
+      expect(prisma.integrationEvent.findFirst).toHaveBeenCalledWith({
+        where: { id: 'evt-1', tenantId: 'tenant-a', provider: 'crm' },
+        select: {
+          id: true,
+          tenantId: true,
+          provider: true,
+          status: true,
+          payload: true,
+        },
+      });
+    });
+
+    it('marks processed with tenant scope', async () => {
+      await service.markProcessed('evt-1', 'tenant-a');
+      expect(prisma.integrationEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: 'evt-1', tenantId: 'tenant-a' },
+        data: {
+          status: 'processed',
+          processedAt: expect.any(Date),
+          errorMessage: null,
+        },
+      });
+    });
+
+    it('marks failed with tenant scope and truncates message', async () => {
+      await service.markFailed('evt-1', 'tenant-a', new Error('boom'));
+      expect(prisma.integrationEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: 'evt-1', tenantId: 'tenant-a' },
+        data: {
+          status: 'failed',
+          processedAt: expect.any(Date),
+          errorMessage: 'boom',
+        },
+      });
     });
   });
 });

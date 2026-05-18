@@ -23,7 +23,7 @@ packages/
 ├── ui/                       # Componentes shadcn reutilizáveis (futuro)
 ├── eslint-config/            # ESLint base
 ├── tsconfig/                 # tsconfig base
-└── api-client/               # SDK TypeScript do backend (futuro)
+└── api-client/               # SDK TypeScript (bridge emit + shapes compartilhados)
 ```
 
 ## Rules

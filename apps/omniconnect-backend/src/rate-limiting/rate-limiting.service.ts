@@ -1,4 +1,11 @@
-import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Inject,
+  forwardRef,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { LineReputationService } from '../line-reputation/line-reputation.service';
 
@@ -9,6 +16,11 @@ interface RateLimit {
 
 @Injectable()
 export class RateLimitingService {
+  private readonly webhookBuckets = new Map<
+    string,
+    { count: number; resetAt: number }
+  >();
+
   private readonly baseLimits: Record<string, RateLimit> = {
     newLine: { daily: 200, hourly: 50 },      // Linhas novas (< 7 dias) - 50 msg/hora, 200/dia
     warmingUp: { daily: 500, hourly: 100 },   // Linhas aquecendo (7-30 dias) - 100 msg/hora, 500/dia
@@ -31,6 +43,28 @@ export class RateLimitingService {
   async canSendMessage(lineId: number): Promise<boolean> {
     // Limites desabilitados - sempre permite envio
     return true;
+  }
+
+  assertWebhookAllowed(
+    key: string,
+    options: { maxRequests: number; windowMs: number },
+  ): void {
+    const now = Date.now();
+    const current = this.webhookBuckets.get(key);
+    if (!current || current.resetAt <= now) {
+      this.webhookBuckets.set(key, {
+        count: 1,
+        resetAt: now + options.windowMs,
+      });
+      return;
+    }
+    if (current.count >= options.maxRequests) {
+      throw new HttpException(
+        'Webhook rate limit exceeded',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    current.count += 1;
   }
 
   /**

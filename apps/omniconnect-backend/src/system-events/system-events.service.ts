@@ -50,6 +50,10 @@ export enum EventType {
   CRM_SIGNATURE_ENVELOPE_CREATED = 'crm_signature_envelope_created',
   CRM_SIGNATURE_WEBHOOK_RECEIVED = 'crm_signature_webhook_received',
   CRM_CONTRACT_SIGNED = 'crm_contract_signed',
+
+  // Bridge processors (Sprint 4)
+  BRIDGE_EVENT_DISPATCHED = 'bridge_event_dispatched',
+  BRIDGE_EVENT_FAILED = 'bridge_event_failed',
 }
 
 export enum EventSeverity {
@@ -73,6 +77,7 @@ export enum EventModule {
   AD_PLATFORM_OAUTH = 'ad_platform_oauth',
   AUTH = 'auth',
   CRM_SIGNATURES = 'crm_signatures',
+  BRIDGE_PROCESSORS = 'bridge_processors',
 }
 
 interface EventFilters {

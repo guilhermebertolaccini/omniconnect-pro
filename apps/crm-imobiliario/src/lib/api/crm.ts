@@ -15,6 +15,10 @@ import type {
 import type { Commission, Payment, PropertyCommissionConfig } from "@/types/financial";
 import type { FollowUp, Interaction, Lead, LeadStage } from "@/types/crm";
 import { request } from "@/lib/omniconnectClient";
+import {
+  tryEmitCrmBridgeLeadCreated,
+  tryEmitCrmBridgeLeadUpdated,
+} from "@/lib/bridgeEmit";
 
 const FALLBACK_IMAGE =
   "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=600&h=400&fit=crop";
@@ -376,7 +380,9 @@ export async function createLead(lead: Lead, client?: Client): Promise<Lead> {
       estimatedValue: lead.estimatedValue,
     }),
   });
-  return rowToLead(row);
+  const created = rowToLead(row);
+  void tryEmitCrmBridgeLeadCreated(created, client).catch(() => {});
+  return created;
 }
 
 export async function updateLead(id: string, data: Partial<Lead>): Promise<Lead> {
@@ -393,7 +399,9 @@ export async function updateLead(id: string, data: Partial<Lead>): Promise<Lead>
     method: "PATCH",
     body: JSON.stringify(patch),
   });
-  return rowToLead(row);
+  const updated = rowToLead(row);
+  void tryEmitCrmBridgeLeadUpdated(updated).catch(() => {});
+  return updated;
 }
 
 export function deleteLead(id: string): Promise<{ id: string }> {

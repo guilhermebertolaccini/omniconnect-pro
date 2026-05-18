@@ -6,6 +6,9 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AnalyzeConversationDto } from './dto/analyze-conversation.dto';
+import { DashboardSummaryQueryDto } from './dto/dashboard-summary-query.dto';
+import { DashboardUsageQueryDto } from './dto/dashboard-usage-query.dto';
+import { ListAnalysesQueryDto } from './dto/list-analyses-query.dto';
 import { InsightAiService } from './insight-ai.service';
 
 @ApiTags('Insight AI')
@@ -55,20 +58,34 @@ export class InsightAiController {
 
   @Get('analyses')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  listAnalyses(
-    @Query('contactPhone') contactPhone?: string,
-    @Query('limit') limit?: string,
-    @CurrentUser() user?: any,
-  ) {
-    return this.insightAiService.listAnalyses(user.tenantId, {
-      contactPhone,
-      limit: limit ? Number(limit) : undefined,
-    });
+  @ApiOperation({
+    summary: 'Lista análises InsightAI do tenant (paginado)',
+    description:
+      'Opcionalmente filtre por intervalo com `from` e `to` (ISO 8601, ambos obrigatórios juntos), segmento e telefone.',
+  })
+  listAnalyses(@Query() query: ListAnalysesQueryDto, @CurrentUser() user: any) {
+    return this.insightAiService.listAnalyses(user.tenantId, query);
   }
 
   @Get('dashboard/summary')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  getExecutiveSummary(@Query('days') days?: string, @CurrentUser() user?: any) {
-    return this.insightAiService.getExecutiveSummary(user.tenantId, days ? Number(days) : 30);
+  @ApiOperation({
+    summary: 'Resumo executivo agregado (métricas InsightAI)',
+    description:
+      'Use `from`+`to` ou, se omitidos, janela móvel de `days` (default 30). Até 2000 análises mais recentes no período entram na agregação (`sampleCap`).',
+  })
+  getExecutiveSummary(@Query() query: DashboardSummaryQueryDto, @CurrentUser() user: any) {
+    return this.insightAiService.getExecutiveSummary(user.tenantId, query);
+  }
+
+  @Get('dashboard/usage')
+  @Roles(Role.admin, Role.supervisor, Role.digital)
+  @ApiOperation({
+    summary: 'Uso e custo estimado (AIUsageLog) por provedor + linhas paginadas',
+    description:
+      '`status` default `success`. Use `all` para incl falhas. Escopo sempre do tenant autenticado.',
+  })
+  getDashboardUsage(@Query() query: DashboardUsageQueryDto, @CurrentUser() user: any) {
+    return this.insightAiService.getDashboardUsage(user.tenantId, query);
   }
 }

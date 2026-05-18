@@ -1,0 +1,23 @@
+{
+  "name": "@omniconnect/api-client",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "description": "Shared HTTP helpers and DTO shapes for Omniconnect satellite apps calling omniconnect-backend.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w"
+  },
+  "devDependencies": {
+    "@omniconnect/tsconfig": "workspace:*",
+    "typescript": "^5.0.0"
+  }
+}
