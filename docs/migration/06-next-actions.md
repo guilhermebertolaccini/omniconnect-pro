@@ -25,6 +25,7 @@
 | Docs core (`docs/01..09`) | ✅ |
 | SAA backend (Sprint 2.3) — schema + connections + proxies + AI + token refresh | ✅ |
 | SAA frontend (Sprint 2.4) — invites, refresh tokens, OAuth pickup, cutover | ✅ |
+| CRM backend (Sprint 3) — schema + domain + signatures + storage + pdf-parser + realtime | ✅ |
 
 ## Sprint 1.3 — Hardening final pré-Sprint 2 ✅ CONCLUÍDA
 
@@ -133,61 +134,42 @@ Detalhamento completo: ver `docs/migration/sprint-2-4-saa-frontend.md`.
   do POST; TTL configurável via `TENANT_INVITATION_TTL_HOURS`. Accept
   cobre 3 cenários (autenticado, existing+password, novo+name+password).
 
-## Sprint 3 — CRM Imobiliário backend cutover 🚧 PRÓXIMA
+## Sprint 3 — CRM Imobiliário backend cutover ✅ CONCLUÍDA
 
-Pattern já consolidado pelas Sprints 2.3+2.4: backend NestJS multi-tenant
-+ `omniconnectClient` no frontend, em strangler-fig. CRM tem um produto
-mais maduro que o SAA (com dados reais de venda imobiliária), então a
-sprint inclui ETL real do Supabase.
+Detalhamento completo: ver `docs/migration/sprint-3-crm.md`.
 
-### Fase 3.0 — Discovery
-- [ ] Mapear schema Supabase do CRM: `leads`, `pipeline_stages`,
-      `deals`, `proposals`, `visits`, `units`, `loss_reasons`,
-      `attachments`, `notes`, `agents/sellers`.
-- [ ] Listar Edge Functions do CRM (`crm-imobiliario/supabase/functions`).
-- [ ] Inventariar uso de Supabase Storage (uploads de proposals/units).
-- [ ] Mapear RLS policies → contratos de autorização do
-      `omniconnect-backend`.
+Pattern consolidado pelas Sprints 2.3+2.4 aplicado de novo: backend
+NestJS multi-tenant + Socket.io realtime + storage local + AI parser.
+Decisão `do_zero` (sem ETL) — produto novo no schema canônico.
 
-### Fase 3.1 — CRM backend module
-- [ ] Prisma models multi-tenant: `Lead`, `Pipeline`, `PipelineStage`,
-      `Deal`, `Proposal`, `Visit`, `RealEstateUnit`, `LossReason`,
-      `Agent` (skill `add-prisma-model-multitenant`).
-- [ ] Controllers + services com tenant scope obrigatório, DTOs
-      validados.
-- [ ] Endpoint `/crm-bridge/events` para receber eventos do frontend
-      enquanto Supabase ainda é fonte primária (strangler-fig).
-- [ ] Mover uploads para storage neutro (S3-compatible / Supabase
-      Storage com credentials no backend).
+| Bloco | Resumo | Commit |
+|---|---|---|
+| **A — Schema** | Novo `Role.broker` + 12 enums CRM + 18 models (`CrmProperty`, `CrmUnit`, `CrmCommissionConfig`, `CrmClient`, `CrmLead`, `CrmInteraction`, `CrmFollowUp`, `CrmProposal(+Event)`, `CrmContract(+Event)`, `CrmSignature`, `CrmPayment`, `CrmCommission`, `CrmDocumentVersion`, `CrmDocumentAccessLog`, `CrmChangeHistory`, `CrmNotificationPreference`). Migration `20260520000000_sprint_3_crm_schema` inclui trigger PL/pgSQL `crm_generate_financials_on_signed` (gera CrmPayment + CrmCommission idempotentemente quando `CrmContract.status` muda para `signed`). | `d7dd035` |
+| **B — Domain modules** | `crm/properties`, `crm/units`, `crm/clients` (PII masking obrigatória em `findAll`), `crm/leads` (+ interactions + follow-ups), `crm/proposals` (state-machine + auto-reservation da unit), `crm/contracts` (state-machine + signed-immutability), `crm/financial` (payments + commissions read-only via API; criação só pelo trigger). Broker scope em todos os flows (`brokerId === actor.id`). | `adc3809` |
+| **C — Signatures** | `crm-signatures/` com Clicksign client + 2 controllers (autenticado para envelope create/list; público para webhook HMAC). HMAC-SHA256 timing-safe contra `IntegrationConnection.webhookSecretEncrypted`. Tenant resolution via `CrmContract.externalEnvelopeId`. Webhook `sign`/`refuse`/`close` aciona `CrmContractsService.markSignedInternal` que dispara o trigger SQL. | `586e793` |
+| **D — Storage + PDF parser** | `crm-storage/` (multer memory + filesystem em `{CRM_STORAGE_ROOT}/crm/{tenantId}/{kind}/{fileId}`, anti path-traversal, audit em `CrmDocumentAccessLog`). `crm-pdf-parser/` consome texto extraído pelo frontend (pdf.js), envia ao OpenAI (`gpt-4o-mini`, `temperature=0`, JSON mode), loga `AIUsageLog` com `operationType='crm_pdf_parse'`. | `c0042b7` |
+| **E — Realtime Socket.io** | `CrmGateway` em namespace `/crm`. JWT no handshake; rooms `crm:{tenantId}` + `crm:{tenantId}:broker:{userId}`. Eventos: `crm.proposal.transitioned`, `crm.contract.transitioned`, `crm.contract.signed`, `crm.payment.created`, `crm.commission.created` (+ `.self` para broker), `crm.signature.updated`. `CrmRealtimeService` desacopla services do gateway. | `9c99a9c` |
+| **F — Tenant isolation specs + docs** | `crm-clients.service.spec.ts` (6 — PII masking + tenant/broker isolation), `crm-contracts.service.spec.ts` (7 — cross-tenant 404, broker scope, signed-immutability, emissão realtime após trigger). `sprint-3-crm.md`. | _este commit_ |
 
-### Fase 3.2 — ETL Supabase → omniconnect
-- [ ] Script Node + Prisma em `apps/omniconnect-backend/src/scripts/import-crm.ts`
-      com mapeamento `supabase_org_id → tenantId`.
-- [ ] Idempotente, transacional por tenant, com dry-run.
-- [ ] Logs estruturados (winston) + relatório de divergências.
+**Métricas finais Sprint 3:**
+- Backend: 351/351 tests / 37 suites (+56 testes vs 2.4)
+- `tsc --noEmit -p tsconfig.build.json` limpo
 
-### Fase 3.3 — Frontend cutover
-- [ ] Reutilizar `omniconnectClient` no `crm-imobiliario` (pode virar
-      `packages/api-client` se for compartilhar).
-- [ ] Reescrever services `leadsService`, `dealsService`, etc para a API
-      nova.
-- [ ] Remover Supabase Auth (login/signup/reset) → reusa
-      `/auth/login + /auth/refresh + tenant-invitations`.
-- [ ] Acabar com `@supabase/supabase-js` no app (lint rule depois para
-      evitar regressão).
-
-### Fase 3.4 — E2E + docs
-- [ ] E2E HTTP de tenant isolation para Leads/Deals/Proposals.
-- [ ] Sprint doc em `docs/migration/sprint-3-crm.md`.
-- [ ] Atualizar `02-architecture.md` removendo Supabase como dep ativa
-      do CRM.
+**Não-objetivos da Sprint 3:**
+- Frontend do CRM (`apps/crm-imobiliario`) NÃO foi alterado — será Sprint 3.x ou 4.
+- ETL Supabase → Postgres: não fazemos (decisão `do_zero`).
+- S3/object storage: storage local local até o volume exigir.
 
 ## Roadmap longo (depois da Sprint 3)
 
-1. **Sprint 4** — Bridges processors reais (consumir `IntegrationEvent`
-   e propagar para `Lead`, `Deal`, `Campaign`). Hoje só persistimos +
+1. **Sprint 3.1 — CRM frontend cutover** (próxima) — `crm-imobiliario`
+   passa a usar o `omniconnectClient` no lugar do Supabase, em
+   strangler-fig. Inclui WebSocket `/crm` client + remoção de
+   `@supabase/supabase-js` do app.
+2. **Sprint 4** — Bridges processors reais (consumir `IntegrationEvent`
+   e propagar para `CrmLead`, `CrmContact` etc). Hoje só persistimos +
    enfileiramos; o processor concreto ainda é stub.
-2. **Sprint 5** — InsightAI v2: multi-provider (Anthropic, Gemini)
+3. **Sprint 5** — InsightAI v2: multi-provider (Anthropic, Gemini)
    plug-in, dashboard com filtros, custo agregado por tenant.
-3. **Sprint 6** — Botify: revisar segurança, alinhar ao mesmo padrão
+4. **Sprint 6** — Botify: revisar segurança, alinhar ao mesmo padrão
    de bridges + ApiKeys que CRM/SAA estão usando.
