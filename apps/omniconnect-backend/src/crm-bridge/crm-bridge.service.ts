@@ -1,42 +1,77 @@
-import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import {
+  IntegrationEventsService,
+  RecordedEvent,
+} from '../integration-events/integration-events.service';
+import {
+  assertActiveConnection,
+  deriveIdempotencyKey,
+  safeParseJson,
+  verifyHmac,
+} from '../integration-events/bridge-helpers';
+
+export interface HandleCrmWebhookInput {
+  rawBody: Buffer;
+  signature: string;
+  integrationId: string;
+  idempotencyKey?: string;
+}
+
+export interface HandleCrmWebhookResult extends RecordedEvent {
+  tenantId: string;
+}
 
 @Injectable()
 export class CrmBridgeService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(CrmBridgeService.name);
 
-  async authenticateAndResolveTenant(raw: any, signature: string, integrationId: string): Promise<string> {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: IntegrationEventsService,
+  ) {}
+
+  async handleWebhook(input: HandleCrmWebhookInput): Promise<HandleCrmWebhookResult> {
+    const { rawBody, signature, integrationId, idempotencyKey } = input;
+
+    if (!rawBody || rawBody.length === 0) {
+      throw new UnauthorizedException('Missing raw body');
+    }
     if (!signature || signature.trim() === '') {
       throw new UnauthorizedException('Invalid or missing signature');
     }
 
     const connection = await this.prisma.integrationConnection.findUnique({
       where: { id: integrationId },
-      include: { tenant: true }
+      include: { tenant: true },
     });
 
-    if (!connection || connection.status !== 'active' || !connection.tenant.isActive) {
+    const verified = assertActiveConnection({ connection, provider: 'crm', integrationId });
+
+    let tenantId: string;
+    let connectionId: string;
+
+    if (verified) {
       if (process.env.NODE_ENV === 'production') {
-        throw new NotFoundException('Integration not found or inactive');
+        verifyHmac(rawBody, signature, verified.secretHash);
       }
-      return 'default-tenant';
+      tenantId = verified.tenantId;
+      connectionId = verified.id;
+    } else {
+      this.logger.warn(`[dev] crm integration not found (id=${integrationId}); falling back to default-tenant`);
+      tenantId = 'default-tenant';
+      connectionId = integrationId;
     }
 
-    if (process.env.NODE_ENV === 'production') {
-      const crypto = require('crypto');
-      const payloadString = typeof raw === 'string' ? raw : JSON.stringify(raw);
-      const expectedSignature = crypto.createHmac('sha256', connection.secretHash).update(payloadString).digest('hex');
-      
-      try {
-        const isSignatureValid = crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
-        if (!isSignatureValid) {
-          throw new UnauthorizedException('Invalid signature');
-        }
-      } catch (e) {
-        throw new UnauthorizedException('Invalid signature format');
-      }
-    }
+    const recorded = await this.events.recordEvent({
+      tenantId,
+      connectionId,
+      provider: 'crm',
+      idempotencyKey: deriveIdempotencyKey(rawBody, idempotencyKey),
+      signature,
+      payload: safeParseJson(rawBody),
+    });
 
-    return connection.tenantId;
+    return { ...recorded, tenantId };
   }
 }
