@@ -1,5 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma.service';
 import { RefreshTokenService } from './refresh-token.service';
@@ -7,7 +14,7 @@ import { RefreshTokenService } from './refresh-token.service';
 describe('AuthService', () => {
   let service: AuthService;
 
-  const mockPrismaService = {
+  const mockPrismaService: any = {
     user: {
       findUnique: jest.fn(),
       update: jest.fn(),
@@ -15,6 +22,11 @@ describe('AuthService', () => {
     userTenant: {
       findMany: jest.fn(),
     },
+    $transaction: jest.fn(),
+  };
+
+  const mockConfig: any = {
+    get: jest.fn().mockReturnValue(undefined),
   };
 
   const mockJwtService = {
@@ -36,6 +48,7 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: JwtService, useValue: mockJwtService },
         { provide: RefreshTokenService, useValue: mockRefresh },
+        { provide: ConfigService, useValue: mockConfig },
       ],
     }).compile();
 
@@ -203,6 +216,127 @@ describe('AuthService', () => {
       const result = await service.logoutAll(7);
       expect(mockRefresh.revokeAllForUser).toHaveBeenCalledWith(7);
       expect(result.revoked).toBe(3);
+    });
+  });
+
+  describe('register', () => {
+    const originalEnv = process.env.NODE_ENV;
+
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it('creates tenant + user + admin membership and issues session (dev default)', async () => {
+      process.env.NODE_ENV = 'development';
+      mockConfig.get.mockReturnValue(undefined);
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
+      mockPrismaService.$transaction.mockImplementation(async (cb: any) =>
+        cb({
+          tenant: { create: jest.fn().mockResolvedValue({ id: 't1', name: 'Acme' }) },
+          user: {
+            create: jest.fn().mockResolvedValue({
+              id: 11,
+              email: 'admin@acme.com',
+              name: 'Admin',
+              role: Role.admin,
+            }),
+          },
+          userTenant: { create: jest.fn().mockResolvedValue({}) },
+        }),
+      );
+      (mockRefresh.issue as jest.Mock).mockResolvedValue({
+        accessToken: 'a',
+        accessExpiresIn: 900,
+        refreshToken: 'r',
+        refreshExpiresAt: new Date(),
+        refreshTokenId: 'rt-1',
+      });
+
+      const result = await service.register({
+        name: 'Admin',
+        email: 'admin@acme.com',
+        password: 'supersecret',
+        tenantName: 'Acme',
+      });
+
+      expect(result.user.role).toBe(Role.admin);
+      expect(result.tenant.id).toBe('t1');
+      expect(mockRefresh.issue).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 11, email: 'admin@acme.com' }),
+        't1',
+        {},
+      );
+    });
+
+    it('rejects when signup disabled in production by default', async () => {
+      process.env.NODE_ENV = 'production';
+      mockConfig.get.mockReturnValue(undefined);
+      await expect(
+        service.register({
+          name: 'Admin',
+          email: 'admin@acme.com',
+          password: 'supersecret',
+          tenantName: 'Acme',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('honors ALLOW_PUBLIC_TENANT_SIGNUP=true override in production', async () => {
+      process.env.NODE_ENV = 'production';
+      mockConfig.get.mockReturnValue('true');
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
+      mockPrismaService.$transaction.mockImplementation(async (cb: any) =>
+        cb({
+          tenant: { create: jest.fn().mockResolvedValue({ id: 't1', name: 'Acme' }) },
+          user: {
+            create: jest
+              .fn()
+              .mockResolvedValue({ id: 1, email: 'a@a.com', name: 'A', role: Role.admin }),
+          },
+          userTenant: { create: jest.fn().mockResolvedValue({}) },
+        }),
+      );
+      (mockRefresh.issue as jest.Mock).mockResolvedValue({
+        accessToken: 'a',
+        accessExpiresIn: 900,
+        refreshToken: 'r',
+        refreshExpiresAt: new Date(),
+        refreshTokenId: 'rt-1',
+      });
+
+      const result = await service.register({
+        name: 'A',
+        email: 'a@a.com',
+        password: 'supersecret',
+        tenantName: 'Acme',
+      });
+      expect(result.tenant.id).toBe('t1');
+    });
+
+    it('refuses tenantName "platform" (reserved for super-admins)', async () => {
+      process.env.NODE_ENV = 'development';
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
+      await expect(
+        service.register({
+          name: 'A',
+          email: 'a@a.com',
+          password: 'supersecret',
+          tenantName: 'PLATFORM',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects email already registered', async () => {
+      process.env.NODE_ENV = 'development';
+      mockPrismaService.user.findUnique.mockResolvedValue({ id: 1 });
+      await expect(
+        service.register({
+          name: 'A',
+          email: 'a@a.com',
+          password: 'supersecret',
+          tenantName: 'Acme',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 });

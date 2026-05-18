@@ -1,8 +1,18 @@
-import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import * as argon2 from 'argon2';
 import { IssueContext, RefreshTokenService } from './refresh-token.service';
+import { RegisterDto } from './dto/register.dto';
 
 @Injectable()
 export class AuthService {
@@ -12,6 +22,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private refreshTokens: RefreshTokenService,
+    private config: ConfigService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -131,6 +142,85 @@ export class AuthService {
     const revoked = await this.refreshTokens.revokeAllForUser(userId);
     return { message: 'Sessões encerradas', revoked };
   }
+
+  /**
+   * Self-service signup: cria User + Tenant + UserTenant(admin) numa única
+   * transação e emite um par access+refresh.
+   *
+   * Gating:
+   *   - `ALLOW_PUBLIC_TENANT_SIGNUP` env. Default `true` em dev/test e
+   *     `false` em produção. Em produção, exigir override explícito.
+   *   - Tenant name não pode colidir case-insensitive com `'platform'`,
+   *     que é reservado para super-admins.
+   */
+  async register(dto: RegisterDto, ctx: IssueContext = {}) {
+    if (!this.isSignupAllowed()) {
+      throw new ForbiddenException('Self-service signup is disabled');
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const tenantName = dto.tenantName.trim();
+    if (tenantName.toLowerCase() === 'platform') {
+      throw new BadRequestException('Tenant name is reserved');
+    }
+
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) throw new ConflictException('Email already registered');
+
+    const passwordHash = await argon2.hash(dto.password);
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: { name: tenantName },
+      });
+      const user = await tx.user.create({
+        data: {
+          name: dto.name.trim(),
+          email,
+          password: passwordHash,
+          role: Role.admin,
+        },
+      });
+      await tx.userTenant.create({
+        data: { userId: user.id, tenantId: tenant.id, role: Role.admin },
+      });
+      return { tenant, user };
+    });
+
+    const session = await this.refreshTokens.issue(
+      { id: created.user.id, email: created.user.email, role: created.user.role },
+      created.tenant.id,
+      ctx,
+    );
+
+    return {
+      access_token: session.accessToken,
+      access_expires_in: session.accessExpiresIn,
+      refresh_token: session.refreshToken,
+      refresh_expires_at: session.refreshExpiresAt,
+      user: {
+        id: created.user.id,
+        name: created.user.name,
+        email: created.user.email,
+        role: created.user.role,
+        tenantId: created.tenant.id,
+      },
+      tenant: {
+        id: created.tenant.id,
+        name: created.tenant.name,
+      },
+    };
+  }
+
+  private isSignupAllowed(): boolean {
+    const raw = this.config.get<string>('ALLOW_PUBLIC_TENANT_SIGNUP');
+    if (raw === undefined || raw === '') {
+      return process.env.NODE_ENV !== 'production';
+    }
+    const normalized = raw.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes';
+  }
+
 
   async hashPassword(password: string): Promise<string> {
     return argon2.hash(password);

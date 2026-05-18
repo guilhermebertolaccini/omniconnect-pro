@@ -12,6 +12,7 @@ import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RefreshTokenService } from './refresh-token.service';
@@ -57,6 +58,30 @@ export class AuthController {
       }
       throw new UnauthorizedException('Erro ao fazer login: ' + error.message);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Register — self-service signup (cria tenant + user + membership)
+  // ---------------------------------------------------------------------------
+
+  @Post('register')
+  @ApiOperation({
+    summary:
+      'Cria uma nova conta + tenant (agência) e devolve o par access+refresh. ' +
+      'Gated por ALLOW_PUBLIC_TENANT_SIGNUP.',
+  })
+  @ApiBody({ type: RegisterDto })
+  @ApiResponse({ status: 201, description: 'Conta criada' })
+  @ApiResponse({ status: 403, description: 'Self-service signup disabled' })
+  @ApiResponse({ status: 409, description: 'Email já registrado' })
+  async register(
+    @Body() dto: RegisterDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.register(dto, this.extractCtx(req));
+    this.setRefreshCookie(res, result.refresh_token, result.refresh_expires_at);
+    return this.publicResponse(result);
   }
 
   // ---------------------------------------------------------------------------
