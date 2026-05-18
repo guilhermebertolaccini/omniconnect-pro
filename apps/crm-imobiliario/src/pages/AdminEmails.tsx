@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
 import { Navigate } from "react-router-dom";
 
 type LogRow = {
@@ -38,33 +37,11 @@ export default function AdminEmails() {
 
   useEffect(() => {
     if (!user || !isAdmin) return;
-    (async () => {
-      const { data, error } = await (supabase as any)
-        .from("email_send_log")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (error) {
-        setTableMissing(true);
-        setLoading(false);
-        return;
-      }
-      // Deduplicar por message_id (mais recente vence)
-      const byMsg = new Map<string, LogRow>();
-      for (const r of (data ?? []) as LogRow[]) {
-        const k = r.message_id ?? r.id;
-        if (!byMsg.has(k)) byMsg.set(k, r);
-      }
-      const dedup = Array.from(byMsg.values());
-      setRows(dedup);
-      setStats({
-        total: dedup.length,
-        sent: dedup.filter((r) => r.status === "sent").length,
-        failed: dedup.filter((r) => r.status === "dlq" || r.status === "failed").length,
-        suppressed: dedup.filter((r) => r.status === "suppressed").length,
-      });
-      setLoading(false);
-    })();
+    // Endpoint administrativo de email ainda não existe no NestJS.
+    setRows([]);
+    setStats({ total: 0, sent: 0, failed: 0, suppressed: 0 });
+    setTableMissing(true);
+    setLoading(false);
   }, [user, isAdmin]);
 
   if (!user) return <Navigate to="/auth" replace />;

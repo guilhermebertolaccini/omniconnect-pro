@@ -4,10 +4,8 @@ import {
   ArrowLeft, Download, FileText, Send, Loader2, Clock, PenTool, Check, ShieldCheck, Cloud, ExternalLink,
 } from "lucide-react";
 import { useContracts } from "@/contexts/ContractContext";
-import { useProperties } from "@/contexts/PropertyContext";
-import { useFinancial } from "@/contexts/FinancialContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
+import { createSignatureEnvelope, listContractSignatures } from "@/lib/api/crm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,8 +17,6 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import { ContractStatus } from "@/types/property";
-import { generateContractPdf } from "@/lib/contractPdf";
-import { uploadPdf } from "@/lib/pdfStorage";
 import { PdfUploadButton, PdfDeleteButton } from "@/components/PdfUploadButton";
 import { PdfVersionsList } from "@/components/PdfVersionsList";
 import { PdfAccessLogList } from "@/components/PdfAccessLogList";
@@ -76,8 +72,6 @@ export default function ContractDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { getContract, updateContractStatus, signContract, updateContractPdfUrl, loading } = useContracts();
-  const { updateUnitStatus } = useProperties();
-  const { generatePaymentsFromContract, addCommission, getCommissionConfig } = useFinancial();
   const { user } = useAuth();
   const [signatures, setSignatures] = useState<SigRow[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
@@ -100,36 +94,37 @@ export default function ContractDetail() {
   const loadData = async () => {
     if (!id) return;
     setLoadingData(true);
-    const [{ data: sigs }, { data: evs }] = await Promise.all([
-      supabase.from("signatures").select("*").eq("contract_id", id).order("role"),
-      supabase.from("contract_events").select("*").eq("contract_id", id).order("created_at", { ascending: false }),
-    ]);
-    setSignatures((sigs ?? []) as SigRow[]);
-    setEvents((evs ?? []) as EventRow[]);
+    try {
+      const sigs = await listContractSignatures(id);
+      setSignatures(sigs.map((s) => ({
+        id: s.id,
+        role: s.role,
+        signer_name: s.signerName,
+        signer_email: s.signerEmail,
+        status: s.status,
+        signed_at: s.signedAt,
+        signature_hash: s.signatureHash,
+        ip_address: s.ipAddress,
+      })));
+    } catch {
+      setSignatures(
+        (contract?.signatures ?? []).map((s) => ({
+          id: `${id}-${s.role}`,
+          role: s.role,
+          signer_name: s.name,
+          signer_email: null,
+          status: s.signed ? "signed" : "pending",
+          signed_at: s.signedAt ?? null,
+          signature_hash: null,
+          ip_address: null,
+        })),
+      );
+    }
+    setEvents(readContractEvents(id));
     setLoadingData(false);
   };
 
   useEffect(() => { loadData(); /* eslint-disable-next-line */ }, [id]);
-
-  // Realtime: atualiza signatures + contracts ao receber eventos do webhook do Clicksign
-  useEffect(() => {
-    if (!id) return;
-    const channel = supabase
-      .channel(`contract-${id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "signatures", filter: `contract_id=eq.${id}` },
-        () => loadData(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "contracts", filter: `id=eq.${id}` },
-        () => loadData(),
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-    // eslint-disable-next-line
-  }, [id]);
 
   if (loading) return <div className="py-20 text-center"><Loader2 className="h-6 w-6 animate-spin inline" /></div>;
   if (!contract) {
@@ -160,18 +155,25 @@ export default function ContractDetail() {
       return;
     }
     setClicksignBusy(true);
-    const { data, error } = await supabase.functions.invoke("signature-create", {
-      body: { contractId: contract.id, signers: clicksignSigners },
-    });
-    setClicksignBusy(false);
-    if (error || (data && (data as any).error)) {
+    try {
+      await createSignatureEnvelope(
+        contract.id,
+        clicksignSigners.map((s) => ({
+          role: s.role,
+          name: s.name,
+          email: s.email,
+        })),
+      );
+    } catch (err) {
+      setClicksignBusy(false);
       toast({
         title: "Falha ao enviar para Clicksign",
-        description: (data as any)?.error ?? error?.message ?? "Erro desconhecido",
+        description: err instanceof Error ? err.message : "Erro desconhecido",
         variant: "destructive",
       });
       return;
     }
+    setClicksignBusy(false);
     toast({
       title: "Enviado para Clicksign",
       description: "Os signatários receberão o link de assinatura por e-mail.",
@@ -188,12 +190,15 @@ export default function ContractDetail() {
   };
 
   const logPdfEvent = async (type: "pdf_replaced" | "pdf_removed" | "pdf_attached", message: string) => {
-    await supabase.from("contract_events").insert({
-      contract_id: contract.id,
+    const row: EventRow = {
+      id: `contract-event-${Date.now()}`,
       event_type: type,
+      from_status: null,
       to_status: contract.status,
-      message,
-    });
+      created_at: new Date().toISOString(),
+    };
+    void message;
+    writeContractEvents(contract.id, [row, ...readContractEvents(contract.id)].slice(0, 100));
     await loadData();
   };
 
@@ -213,68 +218,15 @@ export default function ContractDetail() {
       return;
     }
     setBusy(true);
-    // Persist signer details first
-    await supabase
-      .from("signatures")
-      .update({ signer_name: signerName.trim(), signer_email: signerEmail.trim() || null })
-      .eq("contract_id", contract.id)
-      .eq("role", signRole);
-
-    // Sign (writes status, signed_at, hash to signatures table; trigger syncs jsonb + status)
+    setSignatures((cur) =>
+      cur.map((s) =>
+        s.role === signRole
+          ? { ...s, signer_name: signerName.trim(), signer_email: signerEmail.trim() || null }
+          : s,
+      ),
+    );
     await signContract(contract.id, signRole);
     await loadData();
-
-    // After-effects when fully signed
-    const fresh = await supabase.from("signatures").select("*").eq("contract_id", contract.id);
-    const allSigned = (fresh.data ?? []).every((s: any) => s.status === "signed");
-    if (allSigned) {
-      try {
-        updateUnitStatus(contract.propertyId, contract.unitId, "sold");
-        const blob = generateContractPdf({ ...contract, status: "signed" });
-        if (user) {
-          const fileName = `contrato-assinado-${contract.unitNumber}.pdf`;
-          const url = await uploadPdf(user.id, "contracts", fileName, blob);
-          if (url) {
-            await updateContractPdfUrl(contract.id, url);
-            await recordDocumentVersion({
-              parentType: "contract", parentId: contract.id, pdfUrl: url, fileName,
-              action: "generated", uploadedBy: user.id, uploaderName: user.name,
-            });
-            setVersionsKey((k) => k + 1);
-          }
-        }
-        generatePaymentsFromContract({
-          id: contract.id,
-          propertyId: contract.propertyId,
-          propertyName: contract.propertyName,
-          unitId: contract.unitId,
-          unitNumber: contract.unitNumber,
-          clientId: contract.clientId,
-          clientName: contract.clientName,
-          finalPrice: contract.finalPrice,
-          paymentCondition: contract.paymentCondition,
-        });
-        const commissionPercent = getCommissionConfig(contract.propertyId);
-        if (user) {
-          addCommission({
-            id: `comm-${Date.now()}`,
-            propertyId: contract.propertyId,
-            propertyName: contract.propertyName,
-            unitId: contract.unitId,
-            unitNumber: contract.unitNumber,
-            brokerId: user.id,
-            brokerName: user.name,
-            salePrice: contract.finalPrice,
-            commissionPercent,
-            commissionValue: contract.finalPrice * (commissionPercent / 100),
-            status: "pending",
-          });
-        }
-        toast({ title: "Contrato totalmente assinado", description: "Unidade marcada como vendida e pagamentos gerados." });
-      } catch (e) {
-        // non-fatal
-      }
-    }
     setBusy(false);
     setSignOpen(false);
   };
@@ -306,6 +258,8 @@ export default function ContractDetail() {
           )}
           <PdfUploadButton
             kind="contracts"
+            parentType="contract"
+            parentId={contract.id}
             fileNamePrefix={`contrato-${contract.unitNumber}`}
             existingUrl={contract.pdfUrl}
             disabled={pdfLocked}
@@ -578,4 +532,19 @@ export default function ContractDetail() {
       </Dialog>
     </div>
   );
+}
+
+function readContractEvents(contractId: string): EventRow[] {
+  try {
+    const all = JSON.parse(window.localStorage.getItem("crm-contract-events") ?? "{}") as Record<string, EventRow[]>;
+    return all[contractId] ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function writeContractEvents(contractId: string, rows: EventRow[]) {
+  const all = JSON.parse(window.localStorage.getItem("crm-contract-events") ?? "{}") as Record<string, EventRow[]>;
+  all[contractId] = rows;
+  window.localStorage.setItem("crm-contract-events", JSON.stringify(all));
 }

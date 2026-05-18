@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { subscribe, clearLogs, type LogEntry } from "@/lib/errorLogger";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +22,6 @@ import { format } from "date-fns";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import type { Database } from "@/integrations/supabase/types";
 
 const LEVEL_META: Record<LogEntry["level"], { label: string; color: string; icon: typeof AlertCircle }> = {
   exception: { label: "Exception", color: "bg-destructive/15 text-destructive", icon: AlertCircle },
@@ -81,11 +79,7 @@ export default function AdminLogs() {
 
   useEffect(() => {
     if (!reportOpen) return;
-    supabase
-      .from("properties")
-      .select("id, name")
-      .order("name")
-      .then(({ data }) => setProperties(data ?? []));
+    setProperties([]);
   }, [reportOpen]);
 
   if (!user) return <Navigate to="/auth" replace />;
@@ -140,18 +134,23 @@ export default function AdminLogs() {
     setReportLoading(true);
     try {
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-      let query = supabase
-        .from("frontend_logs")
-        .select("id, level, message, source, stack, page, url, user_id, session_id, client_timestamp, created_at, metadata")
-        .gte("created_at", since)
-        .order("created_at", { ascending: false })
-        .limit(2000);
-      if (reportTenant !== "all") {
-        query = query.eq("metadata->>tenant", reportTenant);
-      }
-      const { data, error } = await query;
-      if (error) throw error;
-      const rows = (data ?? []) as ServerLog[];
+      const rows = filtered
+        .filter((r) => r.timestamp >= since)
+        .slice(0, 2000)
+        .map((r): ServerLog => ({
+          id: r.id,
+          level: r.level,
+          message: r.message,
+          source: r.source ?? null,
+          stack: r.stack ?? null,
+          page: pagePath(r.url),
+          url: r.url,
+          user_id: null,
+          session_id: null,
+          client_timestamp: r.timestamp,
+          created_at: r.timestamp,
+          metadata: null,
+        }));
       if (!rows.length) {
         toast.info("Nenhum log encontrado no período selecionado");
         return;

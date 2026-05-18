@@ -4,6 +4,7 @@ import { Loader2, Upload, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { uploadPdf, deletePdfByUrl } from "@/lib/pdfStorage";
+import type { CrmDocumentParentType } from "@/lib/api/crm";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -11,6 +12,8 @@ import {
 
 interface Props {
   kind: "proposals" | "contracts" | "uploads";
+  parentType?: CrmDocumentParentType;
+  parentId?: string;
   fileNamePrefix?: string;
   onUploaded: (url: string, fileName: string) => void | Promise<void>;
   /** Existing PDF URL — when present, button becomes "Substituir PDF" with confirmation. */
@@ -25,7 +28,7 @@ interface Props {
 
 /** Generic PDF upload/replace button. Uploads to private bucket and returns a signed URL. */
 export function PdfUploadButton({
-  kind, fileNamePrefix, onUploaded, existingUrl, disabled, disabledReason,
+  kind, parentType, parentId, fileNamePrefix, onUploaded, existingUrl, disabled, disabledReason,
   label, variant = "outline", size = "sm",
 }: Props) {
   const { user } = useAuth();
@@ -48,7 +51,7 @@ export function PdfUploadButton({
     setBusy(true);
     try {
       const name = fileNamePrefix ? `${fileNamePrefix}-${file.name}` : file.name;
-      const url = await uploadPdf(user.id, kind, name, file);
+      const url = await uploadPdf(user.id, kind, name, file, { parentType, parentId });
       if (!url) throw new Error("Upload falhou");
       await onUploaded(url, file.name);
       if (existingUrl) {

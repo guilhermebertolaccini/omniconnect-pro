@@ -1,5 +1,3 @@
-import { supabase } from "@/integrations/supabase/client";
-
 export type VersionAction = "attached" | "replaced" | "generated" | "imported";
 export type VersionParent = "proposal" | "contract";
 export type AccessAction = "viewed" | "downloaded";
@@ -25,7 +23,9 @@ export async function recordDocumentVersion(input: {
   uploadedBy?: string | null;
   uploaderName?: string | null;
 }) {
-  const { error } = await supabase.from("document_versions").insert({
+  const rows = readLocal<DocumentVersion>("crm-document-versions");
+  rows.unshift({
+    id: `version-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     parent_type: input.parentType,
     parent_id: input.parentId,
     pdf_url: input.pdfUrl,
@@ -33,25 +33,18 @@ export async function recordDocumentVersion(input: {
     action: input.action,
     uploaded_by: input.uploadedBy ?? null,
     uploader_name: input.uploaderName ?? null,
+    created_at: new Date().toISOString(),
   });
-  if (error) console.error("recordDocumentVersion error", error);
+  writeLocal("crm-document-versions", rows.slice(0, 500));
 }
 
 export async function listDocumentVersions(
   parentType: VersionParent,
   parentId: string,
 ): Promise<DocumentVersion[]> {
-  const { data, error } = await supabase
-    .from("document_versions")
-    .select("*")
-    .eq("parent_type", parentType)
-    .eq("parent_id", parentId)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("listDocumentVersions error", error);
-    return [];
-  }
-  return (data ?? []) as DocumentVersion[];
+  return readLocal<DocumentVersion>("crm-document-versions").filter(
+    (r) => r.parent_type === parentType && r.parent_id === parentId,
+  );
 }
 
 export interface DocumentAccessLog {
@@ -71,41 +64,37 @@ export async function recordDocumentAccess(input: {
   pdfUrl: string;
   action: AccessAction;
 }) {
-  try {
-    const { data: auth } = await supabase.auth.getUser();
-    const user = auth?.user;
-    if (!user) return;
-    let userName: string | null = null;
-    const { data: prof } = await supabase
-      .from("profiles").select("full_name").eq("id", user.id).maybeSingle();
-    userName = prof?.full_name ?? user.email ?? null;
-    const { error } = await supabase.from("document_access_log").insert({
-      parent_type: input.parentType,
-      parent_id: input.parentId,
-      pdf_url: input.pdfUrl,
-      action: input.action,
-      user_id: user.id,
-      user_name: userName,
-    });
-    if (error) console.error("recordDocumentAccess error", error);
-  } catch (e) {
-    console.error("recordDocumentAccess fatal", e);
-  }
+  const rows = readLocal<DocumentAccessLog>("crm-document-access-log");
+  rows.unshift({
+    id: `access-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    parent_type: input.parentType,
+    parent_id: input.parentId,
+    pdf_url: input.pdfUrl,
+    action: input.action,
+    user_id: null,
+    user_name: null,
+    created_at: new Date().toISOString(),
+  });
+  writeLocal("crm-document-access-log", rows.slice(0, 500));
 }
 
 export async function listDocumentAccessLogs(
   parentType: VersionParent,
   parentId: string,
 ): Promise<DocumentAccessLog[]> {
-  const { data, error } = await supabase
-    .from("document_access_log")
-    .select("*")
-    .eq("parent_type", parentType)
-    .eq("parent_id", parentId)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("listDocumentAccessLogs error", error);
+  return readLocal<DocumentAccessLog>("crm-document-access-log").filter(
+    (r) => r.parent_type === parentType && r.parent_id === parentId,
+  );
+}
+
+function readLocal<T>(key: string): T[] {
+  try {
+    return JSON.parse(window.localStorage.getItem(key) ?? "[]") as T[];
+  } catch {
     return [];
   }
-  return (data ?? []) as DocumentAccessLog[];
+}
+
+function writeLocal<T>(key: string, rows: T[]) {
+  window.localStorage.setItem(key, JSON.stringify(rows));
 }

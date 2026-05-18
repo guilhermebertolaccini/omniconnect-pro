@@ -5,11 +5,10 @@
  */
 import { subscribe, type LogEntry } from "./errorLogger";
 import { hasUserConsent } from "./sentry";
-import { supabase } from "@/integrations/supabase/client";
+import { getAccessToken } from "@/lib/omniconnectClient";
 import { getLogContext } from "./logContext";
 
-const ENDPOINT = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-logs`;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+const ENDPOINT = import.meta.env.VITE_CRM_LOG_INGEST_URL as string | undefined;
 const SESSION_KEY = "app:log-session-id";
 const SHIPPED_KEY = "app:log-shipped-ids";
 
@@ -92,15 +91,13 @@ function toPayload(entries: LogEntry[]) {
 }
 
 async function authHeader(): Promise<Record<string, string>> {
-  try {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  } catch { return {}; }
+  const token = getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function flush(force = false) {
   if (inFlight) return;
+  if (!ENDPOINT) { queue = []; return; }
   if (!hasUserConsent()) { queue = []; return; }
   if (queue.length === 0) return;
   if (!force && queue.length < BATCH_SIZE) return;
@@ -111,7 +108,6 @@ async function flush(force = false) {
   try {
     const headers = {
       "Content-Type": "application/json",
-      apikey: ANON_KEY,
       ...(await authHeader()),
     };
     const res = await fetch(ENDPOINT, {
@@ -137,13 +133,14 @@ async function flush(force = false) {
 }
 
 function flushOnUnload() {
+  if (!ENDPOINT) { queue = []; return; }
   if (!hasUserConsent() || queue.length === 0) return;
   try {
     const blob = new Blob([JSON.stringify(toPayload(queue))], {
       type: "application/json",
     });
     // sendBeacon does not allow custom headers, so endpoint must accept anon.
-    navigator.sendBeacon(`${ENDPOINT}?apikey=${encodeURIComponent(ANON_KEY)}`, blob);
+    navigator.sendBeacon(ENDPOINT, blob);
     queue = [];
   } catch { /* ignore */ }
 }

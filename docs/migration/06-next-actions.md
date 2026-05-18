@@ -26,6 +26,7 @@
 | SAA backend (Sprint 2.3) — schema + connections + proxies + AI + token refresh | ✅ |
 | SAA frontend (Sprint 2.4) — invites, refresh tokens, OAuth pickup, cutover | ✅ |
 | CRM backend (Sprint 3) — schema + domain + signatures + storage + pdf-parser + realtime | ✅ |
+| CRM frontend (Sprint 3.1) — auth + contexts + storage/parser + cleanup Supabase | ✅ |
 
 ## Sprint 1.3 — Hardening final pré-Sprint 2 ✅ CONCLUÍDA
 
@@ -160,16 +161,31 @@ Decisão `do_zero` (sem ETL) — produto novo no schema canônico.
 - ETL Supabase → Postgres: não fazemos (decisão `do_zero`).
 - S3/object storage: storage local local até o volume exigir.
 
-## Roadmap longo (depois da Sprint 3)
+## Sprint 3.1 — CRM frontend cutover ✅ CONCLUÍDA
 
-1. **Sprint 3.1 — CRM frontend cutover** (próxima) — `crm-imobiliario`
-   passa a usar o `omniconnectClient` no lugar do Supabase, em
-   strangler-fig. Inclui WebSocket `/crm` client + remoção de
-   `@supabase/supabase-js` do app.
-2. **Sprint 4** — Bridges processors reais (consumir `IntegrationEvent`
+Detalhamento completo: ver `docs/migration/sprint-3-1-crm-frontend.md`.
+
+| Bloco | Resumo |
+|---|---|
+| **A — Auth** | `crm-imobiliario` passou a usar `omniconnectClient` com access token em memória + refresh cookie. `AuthContext`, login, signup e reset fallback sem Supabase. |
+| **B — Properties/Units/Clients** | Contexts migrados para `/crm/properties`, `/crm/units`, `/crm/clients`; mapeamento centralizado em `src/lib/api/crm.ts`. |
+| **C — CRM domain** | Leads/interactions/follow-ups, proposals, contracts, payments/commissions e commission config migrados para `/crm/*`; state machines usam `transition`. |
+| **D — Storage/parser/realtime** | Upload PDF via `/crm/storage/upload`; parser via `/crm/pdf-parser`; realtime `/crm` via WebSocket Socket.io minimal client; document audit temporário local quando não há list endpoint. |
+| **E — Cleanup** | Removidos imports, package deps e artefatos Supabase/Lovable (`supabase/`, `bun.lock`, `integrations/*`). |
+| **F — Smoke** | `vite build` verde e Vitest `9/9` verde. `tsc --noEmit` ainda esbarra no baseline de tipos `lucide-react`/React, como no SAA. |
+
+**Pendências conscientes pós-cutover:**
+- Expor endpoint backend para listar `CrmDocumentVersion`/`CrmDocumentAccessLog` e substituir fallback local.
+- Expor endpoint backend para timeline/auditoria de proposal/contract events no frontend.
+- Melhorar extração de texto PDF com `pdf.js`; hoje o cutover usa `File.text()` como fallback sem dependência.
+- Tornar frontend CRM job bloqueante no CI quando os smoke tests forem ampliados.
+
+## Roadmap longo (depois da Sprint 3.1)
+
+1. **Sprint 4** — Bridges processors reais (consumir `IntegrationEvent`
    e propagar para `CrmLead`, `CrmContact` etc). Hoje só persistimos +
    enfileiramos; o processor concreto ainda é stub.
-3. **Sprint 5** — InsightAI v2: multi-provider (Anthropic, Gemini)
+2. **Sprint 5** — InsightAI v2: multi-provider (Anthropic, Gemini)
    plug-in, dashboard com filtros, custo agregado por tenant.
-4. **Sprint 6** — Botify: revisar segurança, alinhar ao mesmo padrão
+3. **Sprint 6** — Botify: revisar segurança, alinhar ao mesmo padrão
    de bridges + ApiKeys que CRM/SAA estão usando.

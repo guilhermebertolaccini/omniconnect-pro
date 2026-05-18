@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 
 type Prefs = {
@@ -42,37 +41,20 @@ export default function NotificationSettings() {
 
   useEffect(() => {
     if (!user) return;
-    (async () => {
-      const { data } = await supabase
-        .from("notification_preferences")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (data) {
-        setPrefs({
-          proposal_sent: data.proposal_sent,
-          contract_pending_signature: data.contract_pending_signature,
-          payment_due_soon: data.payment_due_soon,
-          payment_overdue: data.payment_overdue,
-          commission_paid: data.commission_paid,
-        });
-      }
-      setLoading(false);
-    })();
+    const stored = window.localStorage.getItem(`crm-notification-preferences:${user.id}`);
+    if (stored) setPrefs(JSON.parse(stored) as Prefs);
+    setLoading(false);
   }, [user]);
 
   const save = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await supabase
-      .from("notification_preferences")
-      .upsert({ user_id: user.id, ...prefs });
+    window.localStorage.setItem(
+      `crm-notification-preferences:${user.id}`,
+      JSON.stringify(prefs),
+    );
     setSaving(false);
-    if (error) {
-      toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });
-    } else {
-      toast({ title: "Preferências salvas" });
-    }
+    toast({ title: "Preferências salvas" });
   };
 
   if (loading) {

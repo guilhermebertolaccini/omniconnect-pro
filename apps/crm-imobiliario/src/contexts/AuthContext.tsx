@@ -1,13 +1,41 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  getAuthState,
+  restoreSession,
+  signOut as clientSignOut,
+  subscribe,
+  type AuthState,
+  type SessionUser,
+} from "@/lib/omniconnectClient";
 import { User, UserRole } from "@/types/property";
 import { identifyUser } from "@/lib/sentry";
 import { setLogContext, clearUserContext } from "@/lib/logContext";
 
+/**
+ * AuthContext (Sprint 3.1) — agora consome `omniconnectClient`. A sessão
+ * real vive em memória dentro do client; este context apenas a expõe ao React
+ * + casa a forma do
+ * `User` legado que o CRM já consumia.
+ *
+ * Compat:
+ *  - `session` permanece exposto como `{ user: { id, email } } | null`
+ *    porque muitos contexts antigos checavam `if (session) { ... }`
+ *    para decidir se devem buscar dados. Aqui ele é deriva do estado
+ *    do client (null quando anônimo).
+ *  - `user.role` mapeia a Role canônica do backend (admin / supervisor /
+ *    broker) para a Role legada do CRM (admin / manager / broker).
+ *  - Avatar não está no JWT — fica null por enquanto. Quando o backend
+ *    expuser /auth/me com avatar/profile, retornamos a popular esse
+ *    campo. Não é bloqueante.
+ */
+
+interface CrmAuthSession {
+  user: { id: string; email: string };
+}
+
 interface AuthContextType {
   user: User | null;
-  session: Session | null;
+  session: CrmAuthSession | null;
   loading: boolean;
   logout: () => Promise<void>;
   canEditPrice: boolean;
@@ -17,116 +45,104 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-async function loadUserProfile(userId: string, fallbackName: string, fallbackAvatar?: string): Promise<User> {
-  // Profile
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("full_name, avatar_url")
-    .eq("id", userId)
-    .maybeSingle();
+function mapBackendRoleToCrmRole(role: string): UserRole {
+  switch (role) {
+    case "admin":
+      return "admin";
+    case "supervisor":
+      return "manager";
+    case "broker":
+      return "broker";
+    case "operator":
+    case "digital":
+    case "ativador":
+    default:
+      // Roles que não fazem sentido no CRM caem em `broker` (menor
+      // privilégio dentro do escopo CRM) para que a UI continue
+      // funcionando — guards de criação/preço bloqueiam o suficiente.
+      return "broker";
+  }
+}
 
-  // Highest-priority role: admin > manager > broker
-  const { data: roleRows } = await supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", userId);
-
-  const roles = (roleRows ?? []).map((r) => r.role as UserRole);
-  const role: UserRole = roles.includes("admin")
-    ? "admin"
-    : roles.includes("manager")
-    ? "manager"
-    : "broker";
-
+function mapSessionUser(u: SessionUser | null): User | null {
+  if (!u) return null;
   return {
-    id: userId,
-    name: profile?.full_name || fallbackName,
-    role,
-    avatar: profile?.avatar_url || fallbackAvatar,
+    id: String(u.id),
+    name: u.name,
+    role: mapBackendRoleToCrmRole(u.role),
+    avatar: undefined,
   };
 }
 
+function mapSession(u: SessionUser | null): CrmAuthSession | null {
+  if (!u) return null;
+  return { user: { id: String(u.id), email: u.email } };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [authState, setAuthState] = useState<AuthState>(() => getAuthState());
   const [loading, setLoading] = useState(true);
 
+  // Boot: tenta recuperar a sessão via cookie HttpOnly.
   useEffect(() => {
-    if (user) {
+    let active = true;
+    restoreSession()
+      .catch(() => null)
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Mantém o estado React em sincronia com o cliente (signIn/signOut em
+  // outras abas, refresh do token, etc).
+  useEffect(() => subscribe(setAuthState), []);
+
+  // Side effects de telemetria — preservamos o pattern legado.
+  useEffect(() => {
+    if (authState.user) {
       identifyUser({
-        id: user.id,
-        name: user.name,
-        email: session?.user?.email,
-        role: user.role,
+        id: String(authState.user.id),
+        name: authState.user.name,
+        email: authState.user.email,
+        role: authState.user.role,
       });
       setLogContext({
-        user_id: user.id,
-        user_email: session?.user?.email,
-        user_role: user.role,
+        user_id: String(authState.user.id),
+        user_email: authState.user.email,
+        user_role: authState.user.role,
       });
     } else {
       identifyUser(null);
       clearUserContext();
     }
-  }, [user, session]);
+  }, [authState.user]);
 
-  useEffect(() => {
-    // 1. Set up listener FIRST
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      if (!newSession?.user) {
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-      // Defer DB lookups to avoid deadlocks
-      const meta = newSession.user.user_metadata || {};
-      const fallbackName =
-        (meta.full_name as string) ||
-        (meta.name as string) ||
-        newSession.user.email?.split("@")[0] ||
-        "User";
-      setTimeout(() => {
-        loadUserProfile(newSession.user.id, fallbackName, meta.avatar_url as string | undefined)
-          .then(setUser)
-          .finally(() => setLoading(false));
-      }, 0);
-    });
-
-    // 2. Then check existing session
-    supabase.auth.getSession().then(({ data: { session: existing } }) => {
-      setSession(existing);
-      if (!existing?.user) {
-        setLoading(false);
-        return;
-      }
-      const meta = existing.user.user_metadata || {};
-      const fallbackName =
-        (meta.full_name as string) ||
-        (meta.name as string) ||
-        existing.user.email?.split("@")[0] ||
-        "User";
-      loadUserProfile(existing.user.id, fallbackName, meta.avatar_url as string | undefined)
-        .then(setUser)
-        .finally(() => setLoading(false));
-    });
-
-    return () => sub.subscription.unsubscribe();
-  }, []);
+  const user = mapSessionUser(authState.user);
+  const session = mapSession(authState.user);
 
   const logout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
+    await clientSignOut();
   };
 
   const canEditPrice = user?.role === "admin" || user?.role === "manager";
   const canChangeStatus = !!user;
-  const canCreateProperty = user?.role === "admin" || user?.role === "manager";
+  const canCreateProperty =
+    user?.role === "admin" || user?.role === "manager";
 
   return (
     <AuthContext.Provider
-      value={{ user, session, loading, logout, canEditPrice, canChangeStatus, canCreateProperty }}
+      value={{
+        user,
+        session,
+        loading,
+        logout,
+        canEditPrice,
+        canChangeStatus,
+        canCreateProperty,
+      }}
     >
       {children}
     </AuthContext.Provider>

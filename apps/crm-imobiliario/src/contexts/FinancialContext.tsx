@@ -1,8 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { Payment, Commission, PropertyCommissionConfig } from "@/types/financial";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
+import {
+  listCommissions,
+  listPayments,
+  markCommissionPaid as apiMarkCommissionPaid,
+  markPaymentPaid as apiMarkPaymentPaid,
+  setCommissionConfig as apiSetCommissionConfig,
+} from "@/lib/api/crm";
 
 interface FinancialContextType {
   payments: Payment[];
@@ -44,42 +50,6 @@ interface FinancialContextType {
 
 const FinancialContext = createContext<FinancialContextType | null>(null);
 
-function rowToPayment(r: any): Payment {
-  return {
-    id: r.id,
-    contractId: r.contract_id,
-    propertyId: r.property_id,
-    propertyName: r.property_name,
-    unitId: r.unit_id,
-    unitNumber: r.unit_number,
-    clientId: r.client_id,
-    clientName: r.client_name,
-    type: r.type,
-    installmentNumber: r.installment_number ?? undefined,
-    amount: Number(r.amount),
-    dueDate: r.due_date,
-    paidAt: r.paid_at ?? undefined,
-    status: r.status,
-  };
-}
-
-function rowToCommission(r: any): Commission {
-  return {
-    id: r.id,
-    propertyId: r.property_id,
-    propertyName: r.property_name,
-    unitId: r.unit_id,
-    unitNumber: r.unit_number,
-    brokerId: r.broker_id,
-    brokerName: r.broker_name ?? "",
-    salePrice: Number(r.sale_price),
-    commissionPercent: Number(r.commission_percent),
-    commissionValue: Number(r.commission_value),
-    status: r.status,
-    paidAt: r.paid_at ?? undefined,
-  };
-}
-
 export function FinancialProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -94,54 +64,47 @@ export function FinancialProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     setLoading(true);
-    const [pRes, cRes, cfgRes] = await Promise.all([
-      supabase.from("payments").select("*").order("due_date", { ascending: true }),
-      supabase.from("commissions").select("*").order("created_at", { ascending: false }),
-      supabase.from("commission_configs").select("*"),
-    ]);
-    setPayments((pRes.data ?? []).map(rowToPayment));
-    setCommissions((cRes.data ?? []).map(rowToCommission));
-    setCommissionConfigs((cfgRes.data ?? []).map((r: any) => ({
-      propertyId: r.property_id,
-      commissionPercent: Number(r.commission_percent),
-    })));
-    setLoading(false);
+    try {
+      const [paymentsRows, commissionRows] = await Promise.all([
+        listPayments(),
+        listCommissions(),
+      ]);
+      setPayments(paymentsRows);
+      setCommissions(commissionRows);
+      // Não há endpoint de listagem global dos configs no backend; mantemos
+      // o estado local dos configs alterados nesta sessão e default 5%.
+    } catch (err) {
+      toast({
+        title: "Erro ao carregar financeiro",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
   const addPayment = async (p: Payment) => {
-    const { data, error } = await supabase.from("payments").insert({
-      contract_id: p.contractId,
-      property_id: p.propertyId,
-      property_name: p.propertyName,
-      unit_id: p.unitId,
-      unit_number: p.unitNumber,
-      client_id: p.clientId,
-      client_name: p.clientName,
-      type: p.type,
-      installment_number: p.installmentNumber ?? null,
-      amount: p.amount,
-      due_date: p.dueDate,
-      status: p.status,
-      paid_at: p.paidAt ?? null,
-    }).select().single();
-    if (error || !data) {
-      toast({ title: "Erro ao salvar pagamento", description: error?.message, variant: "destructive" });
-      return;
-    }
-    setPayments((prev) => [...prev, rowToPayment(data)]);
+    void p;
+    // Payments são gerados pelo trigger SQL quando contrato vira `signed`.
+    await refresh();
   };
 
   const markPaymentPaid = async (id: string) => {
     const paidAt = new Date().toISOString();
     const prev = payments;
     setPayments((cur) => cur.map((p) => (p.id === id ? { ...p, status: "paid", paidAt } : p)));
-    const { error } = await supabase.from("payments")
-      .update({ status: "paid", paid_at: paidAt }).eq("id", id);
-    if (error) {
+    try {
+      await apiMarkPaymentPaid(id);
+    } catch (err) {
       setPayments(prev);
-      toast({ title: "Erro ao marcar pago", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao marcar pago",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
     }
   };
 
@@ -155,11 +118,15 @@ export function FinancialProvider({ children }: { children: React.ReactNode }) {
     const paidAt = new Date().toISOString();
     const prev = commissions;
     setCommissions((cur) => cur.map((c) => (c.id === id ? { ...c, status: "paid", paidAt } : c)));
-    const { error } = await supabase.from("commissions")
-      .update({ status: "paid", paid_at: paidAt }).eq("id", id);
-    if (error) {
+    try {
+      await apiMarkCommissionPaid(id);
+    } catch (err) {
       setCommissions(prev);
-      toast({ title: "Erro ao marcar comissão paga", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao marcar comissão paga",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
     }
   };
 
@@ -170,11 +137,15 @@ export function FinancialProvider({ children }: { children: React.ReactNode }) {
       if (exists) return cur.map((c) => (c.propertyId === propertyId ? { ...c, commissionPercent: percent } : c));
       return [...cur, { propertyId, commissionPercent: percent }];
     });
-    const { error } = await supabase.from("commission_configs")
-      .upsert({ property_id: propertyId, commission_percent: percent, updated_by: user?.id ?? null });
-    if (error) {
+    try {
+      await apiSetCommissionConfig(propertyId, percent);
+    } catch (err) {
       setCommissionConfigs(prev);
-      toast({ title: "Erro ao salvar % de comissão", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao salvar % de comissão",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
     }
   };
 

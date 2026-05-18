@@ -154,7 +154,10 @@ export function ProposalDialog({ open, onOpenChange, unit, propertyId, propertyN
     try {
       const blob = generateProposalPdf({ ...(draft as Proposal), id: newId });
       const fileName = `proposta-${unit.number}.pdf`;
-      const url = await uploadPdf(user.id, "proposals", fileName, blob);
+      const url = await uploadPdf(user.id, "proposals", fileName, blob, {
+        parentType: "proposal",
+        parentId: newId,
+      });
       if (url) {
         await updateProposalPdfUrl(newId, url, sourcePdfUrl);
         await recordDocumentVersion({

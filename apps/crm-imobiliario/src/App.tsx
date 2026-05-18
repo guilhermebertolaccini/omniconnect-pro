@@ -13,6 +13,7 @@ import { ContractProvider } from "@/contexts/ContractContext";
 import { FinancialProvider } from "@/contexts/FinancialContext";
 import { CRMProvider } from "@/contexts/CRMContext";
 import AppLayout from "@/components/AppLayout";
+import { CrmRealtimeBridge } from "@/components/CrmRealtimeBridge";
 import { SentryConsentBanner } from "@/components/SentryConsentBanner";
 import AuthPage from "@/pages/Auth";
 import ResetPassword from "@/pages/ResetPassword";
@@ -56,6 +57,7 @@ function ProtectedApp() {
             <ContractProvider>
               <FinancialProvider>
                 <CRMProvider>
+                  <CrmRealtimeBridge />
                   <Routes>
                     <Route element={<AppLayout />}>
                       <Route path="/" element={<Dashboard />} />

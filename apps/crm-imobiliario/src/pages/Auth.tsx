@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Building2, Loader2 } from "lucide-react";
 import { z } from "zod";
-import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable";
+import {
+  signIn,
+  signUp,
+  OmniconnectError,
+} from "@/lib/omniconnectClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useI18n } from "@/i18n/useI18n";
 import { Button } from "@/components/ui/button";
@@ -16,6 +19,7 @@ import { toast } from "sonner";
 const emailSchema = z.string().trim().email("invalid_email").max(255);
 const passwordSchema = z.string().min(6, "password_min").max(72);
 const nameSchema = z.string().trim().min(2, "name_short").max(100);
+const tenantSchema = z.string().trim().min(2, "tenant_short").max(120);
 
 export default function AuthPage() {
   const navigate = useNavigate();
@@ -31,6 +35,7 @@ export default function AuthPage() {
   const [signupName, setSignupName] = useState("");
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
+  const [signupTenant, setSignupTenant] = useState("");
 
   useEffect(() => {
     if (!loading && session) navigate("/", { replace: true });
@@ -40,6 +45,7 @@ export default function AuthPage() {
     if (code === "invalid_email") return t("authInvalidEmail");
     if (code === "password_min") return t("authPasswordMin");
     if (code === "name_short") return t("authNameShort");
+    if (code === "tenant_short") return "Nome da empresa muito curto.";
     return code;
   };
 
@@ -55,16 +61,20 @@ export default function AuthPage() {
       }
     }
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: loginEmail,
-      password: loginPassword,
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(error.message === "Invalid login credentials" ? t("authBadCreds") : error.message);
-      return;
+    try {
+      await signIn(loginEmail, loginPassword);
+      navigate("/", { replace: true });
+    } catch (err) {
+      const msg =
+        err instanceof OmniconnectError && err.status === 401
+          ? t("authBadCreds")
+          : err instanceof Error
+            ? err.message
+            : t("authBadCreds");
+      toast.error(msg);
+    } finally {
+      setBusy(false);
     }
-    navigate("/", { replace: true });
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -73,6 +83,7 @@ export default function AuthPage() {
       nameSchema.parse(signupName);
       emailSchema.parse(signupEmail);
       passwordSchema.parse(signupPassword);
+      tenantSchema.parse(signupTenant);
     } catch (err) {
       if (err instanceof z.ZodError) {
         toast.error(mapZodError(err.issues[0].message));
@@ -80,56 +91,33 @@ export default function AuthPage() {
       }
     }
     setBusy(true);
-    const { error } = await supabase.auth.signUp({
-      email: signupEmail,
-      password: signupPassword,
-      options: {
-        emailRedirectTo: `${window.location.origin}/`,
-        data: { full_name: signupName },
-      },
-    });
-    setBusy(false);
-    if (error) {
-      if (error.message.includes("already")) {
+    try {
+      await signUp({
+        name: signupName,
+        email: signupEmail,
+        password: signupPassword,
+        tenantName: signupTenant,
+      });
+      toast.success(t("authSignupOk"));
+      navigate("/", { replace: true });
+    } catch (err) {
+      if (err instanceof OmniconnectError && err.status === 409) {
         toast.error(t("authEmailExists"));
       } else {
-        toast.error(error.message);
+        toast.error(err instanceof Error ? err.message : String(err));
       }
-      return;
-    }
-    toast.success(t("authSignupOk"));
-  };
-
-  const handleGoogle = async () => {
-    setBusy(true);
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) {
+    } finally {
       setBusy(false);
-      toast.error(t("authGoogleError"));
-      return;
     }
-    if (result.redirected) return;
-    navigate("/", { replace: true });
   };
 
-  const handleForgot = async () => {
-    if (!loginEmail) {
-      toast.error(t("authTypeEmailFirst"));
-      return;
-    }
-    try {
-      emailSchema.parse(loginEmail);
-    } catch {
-      toast.error(t("authInvalidEmail"));
-      return;
-    }
-    const { error } = await supabase.auth.resetPasswordForEmail(loginEmail, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    if (error) toast.error(error.message);
-    else toast.success(t("authResetSent"));
+  const handleForgot = () => {
+    // O backend novo ainda não expõe `/auth/password-reset` — ver
+    // sprint-3-1-crm-frontend.md (item "deferred"). Mostramos o
+    // caminho manual enquanto o endpoint não existe.
+    toast.info(
+      "Para redefinir sua senha, peça a um administrador do tenant para usar /tenant-invitations.",
+    );
   };
 
   return (
@@ -211,6 +199,17 @@ export default function AuthPage() {
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label htmlFor="signup-tenant">Nome da empresa</Label>
+                    <Input
+                      id="signup-tenant"
+                      value={signupTenant}
+                      onChange={(e) => setSignupTenant(e.target.value)}
+                      autoComplete="organization"
+                      placeholder="Tática Marketing"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label htmlFor="signup-email">{t("authEmail")}</Label>
                     <Input
                       id="signup-email"
@@ -239,31 +238,6 @@ export default function AuthPage() {
                 </form>
               </TabsContent>
             </Tabs>
-
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">{t("authOr")}</span>
-              </div>
-            </div>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={handleGoogle}
-              disabled={busy}
-            >
-              <svg className="h-4 w-4 mr-2" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-              </svg>
-              {t("authGoogle")}
-            </Button>
           </CardContent>
         </Card>
       </div>

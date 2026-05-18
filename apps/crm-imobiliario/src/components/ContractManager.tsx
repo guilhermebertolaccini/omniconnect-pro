@@ -91,7 +91,10 @@ export function ContractManager({ unitId, propertyId }: ContractManagerProps) {
     try {
       const blob = generateContractPdf({ ...(draft as Contract), id: newId });
       const fileName = `contrato-${proposal.unitNumber}.pdf`;
-      const url = await uploadPdf(user.id, "contracts", fileName, blob);
+      const url = await uploadPdf(user.id, "contracts", fileName, blob, {
+        parentType: "contract",
+        parentId: newId,
+      });
       if (url) {
         await updateContractPdfUrl(newId, url);
         await recordDocumentVersion({
@@ -131,7 +134,10 @@ export function ContractManager({ unitId, propertyId }: ContractManagerProps) {
           const blob = generateContractPdf(fullySigned);
           if (user) {
             const fileName = `contrato-assinado-${contract.unitNumber}.pdf`;
-            const url = await uploadPdf(user.id, "contracts", fileName, blob);
+            const url = await uploadPdf(user.id, "contracts", fileName, blob, {
+              parentType: "contract",
+              parentId: contract.id,
+            });
             if (url) {
               await updateContractPdfUrl(contract.id, url);
               await recordDocumentVersion({

@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useI18n } from "@/i18n/useI18n";
 import { useAuth } from "@/contexts/AuthContext";
 import { PropertyDocument } from "@/types/property";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,20 +70,14 @@ export function DocumentManager({ documents, onAddDocument, onRemoveDocument, fi
     if (!form.name || !user || !file) return;
     setUploading(true);
     try {
-      const ext = file.name.split(".").pop() || "bin";
-      const path = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from("property-documents")
-        .upload(path, file, { contentType: file.type, upsert: false });
-      if (upErr) throw upErr;
-      const { data: pub } = supabase.storage.from("property-documents").getPublicUrl(path);
+      const url = await fileToDataUrl(file);
 
       const doc: PropertyDocument = {
         id: `doc-${Date.now()}`,
         name: form.name,
         type: form.type,
         typology: form.type === "floor_plan" ? form.typology : undefined,
-        url: pub.publicUrl,
+        url,
         uploadedAt: new Date().toISOString(),
         uploadedBy: user.name,
       };
@@ -234,4 +227,13 @@ export function DocumentManager({ documents, onAddDocument, onRemoveDocument, fi
       </Dialog>
     </Card>
   );
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }

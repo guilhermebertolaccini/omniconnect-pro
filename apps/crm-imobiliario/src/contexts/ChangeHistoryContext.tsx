@@ -1,6 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { ChangeRecord } from "@/types/property";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface ChangeHistoryContextType {
@@ -18,20 +17,6 @@ interface ChangeHistoryContextType {
 
 const ChangeHistoryContext = createContext<ChangeHistoryContextType | null>(null);
 
-function rowToRecord(r: any): ChangeRecord {
-  return {
-    id: r.id,
-    entityType: r.entity_type,
-    entityId: r.entity_id,
-    field: r.field,
-    oldValue: r.old_value ?? "",
-    newValue: r.new_value ?? "",
-    userId: r.user_id ?? "",
-    userName: r.user_name ?? "",
-    timestamp: r.created_at,
-  };
-}
-
 export function ChangeHistoryProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [history, setHistory] = useState<ChangeRecord[]>([]);
@@ -42,12 +27,10 @@ export function ChangeHistoryProvider({ children }: { children: React.ReactNode 
       setHistory([]); setLoading(false); return;
     }
     setLoading(true);
-    const { data } = await supabase
-      .from("change_history")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(1000);
-    setHistory((data ?? []).map(rowToRecord));
+    // Backend Sprint 3 registra auditoria em SystemEvent/CrmChangeHistory,
+    // mas ainda não há endpoint frontend-safe de listagem. Mantemos a API do
+    // context e evitamos fallback Supabase durante o cutover.
+    setHistory([]);
     setLoading(false);
   }, [user]);
 

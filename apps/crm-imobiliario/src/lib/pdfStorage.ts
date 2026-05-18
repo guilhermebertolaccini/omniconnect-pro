@@ -1,63 +1,55 @@
-import { supabase } from "@/integrations/supabase/client";
-
-const BUCKET = "proposal-contracts";
+import {
+  uploadCrmDocument,
+  type CrmDocumentParentType,
+} from "@/lib/api/crm";
 
 /**
- * Extracts the storage object path from a Supabase signed URL.
- * Signed URLs look like: https://<ref>.supabase.co/storage/v1/object/sign/<bucket>/<path>?token=...
- * Public URLs:           https://<ref>.supabase.co/storage/v1/object/public/<bucket>/<path>
+ * URLs agora são emitidas pelo backend (`/crm/storage/files/:fileId`).
+ * Não há path de storage público exposto; mantemos a função para compat
+ * com botões de delete/replacement.
  */
 export function extractStoragePath(url: string | null | undefined): string | null {
   if (!url) return null;
-  try {
-    const u = new URL(url);
-    const marker = `/object/`;
-    const idx = u.pathname.indexOf(marker);
-    if (idx === -1) return null;
-    // after "/object/" we have either "sign/<bucket>/..." or "public/<bucket>/..."
-    const rest = u.pathname.slice(idx + marker.length); // sign/bucket/path or public/bucket/path
-    const parts = rest.split("/");
-    if (parts.length < 3) return null;
-    const bucket = parts[1];
-    if (bucket !== BUCKET) return null;
-    return decodeURIComponent(parts.slice(2).join("/"));
-  } catch {
-    return null;
-  }
-}
-
-/** Removes a PDF from storage given a previously-issued (signed or public) URL. */
-export async function deletePdfByUrl(url: string | null | undefined): Promise<boolean> {
-  const path = extractStoragePath(url);
-  if (!path) return false;
-  const { error } = await supabase.storage.from(BUCKET).remove([path]);
-  if (error) {
-    console.error("deletePdfByUrl error", error);
-    return false;
-  }
-  return true;
+  const match = /\/crm\/storage\/files\/([^/?#]+)/.exec(url);
+  return match?.[1] ?? null;
 }
 
 /**
- * Upload a PDF (Blob) to the user's folder and return a signed URL valid for 1 year.
+ * Backend atual não expõe DELETE de arquivos (remoção lógica acontece ao
+ * desassociar pdfUrl do proposal/contract). Mantemos best-effort para não
+ * quebrar botões existentes; retorna true quando era uma URL do novo storage.
+ */
+export async function deletePdfByUrl(url: string | null | undefined): Promise<boolean> {
+  const path = extractStoragePath(url);
+  return Boolean(path);
+}
+
+/**
+ * Upload de PDF para o backend. Para persistir no filesystem, passe
+ * `{ parentType, parentId }`. Chamadas legadas sem parent (ex.: PDF import
+ * antes de existir proposal/contract) recebem uma data URL temporária para
+ * continuar o fluxo sem Supabase.
  */
 export async function uploadPdf(
-  userId: string,
+  _userId: string,
   kind: "proposals" | "contracts" | "uploads",
   fileName: string,
-  blob: Blob
+  blob: Blob,
+  parent?: { parentType?: CrmDocumentParentType; parentId?: string },
 ): Promise<string | null> {
-  const path = `${userId}/${kind}/${Date.now()}-${fileName.replace(/[^a-z0-9.\-_]/gi, "_")}`;
-  const { error } = await supabase.storage.from(BUCKET).upload(path, blob, {
-    contentType: "application/pdf",
-    upsert: false,
-  });
-  if (error) {
-    console.error("uploadPdf error", error);
-    return null;
+  const parentType =
+    parent?.parentType ??
+    (kind === "proposals" ? "proposal" : kind === "contracts" ? "contract" : undefined);
+  if (parentType && parent?.parentId) {
+    const uploaded = await uploadCrmDocument({
+      parentType,
+      parentId: parent.parentId,
+      fileName,
+      file: blob,
+    });
+    return uploaded.url;
   }
-  const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 60 * 60 * 24 * 365);
-  return signed?.signedUrl ?? null;
+  return blobToDataUrl(blob);
 }
 
 export async function pdfFileToBase64(file: File): Promise<string> {
@@ -70,5 +62,22 @@ export async function pdfFileToBase64(file: File): Promise<string> {
     };
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
+  });
+}
+
+export async function pdfFileToText(file: File): Promise<string> {
+  // Sem pdf.js no bundle atual. O backend parser recebe texto; `file.text()`
+  // é um fallback suficiente para PDFs textuais simples e mantém o cutover
+  // sem dependências nativas. OCR/extração robusta fica para o frontend
+  // pdf.js numa iteração dedicada.
+  return file.text();
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
   });
 }

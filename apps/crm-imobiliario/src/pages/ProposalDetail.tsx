@@ -8,7 +8,6 @@ import { PdfAccessLogList } from "@/components/PdfAccessLogList";
 import { TrackedPdfLink } from "@/components/TrackedPdfLink";
 import { recordDocumentVersion } from "@/lib/documentVersions";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -57,12 +56,7 @@ export default function ProposalDetail() {
   const loadEvents = async () => {
     if (!id) return;
     setLoadingEvents(true);
-    const { data } = await supabase
-      .from("proposal_events")
-      .select("*")
-      .eq("proposal_id", id)
-      .order("created_at", { ascending: false });
-    setEvents((data ?? []) as EventRow[]);
+    setEvents(readProposalEvents(id));
     setLoadingEvents(false);
   };
 
@@ -92,12 +86,15 @@ export default function ProposalDetail() {
   };
 
   const logPdfEvent = async (type: "pdf_replaced" | "pdf_removed" | "pdf_attached", message: string) => {
-    await supabase.from("proposal_events").insert({
-      proposal_id: proposal.id,
+    const row: EventRow = {
+      id: `proposal-event-${Date.now()}`,
       event_type: type,
+      from_status: null,
       to_status: proposal.status,
       message,
-    });
+      created_at: new Date().toISOString(),
+    };
+    writeProposalEvents(proposal.id, [row, ...readProposalEvents(proposal.id)].slice(0, 100));
     await loadEvents();
   };
 
@@ -116,6 +113,8 @@ export default function ProposalDetail() {
         <div className="flex items-center gap-2">
           <PdfUploadButton
             kind="proposals"
+            parentType="proposal"
+            parentId={proposal.id}
             fileNamePrefix={`proposta-${proposal.unitNumber}`}
             existingUrl={proposal.pdfUrl}
             disabled={pdfLocked}
@@ -320,4 +319,19 @@ export default function ProposalDetail() {
       </Card>
     </div>
   );
+}
+
+function readProposalEvents(proposalId: string): EventRow[] {
+  try {
+    const all = JSON.parse(window.localStorage.getItem("crm-proposal-events") ?? "{}") as Record<string, EventRow[]>;
+    return all[proposalId] ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function writeProposalEvents(proposalId: string, rows: EventRow[]) {
+  const all = JSON.parse(window.localStorage.getItem("crm-proposal-events") ?? "{}") as Record<string, EventRow[]>;
+  all[proposalId] = rows;
+  window.localStorage.setItem("crm-proposal-events", JSON.stringify(all));
 }
