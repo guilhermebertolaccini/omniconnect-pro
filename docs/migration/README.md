@@ -18,6 +18,8 @@ Documentação de contexto e plano de migração para unificar 4 produtos num ú
 | 05 | [`05-known-risks.md`](./05-known-risks.md) | Riscos técnicos (PII, OpenAI sync, auth, etc) |
 | 06 | [`06-next-actions.md`](./06-next-actions.md) | Próximas decisões pendentes e ordem de execução |
 | 07 | [`07-import-taticaofc-plan.md`](./07-import-taticaofc-plan.md) | Plano do próximo passo: importar backend + frontend do `taticaofc` em `apps/` |
+| 2.3 | [`sprint-2-saa.md`](./sprint-2-saa.md) | Sprint 2.3 — SAA backend migration (Supabase → NestJS/Prisma) |
+| 2.4 | [`sprint-2-4-saa-frontend.md`](./sprint-2-4-saa-frontend.md) | Sprint 2.4 — SAA frontend cutover (tenant invites, refresh tokens, OAuth pickup) |
 
 ## Como usar
 
