@@ -136,7 +136,7 @@ model AIUsageLog {
   tenantId        String   // sempre — scope obrigatório
   conversationId  Int?     // qual conversa originou
   analysisId      Int?     // FK opcional para ConversationAIAnalysis
-  operationType   String   // 'conversation_analysis', 'executive_summary', ...
+  operationType   String   // 'conversation_analysis', 'ad_campaign_analysis', 'executive_summary', ...
   modelProvider   String   // 'openai', 'anthropic', 'heuristic'
   modelName       String   // 'gpt-4o-mini'
   promptVersion   String   // 'insight-ai-conversation-analysis-v3'
@@ -178,6 +178,17 @@ model ModelPricing {
 `ModelPricingService.estimateCost(provider, model, promptTokens, completionTokens)` consulta a tabela com janela `effectiveFrom <= now AND (effectiveUntil IS NULL OR effectiveUntil > now)`, cache TTL 5min em memória, fallback resiliente para a baseline antiga (`gpt-4o`, `gpt-4o-mini`) caso a tabela esteja vazia / queue de DB falhe. Resultado anotado com `source: 'database' | 'fallback'` para auditoria.
 
 Endpoint `/billing-usage/ai?tenantId&from&to` agrega por tenant.
+
+### Ad campaign analysis (Sprint 2.3)
+
+O módulo `ad-campaigns-ai` reutiliza esta governance integralmente:
+
+- `operationType = 'ad_campaign_analysis'`
+- `promptVersion = 'ad-campaign-analysis-v1'`
+- `redactPII` recursivo (`redactDeep`) é aplicado ao `campaign`+`insights` antes do `JSON.stringify` que vai para o LLM. CPF, e-mail, telefone, RG, CNPJ nunca chegam ao provedor mesmo se a API da Meta/Google/TikTok devolver no payload.
+- Cost via `ModelPricingService.estimateCost` na mesma janela versionada.
+- Mode async usa Bull com `jobId` determinístico `aca:sha256(tenantId|advertiserCompanyId|platform|campaignId|campaignName|hourBucket)` para dedup sem vazar PII no id.
+- Job processor valida `tenantId` do payload contra o do request original via `ensureJobTenant` (Sprint 1.2.6).
 
 **Estratégias de redução de custo:**
 - Cache: se conversa não mudou em 24h, retorna análise anterior

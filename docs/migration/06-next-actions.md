@@ -19,9 +19,10 @@
 | Idempotency `(tenantId, provider, key)` | ✅ (Sprint 1.3 Bloco A) |
 | InsightAI: fila Bull + `AIUsageLog` + `ModelPricing` + jobId determinístico | ✅ (Sprint 1.3 Bloco C) |
 | PII redactor LGPD-grade (CPF/CNPJ/CEP/data/renda/contrato/endereço) | ✅ (Sprint 1.3 Bloco C) |
-| Testes: 148 unit + 19 E2E (HTTP real) cobrindo isolation | ✅ |
+| Testes: 216 verdes / 23 suites (216 unit + integration + 31 E2E HTTP) | ✅ |
 | CI: workflow GitHub Actions (backend bloqueante, satélites não-bloqueantes) | ✅ |
 | Docs core (`docs/01..09`) | ✅ |
+| SAA backend (Sprint 2.3) — schema + connections + proxies + AI + token refresh | ✅ |
 
 ## Sprint 1.3 — Hardening final pré-Sprint 2 ✅ CONCLUÍDA
 
@@ -63,14 +64,20 @@ para módulos no `omniconnect-backend`, em padrão Strangler Fig.
 - [ ] Endpoint bridge para receber webhook do CRM Imobiliário enquanto
       o frontend ainda fala com Supabase (strangler fig).
 
-### Fase 2.3 — SAA backend (`smart-ad-automator` module)
-- [ ] Prisma models para `AdAccount`, `Campaign`, `AdSet`, `Ad`,
-      `Creative`, `PixelEvent`, `OAuthCredential`.
-- [ ] Refresh de OAuth tokens (Meta, Google Ads, TikTok Ads) via job
-      Bull recorrente; credenciais criptografadas com
-      `BridgeSecretCipher` (ou cipher dedicado).
-- [ ] Importer one-shot Supabase → Prisma.
-- [ ] Endpoints bridge enquanto frontend ainda usa Supabase.
+### Fase 2.3 — SAA backend (`smart-ad-automator` module) ✅ CONCLUÍDA
+
+Detalhamento e shape final: ver `docs/migration/sprint-2-saa.md`.
+
+| Bloco | Resumo |
+|---|---|
+| **A — Schema** | Novo enum `AdPlatform { meta, google_ads, tiktok_ads }` + 7 models tenant-scoped: `TenantInvitation`, `AdvertiserCompany`, `AdvertiserCompanyAccess`, `AdPlatformConnection` (tokens AES-256-GCM), `AdCampaignAIAnalysis`, `OrganicPostExperiment(+Variant)`. Migration única `20260518140000_sprint_2_saa_schema`. |
+| **B — `ad-platform-connections`** | CRUD tenant-scoped com cifra ponta-a-ponta via `BridgeSecretCipher`. Listagem nunca devolve token nem hint. Endpoint `/:id/test` valida só o decrypt. Endpoint `getDecryptedAccessToken` é o único chokepoint de plaintext, usado exclusivamente pelos proxies. |
+| **C — `advertiser-companies` + proxies** | CRUD + proxy `POST /:id/platforms/:platform/proxy`. Envelope por provider (Meta: token em query, Google: `Authorization: Bearer`, TikTok: `Access-Token`). Defesa SSRF: bloqueia URL absoluta / `..` / sem `/`. Audita cada chamada em `SystemEvent` (sem token, sem body). |
+| **D — `ad-campaigns-ai`** | Análise IA sync + async (Bull). `jobId` determinístico `aca:sha256(...)`, `getJobStatus` 404 cross-tenant. PII redaction recursiva no `campaign`+`insights` antes de chamar OpenAI. `AIUsageLog` com `operationType='ad_campaign_analysis'` + `ModelPricing`. |
+| **E — Token refresh job** | Bull repeatable a cada 1h (`AD_PLATFORM_TOKEN_REFRESH_INTERVAL_MS`, default 3600000). Refresh Meta (long-lived exchange), Google (refresh_token grant), TikTok (cycle access+refresh). Cifra os novos tokens via `BridgeSecretCipher`. Audit por tenant em `SystemEvent`. Pode ser desligado em dev com `AD_PLATFORM_TOKEN_REFRESH_DISABLED=1`. |
+| **F — E2E + docs** | E2E HTTP `saa-tenant-isolation.e2e.spec.ts` (12 casos) provando que A não vê connections/companies/análises de B, recusa proxy cross-tenant e bloqueia URL absoluta. Esta doc + `sprint-2-saa.md`. |
+
+**Métricas finais Sprint 2.3:** 216/216 tests / 23 suites — `tsc --noEmit -p tsconfig.build.json` limpo.
 
 ### Fase 2.4 — Auth unification
 - [ ] Decidir flow de migração de usuários (`Supabase Auth →
@@ -88,12 +95,22 @@ para módulos no `omniconnect-backend`, em padrão Strangler Fig.
 - [ ] Atualizar `docs/02-architecture.md` removendo referências a
       Supabase como dependência ativa.
 
-## Decisões abertas
+## Decisões fechadas na Sprint 2.3
 
-- **OAuth token storage**: usar o mesmo `BridgeSecretCipher` ou criar
-  cipher dedicado por classe de credencial? Provavelmente o mesmo, com
-  rótulo distinto no log.
-- **Importador**: ETL script Node + Prisma, ou função Postgres
+- **OAuth token storage** — uso compartilhado de `BridgeSecretCipher`
+  (AES-256-GCM, `BRIDGE_SECRET_KEY` único). Decifra-se via `decryptWith-
+  LegacyFallback` em dev (warning) e estrito em produção.
+- **Importador SAA** — `do_zero` (não importamos dados do Supabase).
+  Produto novo, sem produção; o schema agora é o canônico.
+- **`super_admin` de plataforma** — modelado como `UserTenant.role=admin`
+  num tenant especial `'platform'`. Não houve necessidade de flag extra
+  em `User`.
+- **Chave OpenAI** — master do OmniConnect, custo cobrado via
+  `AIUsageLog` (`operationType='ad_campaign_analysis'`).
+
+## Decisões abertas (CRM + Auth)
+
+- **Importador CRM**: ETL script Node + Prisma, ou função Postgres
   `INSERT INTO ... SELECT FROM dblink(...)`? Tendência: ETL Node por
   ser auditável e testável.
 - **Cutover do Auth**: big-bang ou dual-write durante 1 sprint? Decidir

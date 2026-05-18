@@ -198,6 +198,22 @@ Agora o valor é cifrado em repouso via `BridgeSecretCipher` (AES-256-GCM, forma
 
 NUNCA logue o segredo em texto claro nem o blob cifrado. O cipher só descriptografa imediatamente antes de chamar `verifyHmac`; o secret nunca vive na memória entre requests.
 
+### OAuth tokens encrypted at rest (Sprint 2.3)
+
+O mesmo `BridgeSecretCipher` cifra os tokens OAuth de ad platforms:
+
+- `AdPlatformConnection.accessTokenEncrypted` — `v1.<iv>.<tag>.<ct>` (Meta/Google/TikTok).
+- `AdPlatformConnection.refreshTokenEncrypted` — só presente em providers que cyclam refresh token (Google sempre, TikTok sim, Meta long-lived não usa).
+
+Regras (válidas para webhook secrets *e* OAuth tokens):
+
+- A coluna nunca volta em listagens. Endpoints CRUD retornam um `MaskedAdPlatformConnection` sem `accessToken`/`refreshToken`.
+- O único chokepoint que devolve plaintext é `AdPlatformConnectionsService.getDecryptedAccessToken(tenantId, connectionId)`, usado pelos proxies internos.
+- O proxy outbound (`AdPlatformProxyService`) descriptografa apenas para montar a chamada e nunca registra o valor em `SystemEvent` — o audit log guarda só `{platform, endpoint, method, status, durationMs}`.
+- O job de refresh (`AdPlatformTokensService`) cifra os novos tokens com `BridgeSecretCipher.encrypt` antes do `update`. Falhas registram `AD_PLATFORM_TOKEN_REFRESH_FAILED`; tokens sem refresh disponível marcam `isActive=false` + `AD_PLATFORM_TOKEN_EXPIRED`.
+
+Mesma chave (`BRIDGE_SECRET_KEY`) cifra webhook secrets e tokens OAuth: rotação é única para os dois domínios; o cipher é estável (formato versionado `v1.…`) então não há lock-in.
+
 ### Idempotência (Sprint 1.1, corrigida na Sprint 1.3)
 
 `IntegrationEvent.idempotencyKey` agora é unique composto `(tenantId, provider, idempotencyKey)`. O `@unique` global usado na Sprint 1.1 era um footgun multi-tenant: dois tenants legítimos no mesmo provider podiam mintar a mesma chave (UUIDv4 não, mas hash-of-body sim para templates de body parecidos) e o segundo evento sumia silenciosamente como duplicado.
