@@ -35,6 +35,16 @@ export enum EventType {
   AD_PLATFORM_TOKEN_REFRESHED = 'ad_platform_token_refreshed',
   AD_PLATFORM_TOKEN_REFRESH_FAILED = 'ad_platform_token_refresh_failed',
   AD_PLATFORM_TOKEN_EXPIRED = 'ad_platform_token_expired',
+
+  // Tenant invitations / OAuth pickup
+  TENANT_INVITATION_CREATED = 'tenant_invitation_created',
+  TENANT_INVITATION_ACCEPTED = 'tenant_invitation_accepted',
+  TENANT_INVITATION_REVOKED = 'tenant_invitation_revoked',
+  TENANT_INVITATION_REJECTED = 'tenant_invitation_rejected',
+  AD_PLATFORM_OAUTH_STARTED = 'ad_platform_oauth_started',
+  AD_PLATFORM_OAUTH_COMPLETED = 'ad_platform_oauth_completed',
+  AD_PLATFORM_OAUTH_FAILED = 'ad_platform_oauth_failed',
+  AUTH_REFRESH_REUSE_DETECTED = 'auth_refresh_reuse_detected',
 }
 
 export enum EventSeverity {
@@ -54,6 +64,9 @@ export enum EventModule {
   AUTO_MESSAGE = 'auto_message',
   AD_PLATFORM_PROXY = 'ad_platform_proxy',
   AD_PLATFORM_TOKEN_REFRESH = 'ad_platform_token_refresh',
+  TENANT_INVITATIONS = 'tenant_invitations',
+  AD_PLATFORM_OAUTH = 'ad_platform_oauth',
+  AUTH = 'auth',
 }
 
 interface EventFilters {

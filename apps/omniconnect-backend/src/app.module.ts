@@ -40,6 +40,7 @@ import { AdPlatformConnectionsModule } from './ad-platform-connections/ad-platfo
 import { AdvertiserCompaniesModule } from './advertiser-companies/advertiser-companies.module';
 import { AdCampaignsAiModule } from './ad-campaigns-ai/ad-campaigns-ai.module';
 import { AdPlatformTokensModule } from './ad-platform-tokens/ad-platform-tokens.module';
+import { TenantInvitationsModule } from './tenant-invitations/tenant-invitations.module';
 
 @Module({
   imports: [
@@ -92,6 +93,7 @@ import { AdPlatformTokensModule } from './ad-platform-tokens/ad-platform-tokens.
     AdvertiserCompaniesModule,
     AdCampaignsAiModule,
     AdPlatformTokensModule,
+    TenantInvitationsModule,
   ],
   controllers: [HealthController],
   providers: [PrismaService],
