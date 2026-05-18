@@ -139,15 +139,50 @@ jobs:
   # Frontends: per-app build (best effort — failures here block PRs
   # but each frontend is independent so failures stay scoped).
   # --------------------------------------------------------------------
-  frontends-build:
-    name: ${{ matrix.app }} / build
+  # --------------------------------------------------------------------
+  # Frontend (core) — omniconnect-frontend is the operator UI and is
+  # required to build. Failures here block the PR.
+  # --------------------------------------------------------------------
+  frontend-core:
+    name: omniconnect-frontend / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build omniconnect-frontend
+        run: pnpm --filter omniconnect-frontend run build
+
+  # --------------------------------------------------------------------
+  # Satellite frontends — botify, crm-imobiliario, smart-ad-automator
+  # are scheduled for backend migration (sprints 3-5). They're tracked
+  # but kept non-blocking until each app's migration sprint finalises
+  # the new build contract. Each sprint flips its own app to blocking.
+  # --------------------------------------------------------------------
+  frontends-satellite:
+    name: ${{ matrix.app }} / build (non-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         app:
-          - omniconnect-frontend
           - botify
           - crm-imobiliario
           - smart-ad-automator
@@ -172,4 +207,4 @@ jobs:
 
       - name: Build ${{ matrix.app }}
         run: pnpm --filter ${{ matrix.app }} run build
-        continue-on-error: true # frontends still being aligned — keep CI signal but non-blocking
+        continue-on-error: true
