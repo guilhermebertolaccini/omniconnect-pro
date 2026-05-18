@@ -45,6 +45,12 @@ interface UserRow {
   role: 'admin' | 'supervisor' | 'operator' | 'digital';
 }
 
+interface UserTenantRow {
+  userId: number;
+  tenantId: string;
+  role: 'admin' | 'supervisor' | 'operator' | 'digital';
+}
+
 /**
  * Minimal in-memory Prisma mock. Only implements the methods used by
  * ContactsService + JwtStrategy. The contact methods deliberately
@@ -54,6 +60,7 @@ interface UserRow {
 function buildInMemoryPrisma() {
   const contacts: ContactRow[] = [];
   const users: UserRow[] = [];
+  const userTenants: UserTenantRow[] = [];
   let nextContactId = 1;
 
   const matchesWhere = (row: ContactRow, where: any): boolean => {
@@ -80,11 +87,26 @@ function buildInMemoryPrisma() {
       users.push(u);
       return u;
     },
+    _seedUserTenant(ut: UserTenantRow) {
+      userTenants.push(ut);
+      return ut;
+    },
     _allContacts() {
       return contacts.slice();
     },
     user: {
       findUnique: async ({ where: { id } }: any) => users.find((u) => u.id === id) || null,
+    },
+    userTenant: {
+      findUnique: async ({ where }: any) => {
+        const key = where.userId_tenantId;
+        if (!key) return null;
+        return (
+          userTenants.find(
+            (ut) => ut.userId === key.userId && ut.tenantId === key.tenantId,
+          ) || null
+        );
+      },
     },
     contact: {
       findMany: async ({ where }: any) => {
@@ -149,6 +171,8 @@ describe('Tenant isolation (E2E)', () => {
 
     prisma._seedUser({ id: 1, email: 'a@tenant-a.com', name: 'User A', role: 'admin' });
     prisma._seedUser({ id: 2, email: 'b@tenant-b.com', name: 'User B', role: 'admin' });
+    prisma._seedUserTenant({ userId: 1, tenantId: 'tenant-a', role: 'admin' });
+    prisma._seedUserTenant({ userId: 2, tenantId: 'tenant-b', role: 'admin' });
 
     contactA = prisma._seedContact({
       tenantId: 'tenant-a',
@@ -211,6 +235,25 @@ describe('Tenant isolation (E2E)', () => {
         .get('/contacts')
         .set('Authorization', 'Bearer not-a-valid-jwt');
       expect(res.status).toBe(401);
+    });
+
+    it('rejects, in production, a JWT for a tenant the user is NOT a member of', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        const smugglerToken = jwt.sign({
+          sub: 1,
+          email: 'a@tenant-a.com',
+          role: 'admin',
+          tenantId: 'tenant-b',
+        });
+        const res = await request(app.getHttpServer())
+          .get('/contacts')
+          .set('Authorization', `Bearer ${smugglerToken}`);
+        expect(res.status).toBe(401);
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+      }
     });
   });
 

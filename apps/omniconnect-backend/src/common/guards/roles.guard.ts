@@ -18,6 +18,16 @@ export class RolesGuard implements CanActivate {
     }
 
     const { user } = context.switchToHttp().getRequest();
-    return requiredRoles.some((role) => user.role === role);
+
+    // Source of truth in multi-tenant context: UserTenant.role (exposed
+    // by JwtStrategy as `user.tenantRole`). Fall back to the global
+    // `user.role` only if no per-tenant role is present (legacy
+    // tokens, dev-only paths without a UserTenant row, server-to-server
+    // calls authenticated via ApiKeyGuard which does not set
+    // tenantRole today).
+    const effectiveRole: Role | undefined = user?.tenantRole ?? user?.role;
+    if (!effectiveRole) return false;
+
+    return requiredRoles.some((role) => effectiveRole === role);
   }
 }
