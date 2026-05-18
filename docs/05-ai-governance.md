@@ -111,9 +111,34 @@ Mandar apenas o **mínimo necessário**:
 
 ## Cost control
 
-Tracking **por análise**:
-- `promptTokens`, `completionTokens`
-- `estimatedCost` (calculado pela tabela do modelo)
+Tracking **por análise** em `AIUsageLog` (Sprint 1.1):
+
+```prisma
+model AIUsageLog {
+  id              Int      @id @default(autoincrement())
+  tenantId        String   // sempre — scope obrigatório
+  conversationId  Int?     // qual conversa originou
+  analysisId      Int?     // FK opcional para ConversationAIAnalysis
+  operationType   String   // 'conversation_analysis', 'executive_summary', ...
+  modelProvider   String   // 'openai', 'anthropic', 'heuristic'
+  modelName       String   // 'gpt-4o-mini'
+  promptVersion   String   // 'insight-ai-conversation-analysis-v3'
+  promptTokens    Int
+  completionTokens Int
+  estimatedCost   Decimal
+  currency        String   @default("USD")
+  status          String   // 'success', 'degraded', 'failed'
+  errorCode       String?
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, operationType])
+  @@index([tenantId, status])
+}
+```
+
+Cada chamada bem-sucedida grava status `success` com tokens e custo; falhas (rate limit, parse error, schema invalid) gravam `failed` ou `degraded` com `errorCode` para análise de qualidade do provedor.
 
 Tabela de preços em config:
 ```typescript
@@ -122,6 +147,8 @@ export const AI_PRICING = {
   'gpt-4o':      { input: 0.005,   output: 0.015 },
 };
 ```
+
+> **Próximo passo (Sprint 1.2):** mover `AI_PRICING` para uma tabela `ModelPricing` por modelo/versão/data-início — preços de provedores mudam frequentemente e a constante hardcoded vira passivo técnico rápido.
 
 Endpoint `/billing-usage/ai?tenantId&from&to` agrega por tenant.
 
@@ -142,6 +169,41 @@ Provider falhou (timeout, 429, 500) →
 5. Exposto no admin (badge "análise degradada")
 
 **Nunca** quebrar a UX por falha de IA.
+
+## Async via BullMQ (Sprint 1.1)
+
+O `InsightAiModule` registra a fila `insight-ai-analysis` no Bull e o processor `AnalyzeConversationProcessor` consome jobs `analyze-conversation`.
+
+```
+POST /insight-ai/analyze/:phone           → enqueue job  (default async)
+POST /insight-ai/analyze/:phone?sync=true → run inline   (debugging / smoke test)
+GET  /insight-ai/jobs/:jobId              → status do job + resultado quando pronto
+```
+
+Job payload **obrigatoriamente** carrega `tenantId`:
+
+```typescript
+await queue.add('analyze-conversation', {
+  tenantId,
+  contactPhone,
+  // ...filtros opcionais
+});
+```
+
+Worker chama `ensureJobTenant(job.data)` antes de qualquer write — o sentinel `default-tenant` é rejeitado em produção.
+
+A escolha por jobs (em vez de chamada síncrona dentro da request HTTP) protege contra:
+
+- Timeouts longos do LLM (gpt-4o pode demorar 10–60s).
+- Rate limits do provedor (retry transparente pelo Bull).
+- DoS acidental: agendamentos em massa não derrubam a API.
+
+## Tenant isolation no InsightAI
+
+- Toda chamada de `InsightAiService` exige `tenantId` explícito (vem de `ensureTenant(user)` no controller).
+- Listagens (`/insight-ai/results`, `/insight-ai/summary`) filtram `ConversationAIAnalysis.tenantId`.
+- `AIUsageLog` é escopado por tenant para billing/relatório de consumo por cliente.
+- PII redaction é aplicada **antes** de montar o prompt; CPF, RG, telefone e e-mail nunca chegam ao provedor.
 
 ## Output JSON example
 

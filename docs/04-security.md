@@ -31,6 +31,7 @@ Use sempre:
 - Invalidação de sessão (revogação por user/tenant)
 - Token de reset com expiração curta (15min)
 - Proteção contra brute force (rate limit + lockout temporário) via módulo `rate-limiting/`
+- **`JwtStrategy` recusa tokens sem `tenantId`** (ou com `default-tenant`) em `NODE_ENV=production`. Em dev/test esses valores ainda são aceitos por compatibilidade. Detalhe em `03-multitenancy.md`.
 
 ## Authorization
 
@@ -144,6 +145,52 @@ Dados pessoais sensíveis (CPF, RG, financeiro, mensagens):
 - Rate limit no endpoint público
 - Payload size limit (evitar 100MB POST)
 - Responder 200 imediatamente, processar async via fila
+
+### HMAC sobre raw body (Sprint 1.1)
+
+Os bridges externos (`/crm-bridge`, `/ads-bridge`, `/bot-bridge`) usam o middleware `RawBodyMiddleware` para preservar o buffer original da request antes do parse JSON. Sem isso, qualquer reformatação do body (espaços, ordem de chaves) quebra a assinatura.
+
+```typescript
+// bridge controller
+@Post('webhook')
+async receive(
+  @Req() req: RawBodyRequest<Request>,
+  @Headers('x-signature') signature: string,
+  @Headers('x-integration-id') integrationId: string,
+  @Headers('idempotency-key') idempotencyKey?: string,
+) {
+  return this.service.handleWebhook({
+    rawBody: req.rawBody!,      // Buffer cru, intocado
+    signature,
+    integrationId,
+    idempotencyKey,
+  });
+}
+
+// service
+verifyHmac(rawBody, signature, connection.secretHash); // timingSafeEqual
+```
+
+A função `verifyHmac` em `integration-events/bridge-helpers.ts`:
+
+1. Computa `HMAC-SHA256(secretHash, rawBody)` em hex.
+2. Compara via `crypto.timingSafeEqual` (resistente a timing attacks).
+3. Falha duro com `UnauthorizedException` se comprimento ou conteúdo divergirem.
+
+A função `assertActiveConnection`:
+
+- Em **produção**: exige `IntegrationConnection` existente, com `provider` correto, `status === 'active'` e `tenant.isActive`. Caso contrário, `NotFoundException`.
+- Em **dev/test**: retorna `null` e o service cai em `default-tenant` apenas para destravar a DX local.
+
+### Idempotência (Sprint 1.1)
+
+`IntegrationEvent.idempotencyKey` tem `@unique` global. O service:
+
+- Usa o header `Idempotency-Key` quando presente.
+- Fallback: SHA-256 do raw body.
+- Em colisão, devolve o evento existente (`alreadyProcessed: true`) sem reprocessar.
+
+Isso protege contra retries do provedor (Meta retenta até 24h em caso de timeout) e contra replays maliciosos com o mesmo payload.
 
 ## Production checklist
 

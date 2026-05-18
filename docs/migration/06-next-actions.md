@@ -158,3 +158,36 @@ Quando você confirmar as decisões pendentes acima, a ordem é:
 5. Migrar Botify, CRM, SAA → skill `migrate-product-to-monorepo` (3x)
 6. Criar packages `ai-contracts` e `shared-types`
 7. Bridges entre apps → skill `create-bridge-endpoint`
+
+---
+
+## Bloco E — Sprint 1.1: Foundation hardening ✅ CONCLUÍDA
+
+Sprint executada após o commit `67734b8` (foundation sprint) para fechar as brechas que sobraram antes de integrar CRM/Botify/SAA de verdade.
+
+### Entregáveis
+
+| Bloco | Status | Resumo |
+|---|---|---|
+| 1 — Schema | ✅ | `AIUsageLog` enriquecido (analysisId, operationType, promptVersion, currency, status, errorCode/errorMessage). Novo model `IntegrationEvent` (HMAC + idempotency). Migração `20260518100000_sprint_1_1_ai_usage_and_integration_events`. `.gitignore` agora versiona migrations. |
+| 2 — Bridges | ✅ | `RawBodyMiddleware` em `/crm-bridge`, `/ads-bridge`, `/bot-bridge`. HMAC-SHA256 sobre raw body com `timingSafeEqual`. Idempotency via `IntegrationEvent.idempotencyKey @unique`. Filas Bull por provider. |
+| 3 — InsightAI | ✅ | `BullModule.registerQueue('insight-ai-analysis')` + `AnalyzeConversationProcessor`. Endpoints `POST /insight-ai/analyze/:phone` (async default, `?sync=true` para debug) e `GET /insight-ai/jobs/:jobId`. Cast `(prisma as any)` removidos. `AIUsageLog` gravado em cada chamada. |
+| 4a — Tenant helper | ✅ | `common/utils/tenant-context.ts` com `ensureTenant`, `withTenant`, `ensureJobTenant` (refusa `default-tenant` em produção). |
+| 4b — Retrofit | ✅ | `tenantId` exigido em segments, tags, blocklist, reports (17 métodos), conversations.create. Propagado em api-messages, campaigns, webhooks (Evolution + Cloud API), processors e websocket gateway. Tenant para webhooks vem trusted do `App.tenantId` via `LinesStock.appId`. |
+| 5 — Tests | ✅ | 50 testes Jest verdes. `tenant-context.spec`, `jwt.strategy.spec`, `contacts.service.spec`, `apps.service.spec`, `bridge-helpers.spec`, `auth.service.spec` atualizado. |
+| 6 — CI | ✅ | `.github/workflows/ci.yml` com 3 jobs: backend-build (tsc + jest + nest build), backend-integration (Postgres 16 + Redis 7 + `prisma migrate deploy`), frontends-build (matriz dos 4 apps). PR template em `.github/pull_request_template.md`. |
+| 7 — Docs | ✅ | `03-multitenancy.md`, `04-security.md`, `05-ai-governance.md` atualizados com a nova superfície. |
+
+### FIXMEs pendentes (Sprint 1.2)
+
+- `api-messages.service`: hoje usa `'default-tenant'` porque `ApiKeyGuard` só valida o `API_KEY` estático do `.env`. Plano: criar tabela `TenantApiKey` e resolver tenant via lookup do hash da key apresentada.
+- `campaigns.service.uploadCampaign()`: idem — propagar `tenantId` do usuário autenticado pelo controller.
+- `campaigns.processor`: hoje resolve tenant via `line.appId`; ideal é passar `tenantId` direto no payload do job ao enqueue.
+- `message-queue.service`: idem — incluir tenantId no payload do scheduler.
+- `AI_PRICING` constante hardcoded → mover para tabela `ModelPricing` por modelo/versão/data.
+- Retrofit de `tenantId` em `lines`, `system-events`, `archiving`, `conversations` (demais métodos) ainda pendentes.
+
+### Riscos conhecidos
+
+- `prisma.config.ts` e `prisma/seed.ts` importam `@prisma/config` e `dotenv` que não estão nas devDependencies do backend. Isso quebra `tsc --noEmit` em 2 arquivos (não inclui o `src/`). Adicionar essas deps no Bloco inicial da Sprint 1.2.
+- O job `frontends-build` no CI está marcado `continue-on-error: true` até alinharmos os 4 frontends — falhas neles **não bloqueiam** PRs hoje.

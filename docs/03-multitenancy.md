@@ -42,6 +42,48 @@ Acesso via decorator `@CurrentUser()` (em `common/decorators/current-user.decora
 
 `tenantId` vem do JWT (após o usuário escolher workspace ativo, no retrofit multi-tenant). **Nunca** confiar em `tenantId` no body se ele pode ser derivado da autenticação.
 
+### `JwtStrategy` em produção (Sprint 1.1)
+
+A `JwtStrategy` recusa qualquer token que chegue **sem `tenantId`** ou com `tenantId === 'default-tenant'` quando `NODE_ENV === 'production'`. Em desenvolvimento e teste o valor `default-tenant` continua aceito por compatibilidade — apenas para o ambiente local.
+
+```typescript
+// apps/omniconnect-backend/src/auth/strategies/jwt.strategy.ts
+const tenantId = payload.tenantId;
+if (
+  process.env.NODE_ENV === 'production' &&
+  (!tenantId || tenantId === 'default-tenant')
+) {
+  throw new UnauthorizedException('Tenant not explicitly defined in production context');
+}
+return { ...user, tenantId: tenantId || 'default-tenant' };
+```
+
+### Helper `ensureTenant` (Sprint 1.1)
+
+Controllers passam o `user` por `ensureTenant(user)` antes de delegar para o service. Isso centraliza a regra "sem tenant em produção" e elimina checks ad-hoc.
+
+```typescript
+// apps/omniconnect-backend/src/common/utils/tenant-context.ts
+import { ensureTenant, withTenant, ensureJobTenant } from '../common/utils/tenant-context';
+
+// Controller
+@Get()
+findAll(@CurrentUser() user: any) {
+  return this.svc.findAll(ensureTenant(user));
+}
+
+// Service / dynamic filter builder
+const where = withTenant(tenantId, baseFilter);
+return this.prisma.lead.findMany({ where });
+
+// Bull processor
+@Process('analyze-conversation')
+handle(job: Job<{ tenantId: string; conversationId: number }>) {
+  const tenantId = ensureJobTenant(job.data); // mesma semântica, source = payload
+  // ...
+}
+```
+
 ## Query rule
 
 ```typescript
@@ -68,13 +110,43 @@ Cross-tenant é **proibido** exceto para `admin` em operações de plataforma (s
 
 Tenant resolvido a partir de **credencial de integração confiável**:
 
-- ID da conexão de canal (registrada por tenant)
+- ID da conexão de canal (registrada por tenant via `IntegrationConnection`)
 - Token do provedor
 - Webhook secret
-- Mapeamento de número de telefone → tenant
+- Mapeamento de número de telefone → tenant (resolvido via `App.tenantId` da `LinesStock` que recebeu o evento)
 - API key
 
 **Nunca** confiar em campo `tenantId`/`companyId`/`accountId` no payload — atacante controla.
+
+### Bridges externos (CRM / Ads / Bot — Sprint 1.1)
+
+Endpoints `/crm-bridge/webhook`, `/ads-bridge/webhook` e `/bot-bridge/webhook` exigem:
+
+1. **`x-integration-id`** — identifica a `IntegrationConnection` ativa do tenant.
+2. **`x-signature`** — HMAC-SHA256 do **raw body** assinado com `IntegrationConnection.secretHash`. Verificado com `crypto.timingSafeEqual`.
+3. **`idempotency-key`** (opcional) — fallback determinístico: SHA-256 do raw body.
+
+O service:
+
+- Busca a connection pelo `integrationId`.
+- Valida via `assertActiveConnection` (provider correto, status `active`, tenant ativo).
+- Em `NODE_ENV=production`, valida HMAC sobre o raw body.
+- Grava um `IntegrationEvent` (com `idempotencyKey` único) e enfileira no Bull para processamento assíncrono.
+
+Em desenvolvimento, se a connection não existir, o service **registra um warning** e cai em `default-tenant` para não travar a DX local. Em produção, falha duro com `NotFoundException`.
+
+### Webhooks Meta Cloud API / Evolution (Sprint 1.1)
+
+Esses não passam por `IntegrationConnection` — vêm direto do provedor. A regra continua valendo: `tenantId` é resolvido por **lookup confiável no banco**:
+
+```typescript
+// apps/omniconnect-backend/src/webhooks/cloud-api-webhook.service.ts
+const line = await prisma.linesStock.findFirst({ where: { numberId: phoneNumberId, oficial: true } });
+const app = await prisma.app.findUnique({ where: { id: line.appId } });
+const tenantId: string = app?.tenantId || 'default-tenant'; // App é trusted
+```
+
+`(line as any).app.tenantId` nunca depende de campos do payload do WhatsApp.
 
 ## Background jobs
 
@@ -117,6 +189,16 @@ Cada módulo crítico **deve** incluir testes de isolamento:
 - Tenant A não deleta Tenant B (delete)
 - Webhook de Tenant A não muta Tenant B
 - Dashboard só agrega dados do tenant
+
+### Cobertura atual (Sprint 1.1)
+
+- `src/common/utils/tenant-context.spec.ts` — `ensureTenant` / `withTenant` / `ensureJobTenant`
+- `src/auth/strategies/jwt.strategy.spec.ts` — bloqueio de `default-tenant` em produção
+- `src/contacts/contacts.service.spec.ts` — todas as queries escopadas por `tenantId`
+- `src/apps/apps.service.spec.ts` — uniqueness por tenant (mesmo nome de App em tenants distintos)
+- `src/integration-events/bridge-helpers.spec.ts` — `verifyHmac` rejeita assinaturas forjadas, body tamperado e secret de outro tenant
+
+Total: 50 testes verdes (`pnpm --filter omniconnect-backend run test`). Próximos blocos devem cobrir leads, conversations e dashboards quando esses módulos existirem.
 
 ## RBAC (Role-Based Access Control)
 
