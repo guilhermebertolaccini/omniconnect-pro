@@ -36,6 +36,7 @@ import { InsightAiModule } from './insight-ai/insight-ai.module';
 import { CrmBridgeModule } from './crm-bridge/crm-bridge.module';
 import { AdsBridgeModule } from './ads-bridge/ads-bridge.module';
 import { BotBridgeModule } from './bot-bridge/bot-bridge.module';
+import { AdPlatformConnectionsModule } from './ad-platform-connections/ad-platform-connections.module';
 
 @Module({
   imports: [
@@ -84,6 +85,7 @@ import { BotBridgeModule } from './bot-bridge/bot-bridge.module';
     CrmBridgeModule,
     AdsBridgeModule,
     BotBridgeModule,
+    AdPlatformConnectionsModule,
   ],
   controllers: [HealthController],
   providers: [PrismaService],
