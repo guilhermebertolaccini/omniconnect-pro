@@ -191,3 +191,35 @@ Sprint executada após o commit `67734b8` (foundation sprint) para fechar as bre
 
 - `prisma.config.ts` e `prisma/seed.ts` importam `@prisma/config` e `dotenv` que não estão nas devDependencies do backend. Isso quebra `tsc --noEmit` em 2 arquivos (não inclui o `src/`). Adicionar essas deps no Bloco inicial da Sprint 1.2.
 - O job `frontends-build` no CI está marcado `continue-on-error: true` até alinharmos os 4 frontends — falhas neles **não bloqueiam** PRs hoje.
+
+---
+
+## Bloco F — Sprint 1.2: Hardening pós-foundation ✅ CONCLUÍDA
+
+Sprint executada para fechar todos os FIXMEs deixados pela Sprint 1.1 e elevar o backend a "production-ready" antes de iniciar a migração dos backends do CRM e SAA.
+
+### Entregáveis
+
+| Bloco | Status | Resumo |
+|---|---|---|
+| 1.2.1 — TenantApiKey | ✅ | Novo model `TenantApiKey` (sha256 do plaintext, prefixo de exibição `oc_…`, scopes, revokedAt, expiresAt, lastUsedAt). `TenantApiKeysService.resolve()` + cache. `ApiKeyGuard` agora resolve `tenantId` via hash-lookup; rejeita tokens desconhecidos em produção, fallback de log apenas em dev. `api-messages.controller` propaga `tenantId` real para o service. |
+| 1.2.2 — Bull tenant context | ✅ | Todo job (`campaigns`, `message-queue`, `insight-ai`) carrega `tenantId` no payload. Processors usam `ensureJobTenant()` para validar antes de qualquer DB write. Queries em `linesStock`, `template` e `conversation` dentro dos processors agora são tenant-scoped. |
+| 1.2.3 — Retrofit tenantId | ✅ | `lines`, `system-events`, `archiving`, `conversations` reescritos: `tenantId` como primeiro argumento de **todos** os métodos públicos, controllers usando `@CurrentUser()` + `ensureTenant()`, queries Prisma 100% filtradas por `tenantId`. Removidos todos os `(prisma as any)` remanescentes. |
+| 1.2.4 — ModelPricing | ✅ | Constante `AI_PRICING` substituída por tabela versionada `ModelPricing` (provider, name, inputPer1k, outputPer1k, currency, effectiveFrom/Until). `ModelPricingService` com cache TTL 5min + fallback resiliente para a baseline antiga. `InsightAiService` agora resolve preço dinamicamente. Migration seed mantém comportamento idêntico para gpt-4o e gpt-4o-mini no dia zero. |
+| 1.2.5 — Build hygiene | ✅ | `dotenv` e `@prisma/config` declarados em `dependencies`. CI refatorado: `omniconnect-frontend` agora é job **bloqueante** (`frontend-core`); botify/crm-imobiliario/smart-ad-automator viraram matriz não-bloqueante (`frontends-satellite`, `continue-on-error: true`) até a migração de backend ser concluída. |
+| 1.2.6 — E2E isolation | ✅ | `src/test/tenant-isolation.e2e.spec.ts`: boot do `ContactsController` com a stack real (`JwtAuthGuard` + `JwtStrategy` + `RolesGuard`) + Prisma in-memory que respeita `where.tenantId`. 13 casos HTTP provam que A não lê/altera/exclui dados de B e que não dá pra contrabandear `tenantId` no body. |
+
+### Resultado
+
+- **96 testes verdes** em 11 suites (era 50/6 na Sprint 1.1).
+- `tsc --noEmit` limpo para `src/` (residual em `prisma.config.ts` e `prisma/seed.ts` some com `pnpm install`).
+- Nenhum `(prisma as any)` cast no `src/`.
+- Nenhum método de service tenant-scoped sem `tenantId` no contrato.
+- CI sinaliza problemas reais no backend e no `omniconnect-frontend` sem ruído dos satélites.
+
+### Próximos passos (Sprint 2 — backends CRM/SAA)
+
+1. Mapear o schema Supabase de cada produto (CRM Imobiliário + SAA) e desenhar a versão Prisma multi-tenant equivalente.
+2. Implementar os módulos no `omniconnect-backend` seguindo o padrão Sprint 1.2 (tenantId obrigatório, JWT, ApiKey quando server-to-server, eventos via Bull, AIUsageLog quando aplicável).
+3. Substituir as chamadas Supabase em cada frontend pelo novo SDK do backend, app por app, com feature flag e Strangler Fig.
+4. Plano detalhado por feature: leads CRM → pipeline → propostas → unidades imobiliárias → OAuth Meta/Google/TikTok → campanhas pagas.
