@@ -655,6 +655,28 @@ model UserTenant {
   @@index([tenantId])
 }
 
+// Versioned price table used by InsightAI and other AI operations to
+// compute cost without hard-coded constants. Lookup by (provider, model,
+// at <= effectiveUntil OR effectiveUntil = null). Prices are per 1k
+// tokens. Currency tracked alongside the rate.
+model ModelPricing {
+  id              Int       @id @default(autoincrement())
+  modelProvider   String
+  modelName       String
+  inputPer1k      Float
+  outputPer1k     Float
+  currency        String    @default("USD")
+  effectiveFrom   DateTime  @default(now())
+  effectiveUntil  DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([modelProvider, modelName])
+  @@index([modelProvider, modelName, effectiveFrom])
+  @@index([modelProvider, modelName, effectiveUntil])
+}
+
 // Server-to-server credential. Stored as sha256(secret), never as plaintext.
 // Resolved by ApiKeyGuard to obtain the tenant context for non-JWT callers
 // (massive CPC dispatch, external integrations, scripts, etc.).

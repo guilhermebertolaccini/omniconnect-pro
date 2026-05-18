@@ -3,15 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { PrismaService } from '../prisma.service';
+import { ModelPricingService } from '../model-pricing/model-pricing.service';
 import { AnalyzeConversationDto } from './dto/analyze-conversation.dto';
 import { buildConversationAnalysisPrompt, PROMPT_VERSION } from './insight-ai.prompt';
 import { ConversationAIResult, NormalizedMessage } from '@omniconnect/ai-contracts';
 import { redactPII } from './pii-redactor.util';
-
-const AI_PRICING: Record<string, { input: number; output: number }> = {
-  'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
-  'gpt-4o': { input: 0.0025, output: 0.01 },
-};
 
 interface EnqueueResult {
   jobId: string;
@@ -35,6 +31,7 @@ export class InsightAiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly pricing: ModelPricingService,
     @InjectQueue('insight-ai') private readonly queue: Queue,
   ) {}
 
@@ -313,8 +310,12 @@ export class InsightAiService {
 
     const promptTokens = usage.prompt_tokens;
     const completionTokens = usage.completion_tokens;
-    const pricing = AI_PRICING[model] || AI_PRICING['gpt-4o-mini'];
-    const estimatedCost = (promptTokens / 1000) * pricing.input + (completionTokens / 1000) * pricing.output;
+    const { cost: estimatedCost, pricing: resolvedPricing } = await this.pricing.estimateCost(
+      'openai',
+      model,
+      promptTokens,
+      completionTokens,
+    );
 
     let usageLogId: number | undefined;
     try {
@@ -329,7 +330,7 @@ export class InsightAiService {
           promptTokens,
           completionTokens,
           estimatedCost,
-          currency: 'USD',
+          currency: resolvedPricing.currency,
           status: 'success',
         },
         select: { id: true },
