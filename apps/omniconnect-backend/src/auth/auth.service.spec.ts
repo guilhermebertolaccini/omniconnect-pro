@@ -2,16 +2,17 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma.service';
-import { UnauthorizedException } from '@nestjs/common';
 
 describe('AuthService', () => {
   let service: AuthService;
-  let prismaService: PrismaService;
-  let jwtService: JwtService;
 
   const mockPrismaService = {
     user: {
       findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    userTenant: {
+      findMany: jest.fn(),
     },
   };
 
@@ -24,20 +25,12 @@ describe('AuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
-        {
-          provide: PrismaService,
-          useValue: mockPrismaService,
-        },
-        {
-          provide: JwtService,
-          useValue: mockJwtService,
-        },
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: JwtService, useValue: mockJwtService },
       ],
     }).compile();
 
     service = module.get<AuthService>(AuthService);
-    prismaService = module.get<PrismaService>(PrismaService);
-    jwtService = module.get<JwtService>(JwtService);
   });
 
   afterEach(() => {
@@ -45,77 +38,103 @@ describe('AuthService', () => {
   });
 
   describe('validateUser', () => {
-    it('deve retornar usuário quando credenciais são válidas', async () => {
+    it('returns the user (without password) on a valid argon2 credential', async () => {
       const mockUser = {
         id: 1,
         email: 'test@example.com',
-        password: '$2b$10$hashedpassword',
+        password: '$argon2id$v=19$m=65536,t=3,p=4$hashedpassword',
         name: 'Test User',
         role: 'operator',
       };
 
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-      // Mock bcrypt compare
-      jest.spyOn(require('bcrypt'), 'compare').mockResolvedValue(true);
+      jest.spyOn(require('argon2'), 'verify').mockResolvedValue(true);
 
       const result = await service.validateUser('test@example.com', 'password');
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         id: mockUser.id,
         email: mockUser.email,
         name: mockUser.name,
         role: mockUser.role,
       });
+      expect((result as any).password).toBeUndefined();
     });
 
-    it('deve lançar UnauthorizedException quando usuário não existe', async () => {
+    it('returns null when user does not exist', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
 
-      await expect(
-        service.validateUser('invalid@example.com', 'password'),
-      ).rejects.toThrow(UnauthorizedException);
+      const result = await service.validateUser(
+        'invalid@example.com',
+        'password',
+      );
+      expect(result).toBeNull();
     });
 
-    it('deve lançar UnauthorizedException quando senha é inválida', async () => {
+    it('returns null when password does not match', async () => {
       const mockUser = {
         id: 1,
         email: 'test@example.com',
-        password: '$2b$10$hashedpassword',
+        password: '$argon2id$hash',
       };
-
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-      jest.spyOn(require('bcrypt'), 'compare').mockResolvedValue(false);
+      jest.spyOn(require('argon2'), 'verify').mockResolvedValue(false);
 
-      await expect(
-        service.validateUser('test@example.com', 'wrongpassword'),
-      ).rejects.toThrow(UnauthorizedException);
+      const result = await service.validateUser(
+        'test@example.com',
+        'wrongpassword',
+      );
+      expect(result).toBeNull();
     });
   });
 
   describe('login', () => {
-    it('deve retornar token JWT quando login é bem-sucedido', async () => {
+    it('signs JWT with tenantId resolved from UserTenant table', async () => {
       const mockUser = {
         id: 1,
         email: 'test@example.com',
         name: 'Test User',
-        role: 'operator',
+        role: 'admin',
+        segment: 1,
+        line: null,
+        status: 'Offline',
+        oneToOneActive: false,
       };
-
       mockJwtService.sign.mockReturnValue('mock-jwt-token');
+      mockPrismaService.userTenant.findMany.mockResolvedValue([
+        { tenantId: 'tenant-a' },
+      ]);
 
       const result = await service.login(mockUser);
 
-      expect(result).toEqual({
-        access_token: 'mock-jwt-token',
-        user: mockUser,
-      });
+      expect(result.access_token).toBe('mock-jwt-token');
+      expect(result.user.tenantId).toBe('tenant-a');
       expect(mockJwtService.sign).toHaveBeenCalledWith({
-        sub: mockUser.id,
         email: mockUser.email,
+        sub: mockUser.id,
         role: mockUser.role,
+        tenantId: 'tenant-a',
+      });
+      // Non-operator users should not have their status auto-flipped to Online.
+      expect(mockPrismaService.user.update).not.toHaveBeenCalled();
+    });
+
+    it('flips operator status to Online on login', async () => {
+      mockJwtService.sign.mockReturnValue('mock-jwt-token');
+      mockPrismaService.userTenant.findMany.mockResolvedValue([]);
+      mockPrismaService.user.update.mockResolvedValue({});
+
+      await service.login({
+        id: 7,
+        email: 'op@example.com',
+        name: 'Op',
+        role: 'operator',
+      });
+
+      expect(mockPrismaService.user.update).toHaveBeenCalledWith({
+        where: { id: 7 },
+        data: { status: 'Online' },
       });
     });
   });
 });
-
-
