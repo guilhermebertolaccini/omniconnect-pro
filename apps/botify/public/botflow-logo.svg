@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="BotFlow logo">
+  <defs>
+    <linearGradient id="botflow-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="44" fill="url(#botflow-grad)"/>
+  <!-- Chat bubble -->
+  <path d="M45 55h110c6.6 0 12 5.4 12 12v76c0 6.6-5.4 12-12 12H95l-30 30v-30H45c-6.6 0-12-5.4-12-12V67c0-6.6 5.4-12 12-12z" fill="white" opacity="0.95"/>
+  <!-- Letter B stylized -->
+  <path d="M75 75v50h22c11 0 18-5 18-12.5S105 100 94 100c11 0 18-5 18-12.5S108 75 97 75H75zm10 10h12c6 0 9 2.5 9 6.5s-3 6.5-9 6.5H85V85zm0 25h12c6 0 9 2.5 9 6.5s-3 6.5-9 6.5H85V110z" fill="#6366f1"/>
+</svg>
