@@ -56,6 +56,7 @@ export interface Conversation {
 
 export interface WhatsAppConfig {
   botId: string;
+  metaAccountId?: string;
   businessAccountId: string;
   phoneNumberId: string;
   accessToken: string;

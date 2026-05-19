@@ -15,7 +15,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { botifyDomainApi } from '@/services/botify-domain-api';
+import { metaAccountsService } from '@/services/meta-accounts-service';
 import { getBotifyAuthSource } from '@/lib/omniconnectClient';
+import { Link } from 'react-router-dom';
 import type { Bot, ConversationFlow, WhatsAppConfig } from '@/types/bot';
 import {
   Settings as SettingsIcon,
@@ -34,6 +36,7 @@ import { toast } from 'sonner';
 import { useSearchParams } from 'react-router-dom';
 
 const EMPTY_FORM = {
+  metaAccountId: '',
   businessAccountId: '',
   phoneNumberId: '',
   accessToken: '',
@@ -51,6 +54,7 @@ function microserviceWebhookUrl(): string {
 
 function configToForm(config: WhatsAppConfig) {
   return {
+    metaAccountId: config.metaAccountId ?? '',
     businessAccountId: config.businessAccountId ?? '',
     phoneNumberId: config.phoneNumberId ?? '',
     accessToken: config.accessToken ?? '',
@@ -74,6 +78,13 @@ export default function Settings() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
+  const [metaAccounts, setMetaAccounts] = useState<
+    Awaited<ReturnType<typeof metaAccountsService.loadAccounts>>
+  >([]);
+
+  useEffect(() => {
+    void metaAccountsService.loadAccounts().then(setMetaAccounts).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const loadBots = async () => {
@@ -221,12 +232,52 @@ export default function Settings() {
               <>
                 <Card>
                   <CardHeader>
+                    <CardTitle className="text-base">Conta Meta (fonte única)</CardTitle>
+                    <CardDescription>
+                      Credenciais em{' '}
+                      <Link to="/chips" className="underline text-primary">
+                        Chips WhatsApp
+                      </Link>
+                      . Vincule o bot à conta Omni.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      <Label>Conta Meta</Label>
+                      <Select
+                        value={formData.metaAccountId || '_none'}
+                        onValueChange={(v) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            metaAccountId: v === '_none' ? '' : v,
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione a conta" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_none">— Nenhuma —</SelectItem>
+                          {metaAccounts.map((acc) => (
+                            <SelectItem key={acc.id} value={acc.id}>
+                              {acc.name}
+                              {acc.isActive ? ' (ativa)' : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
                     <div className="flex items-center gap-2">
                       <Key className="h-5 w-5 text-primary" />
                       <CardTitle>Credenciais da API</CardTitle>
                     </div>
                     <CardDescription>
-                      WhatsApp Business API (Meta Cloud) — usadas no envio outbound
+                      Overrides do bot (token principal na conta Meta / Chips)
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">

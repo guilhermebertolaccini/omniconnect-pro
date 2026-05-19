@@ -133,35 +133,93 @@ const Chips = () => {
   const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false);
   const [selectedNumber, setSelectedNumber] = useState<WhatsAppNumber | null>(null);
   const [viewingAnalytics, setViewingAnalytics] = useState<WhatsAppNumber | null>(null);
-  const [activeTab, setActiveTab] = useState(() => 
-    metaAccountsService.hasAccounts() ? 'numbers' : 'config'
-  );
+  const [activeTab, setActiveTab] = useState('config');
   const [apiProvider, setApiProvider] = useState<ApiProvider>(() => {
     const saved = localStorage.getItem('whatsapp_api_provider');
     return (saved as ApiProvider) || 'meta';
   });
 
-  // Load active account on mount
-  useEffect(() => {
-    const account = metaAccountsService.getActiveAccount();
-    if (account) {
-      setActiveAccount(account);
-      setIsConnected(true);
-      setConnectionName(account.name);
-      metaGraphAPI.setAccessToken(account.accessToken);
-      loadDataFromAPI(account.businessManagerId);
+  const loadDataFromAPI = useCallback(async (bmId?: string) => {
+    const targetBmId = bmId || activeAccount?.businessManagerId || businessManagerId;
+    if (!targetBmId) return;
+
+    setIsLoading(true);
+    try {
+      const data = await metaGraphAPI.getAllData(targetBmId);
+
+      setBusinessManagers(data.businessManagers);
+      setWabas(data.wabas);
+      setNumbers(data.phoneNumbers);
+
+      const active = metaAccountsService.getActiveAccount();
+      if (active && data.phoneNumbers.length > 0) {
+        await metaAccountsService.updateAccount(active.id, {
+          phoneNumberIds: data.phoneNumbers.map((p) => p.id),
+          metaWabaAccountId: data.wabas[0]?.id ?? active.metaWabaAccountId,
+        });
+      }
+
+      if (data.phoneNumbers.length > 0) {
+        const triggeredAlerts = await alertService.checkAndTriggerAlerts(data.phoneNumbers);
+        if (triggeredAlerts.length > 0) {
+          toast.warning(`${triggeredAlerts.length} alerta(s) disparado(s)!`, {
+            description: 'Verifique a aba de Alertas',
+          });
+        }
+      }
+
+      if (data.wabas.length > 0) {
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 30);
+
+        const analyticsData = await metaGraphAPI.getMessageAnalytics(
+          data.wabas[0].id,
+          startDate,
+          endDate,
+        );
+
+        if (analyticsData.analytics.length > 0) {
+          setAnalytics(analyticsData.analytics);
+          setMetrics(analyticsData.metrics);
+        } else {
+          setAnalytics(generateMockAnalytics());
+        }
+
+        const failures = await metaGraphAPI.getTemplateAnalytics(data.wabas[0].id);
+        if (failures.length > 0) {
+          setFailureReasons(failures);
+        }
+      }
+
+      setSpamReports(generateMockSpamReports());
+      toast.success('Dados atualizados com sucesso!');
+    } catch (error) {
+      console.error('Error loading data:', error);
+      toast.error('Erro ao carregar dados da API Meta');
+    } finally {
+      setIsLoading(false);
     }
-  }, []);
+  }, [activeAccount, businessManagerId]);
 
   // Handle account change
-  const handleAccountChange = useCallback((account: MetaAccount) => {
-    setActiveAccount(account);
-    setIsConnected(true);
-    setConnectionName(account.name);
-    metaGraphAPI.setAccessToken(account.accessToken);
-    metaGraphAPI.clearCache();
-    loadDataFromAPI(account.businessManagerId);
-  }, []);
+  const handleAccountChange = useCallback(async (account: MetaAccount) => {
+    try {
+      const token =
+        account.accessToken && !account.accessToken.startsWith('••')
+          ? account.accessToken
+          : await metaAccountsService.getAccessTokenForGraph(account.id);
+      const withToken = { ...account, accessToken: token };
+      setActiveAccount(withToken);
+      setIsConnected(true);
+      setConnectionName(account.name);
+      metaGraphAPI.setAccessToken(token);
+      metaGraphAPI.clearCache();
+      await loadDataFromAPI(account.businessManagerId);
+    } catch {
+      toast.error('Erro ao carregar conta Meta');
+    }
+  }, [loadDataFromAPI]);
 
   const handleAccountAdded = useCallback((account: MetaAccount) => {
     handleAccountChange(account);
@@ -212,17 +270,17 @@ const Chips = () => {
         const displayName = businessManagerName || result.name || 'Nova Conta';
         
         // Add as new account
-        const newAccount = metaAccountsService.addAccount({
+        const newAccount = await metaAccountsService.addAccount({
           name: displayName,
           businessManagerId,
           accessToken,
         });
-        
-        setActiveAccount(newAccount);
+
+        setActiveAccount({ ...newAccount, accessToken });
         setIsConnected(true);
         setConnectionName(displayName);
-        
-        toast.success(`Conta "${displayName}" adicionada!`);
+
+        toast.success(`Conta "${displayName}" adicionada no Omni!`);
         
         // Clear form
         setAccessToken('');
@@ -244,72 +302,34 @@ const Chips = () => {
     }
   };
 
-  const loadDataFromAPI = useCallback(async (bmId?: string) => {
-    const targetBmId = bmId || activeAccount?.businessManagerId || businessManagerId;
-    if (!targetBmId) return;
-
-    setIsLoading(true);
-    try {
-      // Fetch all data from Meta API
-      const data = await metaGraphAPI.getAllData(targetBmId);
-      
-      setBusinessManagers(data.businessManagers);
-      setWabas(data.wabas);
-      setNumbers(data.phoneNumbers);
-
-      // Check for quality alerts
-      if (data.phoneNumbers.length > 0) {
-        const triggeredAlerts = await alertService.checkAndTriggerAlerts(data.phoneNumbers);
-        if (triggeredAlerts.length > 0) {
-          toast.warning(`${triggeredAlerts.length} alerta(s) disparado(s)!`, {
-            description: 'Verifique a aba de Alertas',
-          });
+  useEffect(() => {
+    void (async () => {
+      try {
+        const imported = await metaAccountsService.migrateLegacyLocalStorageIfEmpty();
+        if (imported > 0) {
+          toast.info(`${imported} conta(s) migrada(s) para o Omni backend`);
         }
+        await metaAccountsService.loadAccounts();
+        const account = metaAccountsService.getActiveAccount();
+        if (account) {
+          const token = await metaAccountsService.getAccessTokenForGraph(account.id);
+          const withToken = { ...account, accessToken: token };
+          setActiveAccount(withToken);
+          setIsConnected(true);
+          setConnectionName(account.name);
+          setActiveTab('numbers');
+          metaGraphAPI.setAccessToken(token);
+          await loadDataFromAPI(account.businessManagerId);
+        }
+      } catch {
+        toast.error('Erro ao carregar contas Meta (Omni)');
       }
+    })();
+  }, [loadDataFromAPI]);
 
-      // Fetch analytics for the first WABA if available
-      if (data.wabas.length > 0) {
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - 30);
-
-        const analyticsData = await metaGraphAPI.getMessageAnalytics(
-          data.wabas[0].id,
-          startDate,
-          endDate
-        );
-
-        if (analyticsData.analytics.length > 0) {
-          setAnalytics(analyticsData.analytics);
-          setMetrics(analyticsData.metrics);
-        } else {
-          // Use mock data if no analytics available
-          setAnalytics(generateMockAnalytics());
-        }
-
-        // Fetch failure reasons
-        const failures = await metaGraphAPI.getTemplateAnalytics(data.wabas[0].id);
-        if (failures.length > 0) {
-          setFailureReasons(failures);
-        }
-      }
-
-      // Set mock spam reports (not available from API)
-      setSpamReports(generateMockSpamReports());
-
-      toast.success('Dados atualizados com sucesso!');
-    } catch (error) {
-      console.error('Error loading data:', error);
-      toast.error('Erro ao carregar dados da API Meta');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [activeAccount, businessManagerId]);
-
-  const handleDisconnectAPI = () => {
-    // This now removes the active account
+  const handleDisconnectAPI = async () => {
     if (activeAccount) {
-      metaAccountsService.deleteAccount(activeAccount.id);
+      await metaAccountsService.deleteAccount(activeAccount.id);
       handleAccountDeleted(activeAccount.id);
     }
   };

@@ -89,7 +89,7 @@ Hoje o Nest Botify cobre **bots/fluxos**; conversas WhatsApp do Botify ainda viv
 | D1 | Webhook Meta/Evolution entra no microserviço | ✅ | `META_APP_SECRET` + verify token env; logs estruturados |
 | D2 | Lookup `botId`/`flowId` por conta ou instância | ✅ | `channelConfig` + `GET /botify/internal/routing/*` |
 | D3 | Config WhatsApp por bot | ✅ | `PATCH /botify/bots/:id/channel` + token encriptado |
-| D4 | Contas Meta / Evolution | ✅ | `PATCH /botify/bots/:id/channel` + Settings (routing + fluxo padrão) |
+| D4 | Contas Meta / Evolution | ✅ | `BotifyMetaAccount` + Chips Omni + Settings (`metaAccountId`) — ver [botify-inbound-channels-flow.md](./botify-inbound-channels-flow.md) |
 | D5 | Webhook logs operacionais | 🟡 | Logger no microserviço; WP só em modo dual/wordpress |
 
 **Aceite D:** nova instalação piloto não instala PHP para receber WhatsApp.

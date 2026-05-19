@@ -105,8 +105,10 @@ export function WebhookConfigPanel({ account, wabas, onConfigUpdated }: WebhookC
         subscribedEvents: selectedEvents,
       };
 
-      const updatedAccount = metaAccountsService.updateAccount(account.id, { webhookConfig });
-      
+      const updatedAccount = await metaAccountsService.updateAccount(account.id, {
+        webhookConfig,
+      });
+
       if (updatedAccount) {
         setIsConfigured(true);
         onConfigUpdated(updatedAccount);
@@ -124,8 +126,15 @@ export function WebhookConfigPanel({ account, wabas, onConfigUpdated }: WebhookC
     }
   };
 
-  const handleRemoveConfig = () => {
-    metaAccountsService.updateAccount(account.id, { webhookConfig: undefined });
+  const handleRemoveConfig = async () => {
+    await metaAccountsService.updateAccount(account.id, {
+      webhookConfig: {
+        callbackUrl: '',
+        verifyToken: '',
+        isConfigured: false,
+        subscribedEvents: [],
+      },
+    });
     setCallbackUrl('');
     setVerifyToken('');
     setSelectedEvents(['messages', 'messaging_postbacks']);

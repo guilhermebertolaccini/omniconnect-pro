@@ -728,6 +728,7 @@ model Tenant {
   botifyFlows           BotifyFlow[]
   botifyConversations   BotifyConversation[]
   botifyMessages        BotifyMessage[]
+  botifyMetaAccounts    BotifyMetaAccount[]
 }
 
 model IntegrationConnection {
@@ -1656,6 +1657,37 @@ enum BotifyMessageRole {
   system
 }
 
+/// Conta Meta/Evolution tenant-scoped — fonte única para Chips + routing de webhooks (G7-D4).
+model BotifyMetaAccount {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  name               String
+  businessManagerId  String?
+  metaWabaAccountId  String?
+  accessTokenEnc     String?
+  webhookCallbackUrl String?
+  webhookVerifyToken String?
+  webhookEvents      Json?
+  phoneNumberIds     Json?
+  defaultBotId       String?
+  defaultFlowId      String?
+  evolutionInstance  String?
+  evolutionApiKeyEnc String?
+  isActive           Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  defaultBot BotifyBot?  @relation("MetaAccountDefaultBot", fields: [defaultBotId], references: [id], onDelete: SetNull)
+  linkedBots BotifyBot[] @relation("BotLinkedMetaAccount")
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@index([tenantId, metaWabaAccountId])
+  @@index([tenantId, businessManagerId])
+  @@index([tenantId, evolutionInstance])
+}
+
 model BotifyBot {
   id               String   @id @default(uuid())
   tenantId         String
@@ -1663,16 +1695,21 @@ model BotifyBot {
   description      String?
   externalSourceId String?
   isActive         Boolean  @default(true)
-  /// WhatsApp Cloud API (piloto G7-D): { phoneNumberId, accessToken, webhookSecret? } — dev/staging; não logar.
+  /// Conta Meta/Evolution canónica (Chips Omni). Credenciais vivem em BotifyMetaAccount.
+  metaAccountId    String?
+  /// Overrides por bot: phoneNumberId, defaultFlowId (legado: JSON completo até migração).
   channelConfig    Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  metaAccount   BotifyMetaAccount?   @relation("BotLinkedMetaAccount", fields: [metaAccountId], references: [id], onDelete: SetNull)
+  metaAccountsDefault BotifyMetaAccount[] @relation("MetaAccountDefaultBot")
   flows         BotifyFlow[]
   conversations BotifyConversation[]
 
   @@index([tenantId])
+  @@index([tenantId, metaAccountId])
   @@unique([tenantId, externalSourceId])
 }
 

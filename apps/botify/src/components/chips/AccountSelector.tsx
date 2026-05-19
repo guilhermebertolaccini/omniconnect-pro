@@ -70,16 +70,22 @@ export function AccountSelector({
   const [accessToken, setAccessToken] = useState('');
   const [isTestingConnection, setIsTestingConnection] = useState(false);
 
-  const refreshAccounts = () => {
+  const refreshAccounts = async () => {
+    await metaAccountsService.loadAccounts();
     setAccounts(metaAccountsService.getAccounts());
   };
 
-  const handleSwitchAccount = (account: MetaAccount) => {
-    const updatedAccount = metaAccountsService.setActiveAccount(account.id);
-    if (updatedAccount) {
-      refreshAccounts();
-      onAccountChange(updatedAccount);
+  const handleSwitchAccount = async (account: MetaAccount) => {
+    try {
+      const updatedAccount = await metaAccountsService.setActiveAccount(account.id);
+      if (!updatedAccount) return;
+      const token = await metaAccountsService.getAccessTokenForGraph(updatedAccount.id);
+      metaGraphAPI.setAccessToken(token);
+      await refreshAccounts();
+      onAccountChange({ ...updatedAccount, accessToken: token });
       toast.success(`Conta "${account.name}" ativada`);
+    } catch {
+      toast.error('Erro ao ativar conta');
     }
   };
 
@@ -108,14 +114,14 @@ export function AccountSelector({
         return;
       }
 
-      const newAccount = metaAccountsService.addAccount({
+      const newAccount = await metaAccountsService.addAccount({
         name,
         businessManagerId,
         accessToken,
       });
 
-      refreshAccounts();
-      onAccountAdded(newAccount);
+      await refreshAccounts();
+      onAccountAdded({ ...newAccount, accessToken });
       setAddDialogOpen(false);
       resetForm();
       toast.success('Conta adicionada com sucesso!');
@@ -150,14 +156,16 @@ export function AccountSelector({
       if (businessManagerId) updates.businessManagerId = businessManagerId;
       if (accessToken) updates.accessToken = accessToken;
 
-      metaAccountsService.updateAccount(selectedAccount.id, updates);
-      refreshAccounts();
-      
-      if (selectedAccount.isActive) {
-        const updatedAccount = metaAccountsService.getAccountById(selectedAccount.id);
-        if (updatedAccount) {
-          onAccountChange(updatedAccount);
-        }
+      const updatedAccount = await metaAccountsService.updateAccount(
+        selectedAccount.id,
+        updates,
+      );
+      await refreshAccounts();
+
+      if (selectedAccount.isActive && updatedAccount) {
+        const token = await metaAccountsService.getAccessTokenForGraph(updatedAccount.id);
+        metaGraphAPI.setAccessToken(token);
+        onAccountChange({ ...updatedAccount, accessToken: token });
       }
 
       setEditDialogOpen(false);
@@ -170,11 +178,11 @@ export function AccountSelector({
     }
   };
 
-  const handleDeleteAccount = () => {
+  const handleDeleteAccount = async () => {
     if (!selectedAccount) return;
 
-    metaAccountsService.deleteAccount(selectedAccount.id);
-    refreshAccounts();
+    await metaAccountsService.deleteAccount(selectedAccount.id);
+    await refreshAccounts();
     onAccountDeleted(selectedAccount.id);
     setDeleteDialogOpen(false);
     setSelectedAccount(null);

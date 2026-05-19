@@ -196,6 +196,7 @@ export const omniconnectBotifyApi = {
       {
         method: 'PATCH',
         body: JSON.stringify({
+          metaAccountId: patch.metaAccountId,
           businessAccountId: patch.businessAccountId,
           phoneNumberId: patch.phoneNumberId,
           accessToken: patch.accessToken,
@@ -208,6 +209,45 @@ export const omniconnectBotifyApi = {
       },
     );
     return mapOmniChannel(botId, row)!;
+  },
+
+  async listMetaAccounts(): Promise<Record<string, unknown>[]> {
+    return requestJson<Record<string, unknown>[]>('/botify/meta-accounts');
+  },
+
+  async getMetaAccountCredentials(
+    id: string,
+  ): Promise<{ accessToken: string; businessManagerId: string; metaWabaAccountId: string }> {
+    return requestJson(`/botify/meta-accounts/${encodeURIComponent(id)}/credentials`);
+  },
+
+  async createMetaAccount(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return requestJson('/botify/meta-accounts', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  async updateMetaAccount(
+    id: string,
+    body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return requestJson(`/botify/meta-accounts/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+  },
+
+  async activateMetaAccount(id: string): Promise<Record<string, unknown>> {
+    return requestJson(`/botify/meta-accounts/${encodeURIComponent(id)}/activate`, {
+      method: 'POST',
+    });
+  },
+
+  async deleteMetaAccount(id: string): Promise<void> {
+    await requestJson(`/botify/meta-accounts/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
   },
 };
 
@@ -249,6 +289,7 @@ function mapOmniChannel(botId: string, row: Record<string, unknown>): WhatsAppCo
   const lineHealth = row.lineHealth;
   return {
     botId,
+    metaAccountId: String(row.metaAccountId ?? ''),
     businessAccountId: String(row.businessAccountId ?? ''),
     phoneNumberId: String(row.phoneNumberId ?? ''),
     accessToken: String(row.accessToken ?? ''),

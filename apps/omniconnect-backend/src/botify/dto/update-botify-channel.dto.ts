@@ -2,6 +2,12 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateBotifyChannelDto {
+  @ApiPropertyOptional({ description: 'Conta Meta canónica (Chips Omni)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  metaAccountId?: string | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

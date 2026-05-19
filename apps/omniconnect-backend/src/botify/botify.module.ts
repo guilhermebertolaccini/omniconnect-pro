@@ -11,6 +11,7 @@ import { BotifyOperationalHintsService } from './botify-operational-hints.servic
 import { BotifyConversationsService } from './botify-conversations.service';
 import { BotifyChannelConfigService } from './botify-channel-config.service';
 import { BotifyRoutingService } from './botify-routing.service';
+import { BotifyMetaAccountsService } from './botify-meta-accounts.service';
 
 @Module({
   imports: [IntegrationBridgeEmitModule, IntegrationEventsModule, WhatsappCloudModule],
@@ -22,6 +23,7 @@ import { BotifyRoutingService } from './botify-routing.service';
     BotifyOperationalHintsService,
     BotifyChannelConfigService,
     BotifyRoutingService,
+    BotifyMetaAccountsService,
     PrismaService,
   ],
   exports: [BotifyService, BotifyConversationsService, BotifyFlowEngineService],

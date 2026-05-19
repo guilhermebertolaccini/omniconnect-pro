@@ -13,6 +13,7 @@ import {
   BotifyChannelConfigService,
   type BotifyChannelConfig,
 } from './botify-channel-config.service';
+import { BotifyMetaAccountsService } from './botify-meta-accounts.service';
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -33,6 +34,7 @@ export class BotifyConversationsService {
     private readonly prisma: PrismaService,
     private readonly whatsappCloud: WhatsappCloudService,
     private readonly channelConfigService: BotifyChannelConfigService,
+    private readonly metaAccounts: BotifyMetaAccountsService,
   ) {}
 
   parseChannelConfig(raw: unknown): BotifyChannelConfig {
@@ -41,9 +43,13 @@ export class BotifyConversationsService {
 
   async getBotChannel(tenantId: string, botId: string) {
     const bot = await this.assertBotOwned(tenantId, botId);
-    const cfg = this.parseChannelConfig(bot.channelConfig);
+    const cfg = await this.metaAccounts.resolveEffectiveChannelForBot(
+      tenantId,
+      bot,
+    );
     return {
       botId: bot.id,
+      metaAccountId: bot.metaAccountId ?? '',
       businessAccountId: cfg.businessAccountId ?? '',
       phoneNumberId: cfg.phoneNumberId ?? '',
       accessToken: cfg.accessToken ? '••••••••' : '',
@@ -61,22 +67,73 @@ export class BotifyConversationsService {
   async updateBotChannel(
     tenantId: string,
     botId: string,
-    patch: BotifyChannelConfig,
+    patch: BotifyChannelConfig & { metaAccountId?: string | null },
   ) {
     await this.assertBotOwned(tenantId, botId);
-    const existing = await this.prisma.botifyBot.findFirst({
+
+    if (patch.metaAccountId !== undefined) {
+      await this.metaAccounts.linkBot(
+        tenantId,
+        botId,
+        patch.metaAccountId?.trim() ? patch.metaAccountId.trim() : null,
+      );
+    }
+
+    const botRow = await this.prisma.botifyBot.findFirst({
       where: { id: botId, tenantId },
-      select: { channelConfig: true },
+      select: { metaAccountId: true, channelConfig: true },
     });
-    await this.prisma.botifyBot.update({
-      where: { id: botId },
-      data: {
-        channelConfig: this.channelConfigService.toStorageJson(
-          existing?.channelConfig,
-          patch,
-        ),
-      },
-    });
+
+    if (botRow?.metaAccountId) {
+      const accountPatch: Record<string, string | undefined> = {};
+      if (patch.accessToken && !patch.accessToken.startsWith('••')) {
+        accountPatch.accessToken = patch.accessToken;
+      }
+      if (patch.metaWabaAccountId !== undefined) {
+        accountPatch.metaWabaAccountId = patch.metaWabaAccountId;
+      }
+      if (patch.businessAccountId !== undefined) {
+        accountPatch.businessManagerId = patch.businessAccountId;
+      }
+      if (patch.webhookSecret !== undefined) {
+        accountPatch.webhookVerifyToken = patch.webhookSecret;
+      }
+      if (patch.evolutionInstance !== undefined) {
+        accountPatch.evolutionInstance = patch.evolutionInstance;
+      }
+      if (patch.evolutionApiKey && !patch.evolutionApiKey.startsWith('••')) {
+        accountPatch.evolutionApiKey = patch.evolutionApiKey;
+      }
+      if (patch.defaultFlowId !== undefined) {
+        accountPatch.defaultFlowId = patch.defaultFlowId;
+      }
+      if (Object.keys(accountPatch).length > 0) {
+        await this.metaAccounts.update(tenantId, botRow.metaAccountId, accountPatch);
+      }
+    }
+
+    const botOnly: BotifyChannelConfig = {
+      phoneNumberId: patch.phoneNumberId,
+      defaultFlowId: patch.defaultFlowId,
+    };
+    const hasBotOverride = botOnly.phoneNumberId !== undefined || botOnly.defaultFlowId !== undefined;
+
+    if (!botRow?.metaAccountId || hasBotOverride) {
+      const existing = botRow?.channelConfig;
+      const legacyPatch: BotifyChannelConfig = botRow?.metaAccountId
+        ? botOnly
+        : patch;
+      await this.prisma.botifyBot.update({
+        where: { id: botId },
+        data: {
+          channelConfig: this.channelConfigService.toStorageJson(
+            existing,
+            legacyPatch,
+          ),
+        },
+      });
+    }
+
     return this.getBotChannel(tenantId, botId);
   }
 
@@ -312,7 +369,10 @@ export class BotifyConversationsService {
     }
 
     const bot = await this.assertBotOwned(tenantId, conv.botId);
-    const channel = this.parseChannelConfig(bot.channelConfig);
+    const channel = await this.metaAccounts.resolveEffectiveChannelForBot(
+      tenantId,
+      bot,
+    );
     if (!channel.phoneNumberId?.trim() || !channel.accessToken?.trim()) {
       return {
         success: false,

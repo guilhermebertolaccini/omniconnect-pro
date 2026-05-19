@@ -1,3 +1,9 @@
+/**
+ * Contas Meta/Evolution — fonte única no omniconnect-backend (`/botify/meta-accounts`).
+ * Chips UI usa este serviço; localStorage só para migração legada one-shot.
+ */
+import { omniconnectBotifyApi } from './omniconnect-botify-api';
+
 export interface WebhookConfig {
   callbackUrl: string;
   verifyToken: string;
@@ -11,130 +17,213 @@ export interface MetaAccount {
   name: string;
   businessManagerId: string;
   accessToken: string;
+  metaWabaAccountId?: string;
   createdAt: string;
   lastUsed?: string;
   isActive: boolean;
   webhookConfig?: WebhookConfig;
-  phoneNumberIds?: string[]; // Store associated phone IDs for webhook log matching
+  phoneNumberIds?: string[];
+  defaultBotId?: string | null;
+  defaultFlowId?: string;
+  evolutionInstance?: string;
+  evolutionApiKey?: string;
 }
 
-const STORAGE_KEY = 'meta_accounts';
+const LEGACY_STORAGE_KEY = 'meta_accounts';
+
+function mapApiToMetaAccount(row: {
+  id: string;
+  name: string;
+  businessManagerId: string;
+  metaWabaAccountId?: string;
+  accessToken: string;
+  webhookCallbackUrl: string;
+  webhookVerifyToken: string;
+  webhookEvents: string[];
+  phoneNumberIds: string[];
+  defaultBotId: string | null;
+  defaultFlowId: string;
+  evolutionInstance: string;
+  evolutionApiKey: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}): MetaAccount {
+  return {
+    id: row.id,
+    name: row.name,
+    businessManagerId: row.businessManagerId,
+    accessToken: row.accessToken,
+    metaWabaAccountId: row.metaWabaAccountId,
+    createdAt: row.createdAt,
+    lastUsed: row.updatedAt,
+    isActive: row.isActive,
+    phoneNumberIds: row.phoneNumberIds,
+    defaultBotId: row.defaultBotId,
+    defaultFlowId: row.defaultFlowId,
+    evolutionInstance: row.evolutionInstance,
+    evolutionApiKey: row.evolutionApiKey,
+    webhookConfig: {
+      callbackUrl: row.webhookCallbackUrl,
+      verifyToken: row.webhookVerifyToken,
+      isConfigured: Boolean(row.webhookCallbackUrl && row.webhookVerifyToken),
+      subscribedEvents: row.webhookEvents?.length
+        ? row.webhookEvents
+        : ['messages', 'messaging_postbacks'],
+    },
+  };
+}
+
+function readLegacyAccounts(): Array<{
+  name: string;
+  businessManagerId: string;
+  accessToken: string;
+  metaWabaAccountId?: string;
+}> {
+  try {
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Array<{
+      name?: string;
+      businessManagerId?: string;
+      accessToken?: string;
+      metaWabaAccountId?: string;
+    }>;
+    return parsed
+      .filter((a) => a.accessToken?.trim() && a.businessManagerId?.trim())
+      .map((a) => ({
+        name: a.name?.trim() || 'Conta importada',
+        businessManagerId: a.businessManagerId!.trim(),
+        accessToken: a.accessToken!.trim(),
+        metaWabaAccountId: a.metaWabaAccountId?.trim(),
+      }));
+  } catch {
+    return [];
+  }
+}
 
 class MetaAccountsService {
-  private accounts: MetaAccount[] = [];
+  private cache: MetaAccount[] = [];
 
-  constructor() {
-    this.loadFromStorage();
-  }
-
-  private loadFromStorage(): void {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        this.accounts = JSON.parse(saved);
-      }
-      
-      // Migrate from old storage format if exists
-      const oldToken = localStorage.getItem('meta_access_token');
-      const oldBmId = localStorage.getItem('meta_business_manager_id');
-      const oldBmName = localStorage.getItem('meta_business_manager_name');
-      
-      if (oldToken && oldBmId && this.accounts.length === 0) {
-        this.addAccount({
-          name: oldBmName || 'Conta Principal',
-          businessManagerId: oldBmId,
-          accessToken: oldToken,
-        });
-        
-        // Clean up old storage
-        localStorage.removeItem('meta_access_token');
-        localStorage.removeItem('meta_business_manager_id');
-        localStorage.removeItem('meta_business_manager_name');
-      }
-    } catch (error) {
-      console.error('Error loading Meta accounts:', error);
-      this.accounts = [];
-    }
-  }
-
-  private saveToStorage(): void {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.accounts));
-    } catch (error) {
-      console.error('Error saving Meta accounts:', error);
-    }
+  async loadAccounts(): Promise<MetaAccount[]> {
+    const rows = await omniconnectBotifyApi.listMetaAccounts();
+    this.cache = rows.map(mapApiToMetaAccount);
+    return [...this.cache];
   }
 
   getAccounts(): MetaAccount[] {
-    return [...this.accounts];
+    return [...this.cache];
   }
 
   getActiveAccount(): MetaAccount | null {
-    return this.accounts.find(a => a.isActive) || this.accounts[0] || null;
+    return this.cache.find((a) => a.isActive) ?? this.cache[0] ?? null;
   }
 
   getAccountById(id: string): MetaAccount | undefined {
-    return this.accounts.find(a => a.id === id);
-  }
-
-  addAccount(data: { name: string; businessManagerId: string; accessToken: string }): MetaAccount {
-    // Deactivate all other accounts
-    this.accounts.forEach(a => a.isActive = false);
-
-    const newAccount: MetaAccount = {
-      id: `account_${Date.now()}`,
-      name: data.name,
-      businessManagerId: data.businessManagerId,
-      accessToken: data.accessToken,
-      createdAt: new Date().toISOString(),
-      lastUsed: new Date().toISOString(),
-      isActive: true,
-    };
-
-    this.accounts.push(newAccount);
-    this.saveToStorage();
-    return newAccount;
-  }
-
-  updateAccount(id: string, data: Partial<Omit<MetaAccount, 'id' | 'createdAt'>>): MetaAccount | null {
-    const index = this.accounts.findIndex(a => a.id === id);
-    if (index === -1) return null;
-
-    this.accounts[index] = { ...this.accounts[index], ...data };
-    this.saveToStorage();
-    return this.accounts[index];
-  }
-
-  deleteAccount(id: string): boolean {
-    const index = this.accounts.findIndex(a => a.id === id);
-    if (index === -1) return false;
-
-    const wasActive = this.accounts[index].isActive;
-    this.accounts.splice(index, 1);
-
-    // If deleted account was active, activate the first remaining one
-    if (wasActive && this.accounts.length > 0) {
-      this.accounts[0].isActive = true;
-    }
-
-    this.saveToStorage();
-    return true;
-  }
-
-  setActiveAccount(id: string): MetaAccount | null {
-    const account = this.accounts.find(a => a.id === id);
-    if (!account) return null;
-
-    this.accounts.forEach(a => a.isActive = false);
-    account.isActive = true;
-    account.lastUsed = new Date().toISOString();
-    
-    this.saveToStorage();
-    return account;
+    return this.cache.find((a) => a.id === id);
   }
 
   hasAccounts(): boolean {
-    return this.accounts.length > 0;
+    return this.cache.length > 0;
+  }
+
+  /** Token em claro para chamadas Graph API no browser (tenant JWT). */
+  async getAccessTokenForGraph(accountId: string): Promise<string> {
+    const creds = await omniconnectBotifyApi.getMetaAccountCredentials(accountId);
+    return creds.accessToken;
+  }
+
+  async addAccount(data: {
+    name: string;
+    businessManagerId: string;
+    accessToken: string;
+    metaWabaAccountId?: string;
+    activate?: boolean;
+  }): Promise<MetaAccount> {
+    const row = await omniconnectBotifyApi.createMetaAccount({
+      name: data.name,
+      businessManagerId: data.businessManagerId,
+      accessToken: data.accessToken,
+      metaWabaAccountId: data.metaWabaAccountId,
+      activate: data.activate !== false,
+    });
+    await this.loadAccounts();
+    return mapApiToMetaAccount(row);
+  }
+
+  async updateAccount(
+    id: string,
+    data: Partial<{
+      name: string;
+      businessManagerId: string;
+      accessToken: string;
+      metaWabaAccountId: string;
+      webhookConfig: WebhookConfig;
+      phoneNumberIds: string[];
+      defaultBotId: string | null;
+      defaultFlowId: string;
+      evolutionInstance: string;
+      evolutionApiKey: string;
+    }>,
+  ): Promise<MetaAccount | null> {
+    const row = await omniconnectBotifyApi.updateMetaAccount(id, {
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.businessManagerId !== undefined
+        ? { businessManagerId: data.businessManagerId }
+        : {}),
+      ...(data.accessToken !== undefined ? { accessToken: data.accessToken } : {}),
+      ...(data.metaWabaAccountId !== undefined
+        ? { metaWabaAccountId: data.metaWabaAccountId }
+        : {}),
+      ...(data.webhookConfig
+        ? {
+            webhookCallbackUrl: data.webhookConfig.callbackUrl,
+            webhookVerifyToken: data.webhookConfig.verifyToken,
+            webhookEvents: data.webhookConfig.subscribedEvents,
+          }
+        : {}),
+      ...(data.phoneNumberIds !== undefined ? { phoneNumberIds: data.phoneNumberIds } : {}),
+      ...(data.defaultBotId !== undefined ? { defaultBotId: data.defaultBotId } : {}),
+      ...(data.defaultFlowId !== undefined ? { defaultFlowId: data.defaultFlowId } : {}),
+      ...(data.evolutionInstance !== undefined
+        ? { evolutionInstance: data.evolutionInstance }
+        : {}),
+      ...(data.evolutionApiKey !== undefined ? { evolutionApiKey: data.evolutionApiKey } : {}),
+    });
+    await this.loadAccounts();
+    return mapApiToMetaAccount(row);
+  }
+
+  async setActiveAccount(id: string): Promise<MetaAccount | null> {
+    const row = await omniconnectBotifyApi.activateMetaAccount(id);
+    await this.loadAccounts();
+    return mapApiToMetaAccount(row);
+  }
+
+  async deleteAccount(id: string): Promise<boolean> {
+    await omniconnectBotifyApi.deleteMetaAccount(id);
+    await this.loadAccounts();
+    return true;
+  }
+
+  /** Migra contas do localStorage para o Omni (uma vez, se API vazia). */
+  async migrateLegacyLocalStorageIfEmpty(): Promise<number> {
+    const existing = await this.loadAccounts();
+    if (existing.length > 0) return 0;
+
+    const legacy = readLegacyAccounts();
+    let imported = 0;
+    for (const [i, acc] of legacy.entries()) {
+      await this.addAccount({
+        ...acc,
+        activate: i === 0,
+      });
+      imported += 1;
+    }
+    if (imported > 0) {
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
+    return imported;
   }
 }
 

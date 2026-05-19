@@ -20,6 +20,11 @@ describe('BotifyConversationsService — tenant isolation', () => {
     isConnected: jest.fn().mockReturnValue(false),
     lineHealth: jest.fn().mockReturnValue('disconnected'),
   };
+  const metaAccounts = {
+    resolveEffectiveChannelForBot: jest.fn().mockResolvedValue({}),
+    linkBot: jest.fn(),
+    update: jest.fn(),
+  };
 
   beforeEach(() => {
     prisma = {
@@ -30,6 +35,7 @@ describe('BotifyConversationsService — tenant isolation', () => {
       prisma as unknown as PrismaService,
       whatsappCloud as never,
       channelConfigService as never,
+      metaAccounts as never,
     );
   });
 

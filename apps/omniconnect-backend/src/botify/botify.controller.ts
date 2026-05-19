@@ -19,6 +19,9 @@ import { ensureTenant, RequestUserLike } from '../common/utils/tenant-context';
 import { BotifyService } from './botify.service';
 import { BotifyConversationsService } from './botify-conversations.service';
 import { BotifyFlowEngineService } from './botify-flow-engine.service';
+import { BotifyMetaAccountsService } from './botify-meta-accounts.service';
+import { CreateBotifyMetaAccountDto } from './dto/create-botify-meta-account.dto';
+import { UpdateBotifyMetaAccountDto } from './dto/update-botify-meta-account.dto';
 import { ResolveBotifyConversationDto } from './dto/resolve-botify-conversation.dto';
 import { AppendBotifyMessageDto } from './dto/append-botify-message.dto';
 import { SendBotifyConversationDto } from './dto/send-botify-conversation.dto';
@@ -52,7 +55,80 @@ export class BotifyController {
     private readonly botify: BotifyService,
     private readonly conversations: BotifyConversationsService,
     private readonly engine: BotifyFlowEngineService,
+    private readonly metaAccounts: BotifyMetaAccountsService,
   ) {}
+
+  // --- Meta accounts (Chips Omni — fonte única) ---
+  @Get('meta-accounts')
+  @Roles(Role.admin, Role.supervisor, Role.digital)
+  @ApiOperation({ summary: 'Listar contas Meta/Evolution do tenant' })
+  listMetaAccounts(@CurrentUser() user: RequestUserLike) {
+    return this.metaAccounts.list(ensureTenant(user));
+  }
+
+  @Get('meta-accounts/active')
+  @Roles(...BOTIFY_ROLES)
+  getActiveMetaAccount(@CurrentUser() user: RequestUserLike) {
+    return this.metaAccounts.getActive(ensureTenant(user));
+  }
+
+  @Get('meta-accounts/:id')
+  @Roles(Role.admin, Role.supervisor, Role.digital)
+  getMetaAccount(
+    @CurrentUser() user: RequestUserLike,
+    @Param('id') id: string,
+  ) {
+    return this.metaAccounts.get(ensureTenant(user), id);
+  }
+
+  @Get('meta-accounts/:id/credentials')
+  @Roles(Role.admin, Role.supervisor, Role.digital)
+  @ApiOperation({
+    summary: 'Token Meta em claro para Graph API (Chips UI; nunca logar)',
+  })
+  getMetaAccountCredentials(
+    @CurrentUser() user: RequestUserLike,
+    @Param('id') id: string,
+  ) {
+    return this.metaAccounts.getCredentials(ensureTenant(user), id);
+  }
+
+  @Post('meta-accounts')
+  @Roles(Role.admin, Role.supervisor, Role.digital)
+  createMetaAccount(
+    @CurrentUser() user: RequestUserLike,
+    @Body() dto: CreateBotifyMetaAccountDto,
+  ) {
+    return this.metaAccounts.create(ensureTenant(user), dto);
+  }
+
+  @Patch('meta-accounts/:id')
+  @Roles(Role.admin, Role.supervisor, Role.digital)
+  updateMetaAccount(
+    @CurrentUser() user: RequestUserLike,
+    @Param('id') id: string,
+    @Body() dto: UpdateBotifyMetaAccountDto,
+  ) {
+    return this.metaAccounts.update(ensureTenant(user), id, dto);
+  }
+
+  @Post('meta-accounts/:id/activate')
+  @Roles(Role.admin, Role.supervisor, Role.digital)
+  activateMetaAccount(
+    @CurrentUser() user: RequestUserLike,
+    @Param('id') id: string,
+  ) {
+    return this.metaAccounts.activate(ensureTenant(user), id);
+  }
+
+  @Delete('meta-accounts/:id')
+  @Roles(Role.admin, Role.supervisor, Role.digital)
+  deleteMetaAccount(
+    @CurrentUser() user: RequestUserLike,
+    @Param('id') id: string,
+  ) {
+    return this.metaAccounts.remove(ensureTenant(user), id);
+  }
 
   // --- Bots ---
   @Get('bots')
