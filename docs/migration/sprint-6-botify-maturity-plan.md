@@ -10,6 +10,8 @@ Objetivo: **reduzir o desvio** entre `apps/botify` e os outros satélites (`crm-
 - Piloto ponta a ponta (inclui passo Botify): `docs/migration/pilot-flow-lead-to-recovery.md`.
 - Runbook operacional (env, HMAC, troubleshooting): `docs/operations/botify-omniconnect-bridge.md`.
 
+> **Monorepo:** `apps/botify` é aplicação **versionada no mesmo repositório** que os outros `apps/*` (não é submodule).
+
 ### Status por fase
 
 | Fase | Estado | Notas |
