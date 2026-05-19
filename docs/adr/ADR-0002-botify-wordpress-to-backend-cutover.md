@@ -1,8 +1,9 @@
 # ADR-0002: Botify — cutover WordPress → `omniconnect-backend` (fonte de verdade)
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-05-18  
-**Deciders:** Produto / engineering (aceitar explicitamente antes de implementar schema e APIs).
+**Accepted:** 2026-05-19  
+**Deciders:** Produto / engineering
 
 ## Context
 
@@ -10,72 +11,74 @@ Hoje o Botify depende de **WordPress** como armazenamento e API de:
 
 - Definição de **bots** e **fluxos** (grafo de nós, mensagens, delays, condições, ações).
 - Persistência acoplada ao plugin PHP (`botflow-manager`) e REST exposto pelo WP.
-- O **microserviço Node** (`wordpress-plugin/.../microservice`) lê e grava estado via `wordpress-client`, executa o motor (`flow-engine`) e integra WhatsApp / IA / ponte Omni.
+- O **microserviço Node** (`apps/botify/wordpress-plugin/.../microservice`) lê e grava estado via `wordpress-client`, executa o motor (`flow-engine`) e integra WhatsApp / IA / ponte Omni.
 - O **app Vite** (`apps/botify`) usa `wordpress-api.ts` / hooks para editar fluxos e operar chips.
 
-Isso **diverge** do padrão OmniconnectPRO: domínio multi-tenant em **NestJS + Prisma + Postgres**, auth e RBAC unificados, observabilidade e testes no mesmo repositório que o core de conversas. A dependência de WP cria:
-
-- Dois runtimes (PHP + Node + Vite) para um único produto “triagem”.
-- Contratos frágeis (REST WP + JWT WP) e dificuldade de **garantir `tenantId`** em todas as camadas sem vazamentos.
-- Duplicação de lógica (motor no microserviço vs nada equivalente no backend).
+Isso **diverge** do padrão OmniconnectPRO: domínio multi-tenant em **NestJS + Prisma + Postgres**, auth e RBAC unificados, observabilidade e testes no mesmo repositório que o core de conversas.
 
 **Relacionado:** [ADR-0001](ADR-0001-botify-tenancy-model.md) fixa tenancy do **handoff** HMAC; não resolve onde os fluxos devem viver. Este ADR resolve a **fonte de verdade** do produto Botify.
 
 ## Decision
 
-**Migrar a fonte de verdade de fluxos/bots do WordPress para o `omniconnect-backend`**, seguindo **Strangler Fig**:
+**O `omniconnect-backend` é a fonte de verdade futura** de bots e fluxos Botify. **WordPress** permanece **apenas** como camada **transitória / legado / importação / proxy**, até remoção do caminho crítico (G7).
 
-1. **Modelar** fluxos como entidades Prisma **sempre com `tenantId`** (e relação com `Tenant`), versionadas ou com `publishedAt` / `draft` conforme design detalhado na Fase G1.
-2. **Expor** CRUD e “publicar” via módulo Nest (`bot-flows` ou nome alinhado ao domínio), com `JwtAuthGuard`, DTOs validados e escopo estrito por tenant.
-3. **Portar** a semântica do motor atual (`flow-engine.ts` e adjacências) para código **dentro do backend** (serviço + fila Bull onde fizer sentido), consumindo mensagens já normalizadas pelo pipeline Omni (WhatsApp/webhook) quando o bot estiver ativo.
-4. **Encaminhar** o microserviço atual para consumir **definições e, se necessário, checkpoints** via API autenticada ao backend (token de integração ou padrão já usado em `IntegrationConnection`), até ser **fundido** ou reduzido a agente fino de canal.
-5. **Cutover** do Vite: substituir chamadas `wordpress-api` por cliente HTTP ao backend (idealmente `packages/api-client` gerado/contratado).
-6. **Descomissionar** o WordPress do **caminho crítico** (edição + execução). O plugin pode permanecer como **proxy legado** ou ferramenta de **importação** apenas durante a transição.
+A migração segue **Strangler Fig** — **sem big-bang**, **sem remover WordPress agora**, **sem portar o motor antes de:**
 
-**Fora do escopo imediato deste ADR (podem ser ADRs próprios):**
+1. Congelar o contrato JSON do grafo em `packages/shared-types` (G0).
+2. Criar o schema **multi-tenant** em Prisma após **review explícito de multitenancy** (G1).
 
-- **Login Vite com JWT Omni** (substituir “WordPress-first” no browser) — pode ocorrer em paralelo, mas não é pré-requisito para persistir fluxos no Postgres.
-- **Detalhe de schema** exato (`BotFlow` vs `BotFlowVersion` vs arestas normalizadas vs JSON document único) — a decisão aqui é **direção**; o desenho físico segue `database-prisma` / `add-prisma-model-multitenant`.
+Ordem obrigatória de entrega: **G0 → G1 (schema mínimo) → G2 (CRUD + publish) → G3 (motor) → G4–G7**.
+
+## Condições obrigatórias
+
+1. Toda entidade nova Botify no Postgres tem **`tenantId`** (e queries sempre escopadas).
+2. **Não** aceitar `tenantId` do body (nem de import cru) quando puder ser derivado de **JWT / API key / integration** — validar server-side.
+3. **Primeiro** o contrato JSON do grafo em `packages/shared-types` (`botify-flow.ts`) — **depois** Prisma.
+4. **Schema Prisma** só após **review multitenancy** (skill / checklist interno).
+5. **CRUD + publish** antes do **motor** no backend.
+6. **Feature flag** da fonte dos fluxos: `wordpress` | `omniconnect` | `dual` até cutover completo.
+7. Import **WP → Omni** **idempotente** (chaves externas estáveis, sem duplicar grafos).
+8. **Testes de isolamento por tenant** para módulo Botify (API + serviços) antes de declarar G2 fechado.
+9. Manter **`docs/migration/sprint-6-botify-maturity-plan.md`** alinhado a estas fases.
+10. **Compatibilidade** com o **microserviço atual** até cutover completo (dual-read / flag).
+
+**Handoff** para Omni continua definido em contrato bridge (`botify-bridge.ts` + evento `botify.handoff.created`); no grafo, o nó **`action`** com `actionType: 'transfer'` é o análogo de “handoff interno” até unificação de nomenclatura.
 
 ## Alternatives considered
 
-- **Manter WP como CMS permanente dos fluxos** — rejeitado como estado final: perpetua dois stacks, dificulta isolamento por tenant e CI único; pode subsistir só como export legado.
-- **Microserviço Botify como “mini-backend” isolado com Postgres próprio** — rejeitado: duplicaria padrões de auth, billing de mensagens, conversas e InsightAI já no core; aumenta custo operacional.
-- **Big-bang rewrite do motor antes de qualquer API** — rejeitado: risco alto; Strangler Fig com import + dual-read permite validar paridade.
+- **Manter WP como CMS permanente** — rejeitado como estado final.
+- **Microserviço Botify com Postgres próprio** — rejeitado.
+- **Big-bang (motor primeiro)** — rejeitado.
 
 ## Consequences
 
 ### Positive
 
-- **Um** stack de dados operacional (Prisma) alinhado a `docs/03-multitenancy.md`.
-- Testes E2E / contrato no mesmo app que `Conversations`, `MessageQueue`, `bot-bridge`.
-- Caminho claro para políticas de InsightAI e handoff já desenhadas no core.
+- Um stack Prisma; CI e testes no mesmo repositório que conversas, bridges e InsightAI.
 
 ### Negative
 
-- Esforço grande: import de dados, paridade do motor, regressão em clientes com WP existente.
-- Período de **dual-run** (WP + backend) exige disciplina de feature flags e observabilidade.
+- Período longo de dual-run; exige disciplina de feature flags e observabilidade.
 
 ### Neutral
 
-- O microserviço Node pode permanecer temporariamente como **adaptador de canal** (Evolution, etc.) chamando o backend para decisões de fluxo.
-- ADR-0001 continua válido para **resolução de tenant no handoff** até o emissor mudar.
+- Microserviço Node pode permanecer como adaptador de canal durante a transição.
 
-## Phases (entrega incremental)
+## Phases (G0–G7)
 
 | Fase | Entrega | Notas |
 |------|---------|--------|
-| **G0** | Congelar contrato JSON do grafo (ex.: em `packages/shared-types`) espelhando o shape atual exportável do WP | Permite testes de import idempotente |
-| **G1** | Migration Prisma + modelos tenant-scoped | Revisão multitenancy obrigatória |
-| **G2** | Nest: CRUD + publicação + listagens paginadas | Sem motor ainda |
-| **G3** | Motor de execução no backend + integração com entrada de mensagem | Reusar testes Vitest do microserviço como suite de referência |
-| **G4** | Microserviço: `wordpress-client` substituído por cliente Omni (feature flag) | Dual-read opcional |
-| **G5** | Vite: cutover API | Autenticação mínima acordada (API key tenant vs JWT) |
-| **G6** | Script / job de import WP → Omni | Runbook + auditoria |
-| **G7** | WP sai do caminho crítico; documentar desligamento | Atualizar `docs/operations/botify-omniconnect-bridge.md` |
+| **G0** | Contrato JSON em `packages/shared-types/src/botify-flow.ts` (Bot, Flow, Node, Edge, tipos de dados, legado + canónico, funções puras) | **Sem** Prisma; **sem** motor |
+| **G1** | Migration Prisma + modelos **tenant-scoped** (schema mínimo; preferência por grafo versionado JSON se simplificar) | Review multitenancy **antes** do merge |
+| **G2** | Nest: `GET/POST /botify/bots`, `GET/POST/PATCH /botify/flows`, `POST .../publish` (paginação, DTOs, guards) | Testes isolamento tenant |
+| **G3** | Motor no backend (portar `flow-engine`) | Só após G2 estável |
+| **G4** | Microserviço lê fluxos do Omni (**flag** `wordpress` / `omniconnect` / `dual`) | `wordpress-client` permanece até cutover |
+| **G5** | Vite: substituir `wordpress-api` para fluxos por API Nest | Auth acordada |
+| **G6** | Importador idempotente WP → Omni | Runbook + auditoria |
+| **G7** | WP fora do caminho crítico | Atualizar runbooks |
 
 ## Notes
 
-- Plano de produto: `docs/migration/sprint-6-botify-maturity-plan.md` — adicionar **Fase G**.
-- Arquitetura macro: `docs/02-architecture.md`.
-- Até aceite deste ADR, **não** criar tabelas novas sem review explícito de multitenancy.
+- Plano Sprint 6: `docs/migration/sprint-6-botify-maturity-plan.md`.
+- Arquitetura: `docs/02-architecture.md`.
+- `tenantId` e padrões: `docs/03-multitenancy.md`.

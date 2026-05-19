@@ -4,32 +4,79 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { wpApi } from '@/services/wordpress-api';
+import { botifyDomainApi } from '@/services/botify-domain-api';
 import type { Bot } from '@/types/bot';
-import { 
-  Activity, 
-  CheckCircle, 
-  AlertTriangle, 
+import {
+  Activity,
+  CheckCircle,
+  AlertTriangle,
   XCircle,
   RefreshCw,
   Phone,
   Signal,
   Clock,
+  Server,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
+type StackHealth = {
+  backend: { ok: boolean; label: string };
+  microservice: { ok: boolean; label: string };
+};
+
+async function fetchStackHealth(): Promise<StackHealth> {
+  const [backendRes, msRes] = await Promise.all([
+    fetch('/api/health').catch(() => null),
+    fetch('/api/microservice/health').catch(() => null),
+  ]);
+
+  let backendLabel = 'Indisponível';
+  let backendOk = false;
+  if (backendRes?.ok) {
+    backendOk = true;
+    backendLabel = 'Omni backend OK';
+  } else if (backendRes) {
+    backendLabel = `HTTP ${backendRes.status}`;
+  }
+
+  let msLabel = 'Indisponível';
+  let msOk = false;
+  if (msRes?.ok) {
+    try {
+      const body = (await msRes.json()) as {
+        status?: string;
+        botifyFlow?: { flowSource?: string };
+      };
+      msOk = body.status === 'healthy' || body.status === 'degraded';
+      const src = body.botifyFlow?.flowSource ?? 'unknown';
+      msLabel = `Microserviço ${body.status ?? 'ok'} (${src})`;
+    } catch {
+      msOk = true;
+      msLabel = 'Microserviço OK';
+    }
+  } else if (msRes) {
+    msLabel = `HTTP ${msRes.status}`;
+  }
+
+  return {
+    backend: { ok: backendOk, label: backendLabel },
+    microservice: { ok: msOk, label: msLabel },
+  };
+}
+
 export default function Health() {
   const [bots, setBots] = useState<Bot[]>([]);
+  const [stack, setStack] = useState<StackHealth | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const loadBots = async () => {
     setIsLoading(true);
     try {
-      const data = await wpApi.getBots();
+      const data = await botifyDomainApi.getBots();
       setBots(data);
     } catch {
       toast.error('Erro ao carregar dados de saúde');
@@ -41,8 +88,8 @@ export default function Health() {
   const refreshHealth = async () => {
     setIsRefreshing(true);
     try {
-      await wpApi.checkHealth();
-      await loadBots();
+      const [stackHealth] = await Promise.all([fetchStackHealth(), loadBots()]);
+      setStack(stackHealth);
       toast.success('Dados atualizados');
     } catch {
       toast.error('Erro ao atualizar');
@@ -52,16 +99,15 @@ export default function Health() {
   };
 
   useEffect(() => {
-    loadBots();
+    void refreshHealth();
   }, []);
 
-  const healthyCount = bots.filter(b => b.lineHealth === 'healthy').length;
-  const degradedCount = bots.filter(b => b.lineHealth === 'degraded').length;
-  const disconnectedCount = bots.filter(b => b.lineHealth === 'disconnected').length;
+  const healthyCount = bots.filter((b) => b.lineHealth === 'healthy').length;
+  const degradedCount = bots.filter((b) => b.lineHealth === 'degraded').length;
+  const disconnectedCount = bots.filter((b) => b.lineHealth === 'disconnected').length;
 
-  const healthPercentage = bots.length > 0 
-    ? Math.round((healthyCount / bots.length) * 100) 
-    : 0;
+  const healthPercentage =
+    bots.length > 0 ? Math.round((healthyCount / bots.length) * 100) : 0;
 
   const getHealthIcon = (health: Bot['lineHealth']) => {
     switch (health) {
@@ -99,7 +145,6 @@ export default function Health() {
   return (
     <MainLayout>
       <div className="space-y-6">
-        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground">Saúde das Linhas</h1>
@@ -108,20 +153,36 @@ export default function Health() {
             </p>
           </div>
           <Button onClick={refreshHealth} disabled={isRefreshing}>
-            <RefreshCw className={cn("mr-2 h-4 w-4", isRefreshing && "animate-spin")} />
+            <RefreshCw className={cn('mr-2 h-4 w-4', isRefreshing && 'animate-spin')} />
             Atualizar
           </Button>
         </div>
 
-        {/* Overview Cards */}
+        {stack && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Server className="h-4 w-4" />
+                Stack (sem WordPress)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-3">
+              <Badge variant={stack.backend.ok ? 'default' : 'destructive'}>
+                {stack.backend.label}
+              </Badge>
+              <Badge variant={stack.microservice.ok ? 'default' : 'destructive'}>
+                {stack.microservice.label}
+              </Badge>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">
-                    Saúde Geral
-                  </p>
+                  <p className="text-sm font-medium text-muted-foreground">Saúde Geral</p>
                   <p className="text-3xl font-bold text-foreground">{healthPercentage}%</p>
                 </div>
                 <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -175,7 +236,6 @@ export default function Health() {
           </Card>
         </div>
 
-        {/* Lines List */}
         <Card>
           <CardHeader>
             <CardTitle>Status das Linhas</CardTitle>
@@ -205,41 +265,45 @@ export default function Health() {
                       </div>
                       <div>
                         <h3 className="font-medium text-foreground">{bot.name}</h3>
-                        <p className="text-sm text-muted-foreground">{bot.phoneNumber}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {bot.phoneNumber || 'Sem phoneNumberId'}
+                        </p>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-6">
-                      {/* Signal Strength */}
                       <div className="flex items-center gap-2">
-                        <Signal className={cn(
-                          "h-5 w-5",
-                          bot.lineHealth === 'healthy' && "text-emerald-600",
-                          bot.lineHealth === 'degraded' && "text-amber-600",
-                          bot.lineHealth === 'disconnected' && "text-destructive"
-                        )} />
+                        <Signal
+                          className={cn(
+                            'h-5 w-5',
+                            bot.lineHealth === 'healthy' && 'text-emerald-600',
+                            bot.lineHealth === 'degraded' && 'text-amber-600',
+                            bot.lineHealth === 'disconnected' && 'text-destructive',
+                          )}
+                        />
                         <div className="w-24">
-                          <Progress 
-                            value={getSignalStrength(bot.lineHealth)} 
+                          <Progress
+                            value={getSignalStrength(bot.lineHealth)}
                             className={cn(
-                              "h-2",
-                              bot.lineHealth === 'healthy' && "[&>div]:bg-emerald-500",
-                              bot.lineHealth === 'degraded' && "[&>div]:bg-amber-500",
-                              bot.lineHealth === 'disconnected' && "[&>div]:bg-destructive"
+                              'h-2',
+                              bot.lineHealth === 'healthy' && '[&>div]:bg-emerald-500',
+                              bot.lineHealth === 'degraded' && '[&>div]:bg-amber-500',
+                              bot.lineHealth === 'disconnected' && '[&>div]:bg-destructive',
                             )}
                           />
                         </div>
                       </div>
 
-                      {/* Last Activity */}
                       <div className="flex items-center gap-2 text-sm text-muted-foreground min-w-[140px]">
                         <Clock className="h-4 w-4" />
                         {bot.lastActivity && !isNaN(new Date(bot.lastActivity).getTime())
-                          ? formatDistanceToNow(new Date(bot.lastActivity), { locale: ptBR, addSuffix: true })
+                          ? formatDistanceToNow(new Date(bot.lastActivity), {
+                              locale: ptBR,
+                              addSuffix: true,
+                            })
                           : 'Sem atividade'}
                       </div>
 
-                      {/* Status Badge */}
                       <div className="flex items-center gap-2">
                         {getHealthIcon(bot.lineHealth)}
                         <Badge variant="outline" className={getHealthColor(bot.lineHealth)}>

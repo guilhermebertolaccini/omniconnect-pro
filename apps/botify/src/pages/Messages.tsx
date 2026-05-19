@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { wpApi } from '@/services/wordpress-api';
+import { botifyDomainApi } from '@/services/botify-domain-api';
 import type { Conversation, Message, Bot } from '@/types/bot';
 import { 
   Search, 
@@ -41,11 +41,11 @@ export default function Messages() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [conversationsResponse, botsData] = await Promise.all([
-          wpApi.getConversations(),
-          wpApi.getBots(),
+        const [conversationsData, botsData] = await Promise.all([
+          botifyDomainApi.getConversations(),
+          botifyDomainApi.getBots(),
         ]);
-        setConversations(conversationsResponse.data || []);
+        setConversations(conversationsData);
         setBots(botsData);
       } catch {
         toast.error('Erro ao carregar conversas');
@@ -58,8 +58,8 @@ export default function Messages() {
 
   const loadMessages = async (conversation: Conversation) => {
     try {
-      const messagesResponse = await wpApi.getMessages(conversation.id);
-      setMessages(messagesResponse.data || []);
+      const messagesData = await botifyDomainApi.getMessages(conversation.id);
+      setMessages(messagesData);
       setSelectedConversation(conversation);
     } catch {
       toast.error('Erro ao carregar mensagens');
@@ -94,11 +94,18 @@ export default function Messages() {
     }
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedConversation) return;
-    // In production, this would send to WordPress API
-    toast.info('Funcionalidade de envio será implementada com a API do WordPress');
-    setNewMessage('');
+    try {
+      await botifyDomainApi.sendMessage(selectedConversation.id, newMessage.trim());
+      const messagesData = await botifyDomainApi.getMessages(selectedConversation.id);
+      setMessages(messagesData);
+      setNewMessage('');
+      toast.success('Mensagem enviada');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Falha ao enviar';
+      toast.error(msg);
+    }
   };
 
   return (

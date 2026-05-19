@@ -21,12 +21,21 @@ export default defineConfig(() => ({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/microservice/, ""),
       },
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
   plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@omniconnect/shared-types": path.resolve(
+        __dirname,
+        "../../packages/shared-types/src/index.ts",
+      ),
     },
   },
 }));

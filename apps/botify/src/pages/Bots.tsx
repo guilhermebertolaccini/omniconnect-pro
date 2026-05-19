@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { wpApi } from '@/services/wordpress-api';
+import { botifyDomainApi } from '@/services/botify-domain-api';
 import { APIError } from '@/services/wordpress-api';
 import type { Bot } from '@/types/bot';
 import { Plus, Search, Filter } from 'lucide-react';
@@ -34,7 +34,7 @@ export default function Bots() {
   const loadBots = async () => {
     setIsLoading(true);
     try {
-      const data = await wpApi.getBots();
+      const data = await botifyDomainApi.getBots();
       setBots(data);
       setFilteredBots(data);
     } catch {
@@ -70,10 +70,10 @@ export default function Bots() {
   const handleCreateBot = async (botData: Omit<Bot, 'id' | 'createdAt'>) => {
     try {
       if (editBot) {
-        await wpApi.updateBot(editBot.id, botData);
+        await botifyDomainApi.updateBot(editBot.id, botData);
         toast.success('Bot atualizado com sucesso!');
       } else {
-        await wpApi.createBot(botData);
+        await botifyDomainApi.createBot(botData);
         toast.success('Bot criado com sucesso!');
       }
       loadBots();
@@ -92,7 +92,7 @@ export default function Bots() {
   const handleDeleteBot = async () => {
     if (!deletingBot) return;
     try {
-      await wpApi.deleteBot(deletingBot.id);
+      await botifyDomainApi.deleteBot(deletingBot.id);
       toast.success('Bot excluído com sucesso!');
       loadBots();
       setDeletingBot(null);

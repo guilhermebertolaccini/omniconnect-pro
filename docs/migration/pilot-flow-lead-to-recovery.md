@@ -9,6 +9,8 @@ Este documento define **um único fluxo de produto** que o OmniconnectPRO deve p
 - Arquitetura macro: `docs/02-architecture.md`, visão: `docs/01-product-vision.md`, fases: `docs/09-roadmap.md`.
 - Ponte técnica (webhooks, processors, `IntegrationEntityLink`): `docs/migration/sprint-4-bridge-processors.md`.
 - Elevar Botify à paridade operacional: `docs/migration/sprint-6-botify-maturity-plan.md`.
+- **Fase 1 (config env / segredos / flags, sem piloto de produto):** `docs/migration/botify-phase1-operational-setup.md`.
+- **Fase 2 (migrações Sprint 6 + smoke cutover interno):** `docs/migration/botify-phase2-operational-validation.md`.
 - Contratos de evento suportados hoje (validação): `apps/omniconnect-backend/src/integration-events/bridge-event-contract.ts`.
 - Conexões e segredos: `docs/operations/integration-connections.md`.
 - Tenancy Botify ↔ Omni (1:1 vs multi): `docs/adr/ADR-0001-botify-tenancy-model.md`.
@@ -94,11 +96,69 @@ Envelope comum (corpo do webhook ou corpo normalizado pelo emissor JWT):
 - Objetivo do piloto: para cada `externalId` do fluxo, existir **caminho verificável** do evento até lead/conversa/CRM sem duplicar filas.
 - **Botify:** o handoff usa `externalId` estável `botify:flow:{flowKey}:conv:{conversationId}:transfer` (detalhes em `docs/operations/botify-omniconnect-bridge.md`).
 
-### 3.4 Campos mínimos em `data` (a fechar no piloto)
+### 3.4 Campos mínimos em `data` (matriz de implementação)
 
-Documentar **por ambiente** os campos obrigatórios de `data` para cada `eventType` (telefone, nome, origem da campanha, ids externos). Até essa matriz existir em ADR ou anexo, tratar como **checklist de implementação** da equipe — o piloto não está “fechado” sem ela.
+Matriz alinhada ao processador em `BridgeEventDispatcherService.createBotifyHandoff` e ao tipo `BotifyHandoffWebhookPayload` em `packages/shared-types/src/botify-bridge.ts`. Ajustes de contrato exigem PR no backend + atualização desta tabela.
 
-Sugestão de local para a matriz definitiva: seção **§3.4** deste arquivo (PR que adiciona exemplos JSON reais validados contra processors).
+#### `botify.handoff.created` — envelope (raiz do JSON)
+
+| Campo | Obrigatório | Notas |
+|--------|-------------|--------|
+| `eventType` | Sim | Literal `botify.handoff.created`. |
+| `externalId` | Sim | Estável e dedupe; padrão operacional `botify:flow:{flowKey}:conv:{conversationId}:transfer` — ver [`botify-omniconnect-bridge.md`](../operations/botify-omniconnect-bridge.md). |
+| `occurredAt` | Sim | ISO-8601 (string). |
+| `source` | Não | Metadado livre curto. |
+| `data` | Sim | Objeto — ver tabela seguinte. |
+
+#### `data` (nível raiz dentro do envelope)
+
+| Campo | Obrigatório | Processamento / limites |
+|--------|-------------|-------------------------|
+| `phone` | **Sim** | Sem telefone o dispatcher **falha**. String máx. 40 após trim (E.164 recomendado). |
+| `name` | Não | Fallback: `contactName`, depois `phone`. Máx. 255. |
+| `contactName` | Não | Sinónimo de `name` (mesmo fallback). |
+| `message` | Não | Default interno: `"Handoff solicitado pelo Botify"`. Máx. 2000. |
+| `segment` | Não | Número (ou string numérica). |
+| `leadSummary` | Não | Objeto; só campos abaixo são persistidos (whitelist). |
+
+#### `data.leadSummary` (opcional, triagem rica)
+
+| Campo | Máx. (chars) | Notas |
+|--------|--------------|--------|
+| `intent` | 80 | |
+| `urgency` | 32 | |
+| `budget` | 120 | |
+| `region` | 120 | |
+| `propertyInterest` | 255 | |
+| `notes` | 500 | |
+| `flowId` | 120 | |
+| `flowName` | 120 | |
+| `lastUserMessage` | 600 | |
+| `lastAssistantReply` | 600 | |
+| `collectedFields` | — | Objeto chave→string: até **15** chaves (máx. 60 cada), valores máx. **200** cada. |
+
+#### Exemplo mínimo válido (corpo após verificação HMAC)
+
+```json
+{
+  "eventType": "botify.handoff.created",
+  "externalId": "botify:flow:demo:conv:42:transfer",
+  "occurredAt": "2026-05-19T12:00:00.000Z",
+  "source": "botify-microservice",
+  "data": {
+    "phone": "+5511999990000",
+    "name": "Lead demo",
+    "message": "Quero falar com corretor",
+    "leadSummary": {
+      "intent": "compra",
+      "urgency": "hoje",
+      "region": "Zona Sul"
+    }
+  }
+}
+```
+
+Para **outros** `eventType` (`crm.*`, `ads.*`), esta matriz não aplica — ver DTOs e processors em `integration-events`.
 
 ---
 

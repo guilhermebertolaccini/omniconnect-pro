@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import { WordPressClient } from '../services/wordpress-client.js';
+import * as conversationStore from '../services/conversation-store.js';
 import { AIProcessor } from '../services/ai-processor.js';
 import { SSEManager } from '../realtime/sse-manager.js';
 import {
@@ -8,6 +9,7 @@ import {
 } from '../services/omniconnect-bridge.js';
 import { resolveNextNodeId } from './flow-engine-navigation.js';
 import { wpMessagesToAiHistory } from './flow-engine-history.js';
+import { resolveFlowConfigForEngine } from '../services/omniconnect-flow-runtime.js';
 
 export interface ProcessMessageArgs {
     botId: string;
@@ -37,9 +39,9 @@ export class FlowEngine {
 
         // Resolve Conversation ID
         const normalizedPhone = from.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-        const conversationId = await this.wpClient.resolveConversation(
+        const conversationId = await conversationStore.resolveConversation(
             botId,
-            normalizedPhone || from
+            normalizedPhone || from,
         );
 
         if (!conversationId) {
@@ -48,7 +50,7 @@ export class FlowEngine {
         }
         
         // Always save incoming message first (ensures all messages are recorded regardless of flow type)
-        await this.wpClient.saveMessage({
+        await conversationStore.saveMessage({
             botId,
             conversationId,
             role: 'user',
@@ -65,9 +67,11 @@ export class FlowEngine {
             return;
         }
 
-        // Get Flow Configuration
-        const flow = await this.wpClient.getFlowConfig(targetFlowId);
-        if (!flow || !flow.nodes) {
+        // Get Flow Configuration (WordPress e/ou omniconnect — ADR-0002 G4)
+        const flow = await resolveFlowConfigForEngine(targetFlowId, (id) =>
+            this.wpClient.getFlowConfig(id),
+        );
+        if (!flow || !flow.nodes?.length) {
             logger.error(`Flow ${targetFlowId} not found or has no nodes.`);
             return;
         }
@@ -138,10 +142,10 @@ export class FlowEngine {
             case 'message':
                 // Output normal text message
                 if (data.content) {
-                    await this.wpClient.sendWhatsAppMessage({
+                    await conversationStore.sendWhatsAppMessage({
                         botId,
                         conversationId,
-                        message: data.content
+                        message: data.content,
                     });
                 }
                 break;
@@ -217,7 +221,7 @@ export class FlowEngine {
     private async processAINode(aiNode: any, context: any): Promise<void> {
         const { flowId, botId, from, conversationId, text, provider } = context;
 
-        const aiConfig = await this.wpClient.getAINodeConfig(flowId, aiNode.id);
+        const aiConfig = await conversationStore.getAINodeConfig(flowId, aiNode.id, aiNode);
 
         if (!aiConfig) {
             throw new Error(`AI config not found for node ${aiNode.id}`);
@@ -230,7 +234,7 @@ export class FlowEngine {
         });
 
         try {
-            const wpRows = await this.wpClient.listConversationMessages(conversationId, 50);
+            const wpRows = await conversationStore.listConversationMessages(conversationId, 50);
             const conversationHistory = wpMessagesToAiHistory(wpRows, text);
 
             const result = await this.aiProcessor.process({
@@ -251,7 +255,7 @@ export class FlowEngine {
             });
 
             // Save assistant response (user message already saved at processIncomingMessage start)
-            await this.wpClient.saveMessage({
+            await conversationStore.saveMessage({
                 botId,
                 conversationId,
                 role: 'assistant',
@@ -263,8 +267,7 @@ export class FlowEngine {
                 },
             });
 
-            // Send the AI response generated
-            await this.wpClient.sendWhatsAppMessage({
+            await conversationStore.sendWhatsAppMessage({
                 botId,
                 conversationId,
                 message: result.response,

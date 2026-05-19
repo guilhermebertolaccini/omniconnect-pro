@@ -16,13 +16,15 @@ Objetivo: **reduzir o desvio** entre `apps/botify` e os outros satélites (`crm-
 
 | Fase | Estado | Notas |
 |------|--------|--------|
+| **P1 — Config operacional Omni** | **Concluída** (2026-05-19) | Secrets/flags/`DATABASE_URL` + health + slug `default-tenant` na sync interna — `docs/migration/botify-phase1-operational-setup.md`. |
+| **P2 — Validação cutover** | **Em curso** | Migrações Sprint 6 + smoke `GET /botify/internal/.../runtime-config` + matriz piloto §3.4 — `docs/migration/botify-phase2-operational-validation.md`. |
 | **A** — Básico integração | **Concluída** (2026-05-18) | Payload/runbook em docs; `externalId` com `flowKey`; health `omniconnectBridge.configured`; Vitest em `microservice` (2 testes em `omniconnect-bridge.spec.ts`). |
 | **B** — Triagem rica | **Concluída** (2026-05-18) | `data.leadSummary` no webhook; `MessageQueue.leadSummary` + bloco legível na conversa ao desenfileirar; `FlowEngine` + editor Botify; testes dispatcher + bridge. |
 | **C** — Motor de fluxo | **Concluída** (2026-05-18) | Inventário em `sprint-6-botify-flow-engine-inventory.md`; paleta bloqueia mídia/botões/lista; condição + histórico IA via WP; Vitest navegação/histórico. |
 | **D** — Monorepo + CI | **Concluída** (2026-05-18) | `botify` depende de `@omniconnect/shared-types`; CI bloqueante `botify` + `botflow-microservice`; satélites CRM/SAA seguem não bloqueantes. |
 | **E** — Tenancy | **Concluída** (2026-05-18) | `docs/adr/ADR-0001-botify-tenancy-model.md`; `integration-connections.md` + `03-multitenancy.md` + `.env.example` microserviço. |
 | **F** — InsightAI (opcional) | **Concluída** (2026-05-18) | Política em `docs/05-ai-governance.md` (Botify ↔ InsightAI); enqueue opcional `INSIGHT_AI_ON_BOTIFY_HANDOFF` no dispatcher pós-handoff. |
-| **G** — Cutover WordPress → backend | **Proposta** | Ver [ADR-0002](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md): fluxos/bots em Prisma + Nest; Strangler Fig; Vite e microserviço passam a consumir API Omni. |
+| **G** — Cutover WordPress → backend | **Código G1–G6 ✅; G7 operacional ⬜** | APIs/flags no repo; checklist “zero WP” em [`botify-g7-wordpress-removal.md`](./botify-g7-wordpress-removal.md). |
 
 ---
 
@@ -116,22 +118,22 @@ O Botify será considerado **par** quando:
 | F1 | Política: InsightAI analisa conversas **após** handoff | Mesmo `tenantId` + **E.164** persistidos no Omni; o job `analyze-conversation` lê mensagens do core (ver `05-ai-governance.md`). Enfileiramento imediato opcional via `INSIGHT_AI_ON_BOTIFY_HANDOFF=true` (primeira corrida pode ser espartana até existir conversa humana; dedup horário no `jobId` permite reanálise). |
 | F2 | Não duplicar PII; respeitar `redactPII` se transcript cruzar domínios | **Não** enviar transcript completo WordPress/Botify ao prompt do InsightAI; `leadSummary` no bridge é triagem operacional (já sanitizada no dispatcher), não substituto do transcript; qualquer texto extra-canal que entre em prompts passa pelo mesmo pipeline de redação. |
 
-### Fase G — Cutover WordPress → `omniconnect-backend` (épico)
+### Fase G — Cutover WordPress → `omniconnect-backend` (épico) — **G1–G7 no repo**
 
-Objetivo: **eliminar o WordPress como fonte de verdade** de bots/fluxos e alinhar ao padrão Nest + Prisma do monorepo ([ADR-0002](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md)).
+Objetivo: **`omniconnect-backend` como fonte de verdade** de bots/fluxos; WordPress permanece **legado** (conversas/UI auxiliar/import) conforme rollout. [ADR-0002](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md) — **Accepted**.
 
 | # | Entrega | Aceite (resumo) |
 |---|---------|-----------------|
-| G0 | Contrato JSON do grafo em `shared-types` | `packages/shared-types` — `botify-flow-graph.ts` (`BotifyFlowNode`, `BotifyFlowGraph`, `normalizeBotifyFlowConnections`); usado no `FlowEditor` + microserviço |
-| G1 | Schema Prisma com `tenantId` | Migration versionada + revisão multitenancy |
-| G2 | APIs Nest (CRUD / publicar fluxo) | JWT + DTOs + listas paginadas |
-| G3 | Motor de execução no backend | Paridade com testes atuais do microserviço |
-| G4 | Microserviço obtém definições via Omni | Feature flag; dual-read opcional |
-| G5 | Vite substitui `wordpress-api` (fluxos) por API backend | Mesmo rigor que CRM/SAA |
-| G6 | Import WP → Omni | Runbook + trilho de auditoria |
-| G7 | WP fora do run-time crítico | Atualizar runbooks |
+| G0 | Contrato JSON em `shared-types` | **✅** `packages/shared-types/src/botify-flow.ts` + Vitest round-trip (`botify-flow-contract.spec.ts`) |
+| G1 | Schema Prisma com `tenantId` | **✅** `BotifyBot` / `BotifyFlow` + `20260523140000_sprint_6_botify_domain` |
+| G2 | APIs Nest | **✅** `/botify/bots`, `/botify/flows`, `publish`/`unpublish`, `import/wordpress`, `runtime/simulate`; JWT; `botify.service.spec.ts` |
+| G3 | Motor no backend | **✅** `BotifyFlowEngineService` (LLM não roda no Nest; handoff real opcional com telefone + conexão `bot`) |
+| G4 | Microserviço + flag | **✅** `BOTIFY_FLOW_SOURCE` + `omniconnect-flow-runtime.ts` |
+| G5 | Vite → API Nest | **✅** `VITE_BOTIFY_DATA_SOURCE` + `botify-domain-api.ts` |
+| G6 | Import WP → Omni | **✅** `POST /botify/import/wordpress` |
+| G7 | WP fora do caminho crítico de **fluxos** | **✅** Runbook; `VITE_BOTIFY_DATA_SOURCE=omniconnect` remove WP da edição de grafos |
 
-**Gate:** não avançar G1 sem **aceitar** o ADR-0002 (evita retrabalho de modelo).
+**Gates:** ordem G0→G2 antes do motor — mantida.
 
 ---
 
@@ -159,10 +161,16 @@ Objetivo: **eliminar o WordPress como fonte de verdade** de bots/fluxos e alinha
 
 ## 6. Próximo passo imediato (esta semana)
 
-1. **Fase G:** **G0** iniciado (`botify-flow-graph.ts` + uso no editor e microserviço). Próximo: **aceitar** [ADR-0002](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md) e planear **G1** (Prisma tenant-scoped).  
-2. **Migration Sprint 6:** a pasta `prisma/migrations/20260522120000_sprint_6_message_queue_lead_summary` já existe no repo — aplicar com `pnpm prisma migrate deploy` (ou equivalente) em cada ambiente que ainda não a tenha.  
-3. Opcional: endurecer ESLint do `botify` (`no-explicit-any` error).  
-4. Em paralelo à Fase G: ADR futuro **identidade Omni no app Botify** (JWT + `UserTenant`) se o browser tiver de emitir bridge como CRM/SAA.
+**Fase 1:** [`botify-phase1-operational-setup.md`](./botify-phase1-operational-setup.md).
+
+**Fase 2 (validação):** [`botify-phase2-operational-validation.md`](./botify-phase2-operational-validation.md) — inclui `prisma migrate deploy`, curl do runtime interno, e ligação à matriz **`botify.handoff.created`** na secção §3.4 do piloto.
+
+A seguir à Fase 2: critérios **A1–A8** e ambiente piloto em [`pilot-flow-lead-to-recovery.md`](./pilot-flow-lead-to-recovery.md).
+
+1. **Migration Botify + fila Sprint 6:** `pnpm prisma migrate deploy` no backend (ver lista na Fase 2).  
+2. Configurar `BOTIFY_INTERNAL_SYNC_SECRET` (backend + microserviço) e flags (`BOTIFY_FLOW_SOURCE`, `VITE_BOTIFY_DATA_SOURCE`) quando testar cutover.  
+3. Opcional: ESLint `botify` (`no-explicit-any` como `error`).  
+4. Paralelo: ADR **identidade Omni no Botify** (JWT + `UserTenant`) se o browser for emitir bridge como CRM/SAA.
 
 ---
 
@@ -174,5 +182,7 @@ Objetivo: **eliminar o WordPress como fonte de verdade** de bots/fluxos e alinha
 - `docs/operations/botify-omniconnect-bridge.md` — runbook Botify ↔ Omni  
 - `docs/09-roadmap.md` — Fase 3 Botify Triage  
 - `docs/migration/pilot-flow-lead-to-recovery.md`  
-- `packages/shared-types` — `BotifyHandoffWebhookPayload`, `BotifyLeadSummary`  
+- `docs/migration/botify-phase1-operational-setup.md` — Fase 1 (secrets + flags + Postgres local raiz)
+- `docs/migration/botify-phase2-operational-validation.md` — Fase 2 (migrações + smoke interno)
+- `packages/shared-types` — `botify-flow.ts`, `BotifyHandoffWebhookPayload`, `BotifyLeadSummary`  
 - `packages/api-client` — emit browser + JWT (CRM/SAA); Botify handoff continua server-side (HMAC)

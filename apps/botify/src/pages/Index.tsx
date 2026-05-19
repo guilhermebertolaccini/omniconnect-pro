@@ -5,7 +5,8 @@ import { BotCard } from '@/components/dashboard/BotCard';
 import { CreateBotDialog } from '@/components/bots/CreateBotDialog';
 import { DeleteBotDialog } from '@/components/bots/DeleteBotDialog';
 import { Button } from '@/components/ui/button';
-import { wpApi, APIError } from '@/services/wordpress-api';
+import { botifyDomainApi } from '@/services/botify-domain-api';
+import { APIError } from '@/services/wordpress-api';
 import type { Bot } from '@/types/bot';
 import { 
   Bot as BotIcon, 
@@ -30,7 +31,7 @@ const Index = () => {
   const loadBots = async () => {
     setIsLoading(true);
     try {
-      const data = await wpApi.getBots();
+      const data = await botifyDomainApi.getBots();
       setBots(data);
     } catch (error) {
       const message =
@@ -52,10 +53,10 @@ const Index = () => {
   const handleCreateBot = async (botData: Omit<Bot, 'id' | 'createdAt'>) => {
     try {
       if (editBot) {
-        await wpApi.updateBot(editBot.id, botData);
+        await botifyDomainApi.updateBot(editBot.id, botData);
         toast.success('Bot atualizado com sucesso!');
       } else {
-        await wpApi.createBot(botData);
+        await botifyDomainApi.createBot(botData);
         toast.success('Bot criado com sucesso!');
       }
       loadBots();
@@ -74,7 +75,7 @@ const Index = () => {
   const handleDeleteBot = async () => {
     if (!deletingBot) return;
     try {
-      await wpApi.deleteBot(deletingBot.id);
+      await botifyDomainApi.deleteBot(deletingBot.id);
       toast.success('Bot excluído com sucesso!');
       loadBots();
       setDeletingBot(null);

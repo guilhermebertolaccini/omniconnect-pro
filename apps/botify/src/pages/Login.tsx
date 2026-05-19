@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBotifyAuthSource } from '@/lib/omniconnectClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,6 +30,8 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const { login, isLoading } = useAuth();
+  const authSource = getBotifyAuthSource();
+  const useOmniAuth = authSource === 'omniconnect';
   
   const [formData, setFormData] = useState<LoginFormData>({
     username: '',
@@ -131,11 +134,11 @@ export default function Login() {
 
               {/* Username Field */}
               <div className="space-y-2">
-                <Label htmlFor="username">Usuário</Label>
+                <Label htmlFor="username">{useOmniAuth ? 'E-mail' : 'Usuário'}</Label>
                 <Input
                   id="username"
-                  type="text"
-                  placeholder="Digite seu usuário"
+                  type={useOmniAuth ? 'email' : 'text'}
+                  placeholder={useOmniAuth ? 'admin@vend.com' : 'Digite seu usuário'}
                   value={formData.username}
                   onChange={handleChange('username')}
                   disabled={isLoading}

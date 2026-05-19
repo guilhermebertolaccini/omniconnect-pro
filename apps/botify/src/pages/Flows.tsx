@@ -4,7 +4,7 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { wpApi } from '@/services/wordpress-api';
+import { botifyDomainApi } from '@/services/botify-domain-api';
 import type { ConversationFlow, Bot } from '@/types/bot';
 import { 
   GitBranch, 
@@ -30,8 +30,8 @@ export default function Flows() {
     const loadData = async () => {
       try {
         const [flowsData, botsData] = await Promise.all([
-          wpApi.getFlows(),
-          wpApi.getBots(),
+          botifyDomainApi.getFlows(),
+          botifyDomainApi.getBots(),
         ]);
         setFlows(flowsData);
         setBots(botsData);
@@ -51,11 +51,9 @@ export default function Flows() {
 
   const toggleFlowStatus = async (flow: ConversationFlow) => {
     try {
-      await wpApi.updateFlow(flow.id, { isActive: !flow.isActive });
-      setFlows(flows.map(f => 
-        f.id === flow.id ? { ...f, isActive: !f.isActive } : f
-      ));
-      toast.success(flow.isActive ? 'Fluxo pausado' : 'Fluxo ativado');
+      const updated = await botifyDomainApi.setFlowActive(flow.id, !flow.isActive);
+      setFlows(flows.map((f) => (f.id === flow.id ? updated : f)));
+      toast.success(updated.isActive ? 'Fluxo ativado/publicado' : 'Fluxo pausado');
     } catch {
       toast.error('Erro ao atualizar fluxo');
     }

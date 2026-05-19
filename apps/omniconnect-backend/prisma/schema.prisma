@@ -722,6 +722,12 @@ model Tenant {
   crmDocumentAccessLogs      CrmDocumentAccessLog[]
   crmChangeHistory           CrmChangeHistory[]
   crmNotificationPreferences CrmNotificationPreference[]
+
+  // Botify (ADR-0002) — fonte de verdade de bots/fluxos no Omni
+  botifyBots            BotifyBot[]
+  botifyFlows           BotifyFlow[]
+  botifyConversations   BotifyConversation[]
+  botifyMessages        BotifyMessage[]
 }
 
 model IntegrationConnection {
@@ -1641,4 +1647,90 @@ model CrmNotificationPreference {
 
   @@unique([tenantId, userId])
   @@index([tenantId])
+}
+
+/// Bot lógico Botify (tenant-scoped). `externalSourceId` = id estável WP para import idempotente.
+enum BotifyMessageRole {
+  user
+  assistant
+  system
+}
+
+model BotifyBot {
+  id               String   @id @default(uuid())
+  tenantId         String
+  name             String
+  description      String?
+  externalSourceId String?
+  isActive         Boolean  @default(true)
+  /// WhatsApp Cloud API (piloto G7-D): { phoneNumberId, accessToken, webhookSecret? } — dev/staging; não logar.
+  channelConfig    Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  flows         BotifyFlow[]
+  conversations BotifyConversation[]
+
+  @@index([tenantId])
+  @@unique([tenantId, externalSourceId])
+}
+
+/// Fluxo Botify: rascunho vs publicado em JSON (`BotifyFlowGraph` / contrato shared-types).
+model BotifyFlow {
+  id               String    @id @default(uuid())
+  tenantId         String
+  botId            String
+  name             String
+  triggerKeyword   String?
+  externalSourceId String?
+  draftGraph       Json?
+  publishedGraph   Json?
+  publishedAt      DateTime?
+  publishedVersion Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bot    BotifyBot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, botId])
+  @@unique([tenantId, externalSourceId])
+}
+
+/// Conversa Botify (triagem automática) — distinta de `Conversation` operacional do inbox.
+model BotifyConversation {
+  id           String   @id @default(uuid())
+  tenantId     String
+  botId        String
+  contactPhone String
+  contactName  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bot      BotifyBot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  messages BotifyMessage[]
+
+  @@unique([tenantId, botId, contactPhone])
+  @@index([tenantId])
+  @@index([tenantId, botId])
+  @@index([tenantId, updatedAt])
+}
+
+model BotifyMessage {
+  id             String            @id @default(uuid())
+  tenantId       String
+  conversationId String
+  role           BotifyMessageRole
+  content        String            @db.Text
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+
+  tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation BotifyConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId])
+  @@index([conversationId, createdAt])
 }

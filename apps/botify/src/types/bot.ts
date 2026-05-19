@@ -62,4 +62,12 @@ export interface WhatsAppConfig {
   webhookUrl: string;
   webhookSecret: string;
   isConnected: boolean;
+  /** Meta WABA account id (`entry.id` no webhook). */
+  metaWabaAccountId?: string;
+  /** Instância Evolution API vinculada a este bot. */
+  evolutionInstance?: string;
+  evolutionApiKey?: string;
+  /** Fluxo publicado executado no webhook inbound. */
+  defaultFlowId?: string;
+  lineHealth?: LineHealth;
 }

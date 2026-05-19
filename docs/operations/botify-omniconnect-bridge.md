@@ -111,6 +111,15 @@ Formato atual (Sprint 6 — Fase A):
 
 ---
 
+## Fonte dos fluxos (ADR-0002 — G4/G5/G7)
+
+- **Backend:** domínio Prisma `BotifyBot` / `BotifyFlow`; API autenticada `GET/POST/PATCH /botify/...`; publicação `POST /botify/flows/:id/publish` (e `.../unpublish`). Import idempotente: `POST /botify/import/wordpress`.
+- **Microserviço:** `BOTIFY_FLOW_SOURCE=wordpress|omniconnect|dual`. Em `omniconnect`/`dual`, define também `OMNICONNECT_BACKEND_URL`, `BOTIFY_INTERNAL_SYNC_SECRET` (igual ao backend) e `OMNICONNECT_BOTIFY_TENANT_ID`. O motor chama `GET /botify/internal/flows/:flowId/runtime-config` com `Authorization: Bearer <secret>` e `X-Omni-Tenant-Id: <uuid>`.
+- **Vite:** `VITE_BOTIFY_DATA_SOURCE=wordpress|omniconnect|dual`; para Omni, `VITE_OMNICONNECT_API_URL` e token (`VITE_OMNICONNECT_API_TOKEN` ou futuro login Omni em `localStorage` key `omniconnect_access_token`). WordPress continua a ser usado para conversas/Meta até migração desses módulos.
+- **Handoff:** inalterado — continua `POST /webhooks/botify` (HMAC) a partir do microserviço na maior parte dos deploys; o motor no backend pode emitir handoff via `IntegrationBridgeEmitService` quando chamado com contexto adequado.
+
+---
+
 ## Verificação rápida
 
 1. **Health do microserviço** (`GET /health` ou rota configurada): campo `omniconnectBridge.configured` deve ser `true` quando as três variáveis Omni estão definidas.

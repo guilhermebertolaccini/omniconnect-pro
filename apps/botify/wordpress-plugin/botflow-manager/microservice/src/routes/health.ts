@@ -9,13 +9,17 @@ interface HealthStatus {
   timestamp: string;
   version: string;
   uptime: number;
-  /** True when Omni bridge env vars are all set (no secret values exposed). */
   omniconnectBridge: {
     configured: boolean;
   };
+  botifyFlow: {
+    flowSource: 'wordpress' | 'omniconnect' | 'dual';
+    omniconnectRuntimeConfigured: boolean;
+  };
   checks: {
-    wordpress: boolean;
+    wordpress: boolean | 'skipped';
     redis: boolean;
+    meta_webhook: boolean;
     ai_providers: {
       lovable: boolean;
       openai: boolean;
@@ -26,12 +30,32 @@ interface HealthStatus {
 
 const startTime = Date.now();
 
-router.get('/', async (_req: Request, res: Response) => {
+function wordpressRequired(): boolean {
+  return config.BOTIFY_FLOW_SOURCE === 'wordpress' || config.BOTIFY_FLOW_SOURCE === 'dual';
+}
+
+async function checkWordpress(): Promise<boolean | 'skipped'> {
+  if (!wordpressRequired()) {
+    return 'skipped';
+  }
   const wpClient = new WordPressClient();
-  
-  const checks = {
-    wordpress: false,
+  if (!wpClient.isConfigured()) {
+    return false;
+  }
+  try {
+    return await wpClient.healthCheck();
+  } catch {
+    return false;
+  }
+}
+
+router.get('/', async (_req: Request, res: Response) => {
+  const checks: HealthStatus['checks'] = {
+    wordpress: await checkWordpress(),
     redis: false,
+    meta_webhook: Boolean(
+      config.META_APP_SECRET?.trim() && config.META_WEBHOOK_VERIFY_TOKEN?.trim(),
+    ),
     ai_providers: {
       lovable: !!config.LOVABLE_API_KEY,
       openai: !!config.OPENAI_API_KEY,
@@ -39,28 +63,23 @@ router.get('/', async (_req: Request, res: Response) => {
     },
   };
 
-  // Check WordPress connection
-  try {
-    await wpClient.healthCheck();
-    checks.wordpress = true;
-  } catch {
-    checks.wordpress = false;
-  }
-
-  // Check Redis (if configured)
   if (config.REDIS_URL) {
-    try {
-      // Simple ping check would go here
-      checks.redis = true;
-    } catch {
-      checks.redis = false;
-    }
+    checks.redis = true;
   } else {
-    checks.redis = true; // Not required if not configured
+    checks.redis = true;
   }
 
-  const allHealthy = checks.wordpress && checks.redis;
-  const hasAnyProvider = checks.ai_providers.lovable || checks.ai_providers.openai || checks.ai_providers.gemini;
+  const omniconnectRuntimeConfigured = Boolean(
+    config.OMNICONNECT_BACKEND_URL?.trim() &&
+      config.BOTIFY_INTERNAL_SYNC_SECRET?.trim() &&
+      config.OMNICONNECT_BOTIFY_TENANT_ID?.trim(),
+  );
+
+  const wpOk = checks.wordpress === true || checks.wordpress === 'skipped';
+  const hasAnyProvider =
+    checks.ai_providers.lovable ||
+    checks.ai_providers.openai ||
+    checks.ai_providers.gemini;
 
   const omniconnectBridgeConfigured = Boolean(
     process.env.OMNICONNECT_API_URL?.trim() &&
@@ -68,18 +87,27 @@ router.get('/', async (_req: Request, res: Response) => {
       process.env.OMNICONNECT_BOT_BRIDGE_WEBHOOK_SECRET?.trim(),
   );
 
-  const status: HealthStatus = {
-    status: allHealthy && hasAnyProvider ? 'healthy' : allHealthy ? 'degraded' : 'unhealthy',
+  let status: HealthStatus['status'] = 'healthy';
+  if (!wpOk) {
+    status = 'unhealthy';
+  } else if (!hasAnyProvider) {
+    status = 'degraded';
+  }
+
+  const health: HealthStatus = {
+    status,
     timestamp: new Date().toISOString(),
     version: '1.0.0',
     uptime: Math.floor((Date.now() - startTime) / 1000),
-    omniconnectBridge: {
-      configured: omniconnectBridgeConfigured,
+    omniconnectBridge: { configured: omniconnectBridgeConfigured },
+    botifyFlow: {
+      flowSource: config.BOTIFY_FLOW_SOURCE,
+      omniconnectRuntimeConfigured,
     },
     checks,
   };
 
-  res.status(status.status === 'unhealthy' ? 503 : 200).json(status);
+  res.status(status === 'unhealthy' ? 503 : 200).json(health);
 });
 
 router.get('/live', (_req: Request, res: Response) => {
@@ -87,13 +115,31 @@ router.get('/live', (_req: Request, res: Response) => {
 });
 
 router.get('/ready', async (_req: Request, res: Response) => {
+  if (config.BOTIFY_FLOW_SOURCE === 'omniconnect') {
+    const ok = Boolean(
+      config.OMNICONNECT_BACKEND_URL?.trim() &&
+        config.BOTIFY_INTERNAL_SYNC_SECRET?.trim() &&
+        config.OMNICONNECT_BOTIFY_TENANT_ID?.trim(),
+    );
+    if (ok) {
+      return res.status(200).json({ status: 'ready' });
+    }
+    return res.status(503).json({ status: 'not ready', error: 'Omni internal API not configured' });
+  }
+
   const wpClient = new WordPressClient();
-  
+  if (!wpClient.isConfigured()) {
+    return res.status(503).json({ status: 'not ready', error: 'WordPress not configured' });
+  }
+
   try {
-    await wpClient.healthCheck();
-    res.status(200).json({ status: 'ready' });
+    const ok = await wpClient.healthCheck();
+    if (ok) {
+      return res.status(200).json({ status: 'ready' });
+    }
+    return res.status(503).json({ status: 'not ready', error: 'WordPress connection failed' });
   } catch {
-    res.status(503).json({ status: 'not ready', error: 'WordPress connection failed' });
+    return res.status(503).json({ status: 'not ready', error: 'WordPress connection failed' });
   }
 });
 

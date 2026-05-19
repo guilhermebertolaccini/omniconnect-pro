@@ -36,7 +36,13 @@
 
 **Plano detalhado:** [`docs/migration/sprint-6-botify-maturity-plan.md`](./sprint-6-botify-maturity-plan.md) — integração Omni, contrato de handoff, motor de fluxo, CI, tenancy, triagem rica e **Fase G (cutover WordPress → Nest/Prisma)**.
 
-**Decisão arquitetural:** [`docs/adr/ADR-0002-botify-wordpress-to-backend-cutover.md`](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md) (**Proposed**) — eliminar WP como fonte de verdade dos fluxos; Strangler Fig com fases G0–G7.
+**Fase 1 (ambiente dev — segredo interno Botify + flags + `DATABASE_URL` do compose da raiz):** [`docs/migration/botify-phase1-operational-setup.md`](./botify-phase1-operational-setup.md).
+
+**Fase 2 (migrações Sprint 6 + smoke `runtime-config` + health):** [`docs/migration/botify-phase2-operational-validation.md`](./botify-phase2-operational-validation.md).
+
+**G7 (remover WordPress do caminho crítico — checklist para codar):** [`docs/migration/botify-g7-wordpress-removal.md`](./botify-g7-wordpress-removal.md).
+
+**Decisão arquitetural:** [`docs/adr/ADR-0002-botify-wordpress-to-backend-cutover.md`](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md) (**Accepted**) — backend como fonte de verdade dos fluxos; WP legado/importação; Strangler Fig + flag `wordpress` / `omniconnect` / `dual`; fases G0–G7.
 
 Sprint 5 (InsightAI v2) está **concluída** — ver `docs/migration/sprint-5-insight-ai-v2.md`
 (`GET /insight-ai/dashboard/summary`, `GET /insight-ai/dashboard/usage`, `GET /insight-ai/analyses`,

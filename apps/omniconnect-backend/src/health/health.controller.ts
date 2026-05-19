@@ -16,6 +16,10 @@ export class HealthController {
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         database: 'connected',
+        /** Phase 1: internal microservice→Nest flow sync (`/botify/internal/...`). No secret values exposed. */
+        botifyInternalSync: {
+          configured: Boolean(process.env.BOTIFY_INTERNAL_SYNC_SECRET?.trim()),
+        },
       };
     } catch (error) {
       return {
@@ -24,6 +28,9 @@ export class HealthController {
         uptime: process.uptime(),
         database: 'disconnected',
         error: error.message,
+        botifyInternalSync: {
+          configured: Boolean(process.env.BOTIFY_INTERNAL_SYNC_SECRET?.trim()),
+        },
       };
     }
   }

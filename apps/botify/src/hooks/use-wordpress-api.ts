@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { wpApi, APIError } from '@/services/wordpress-api';
+import { botifyDomainApi } from '@/services/botify-domain-api';
 import type { Bot, ConversationFlow, Conversation, Message, WhatsAppConfig } from '@/types/bot';
 import type { 
   MetaAccount, 
@@ -35,7 +36,7 @@ export const queryKeys = {
 export function useBots() {
   return useQuery({
     queryKey: queryKeys.bots,
-    queryFn: () => wpApi.getBots(),
+    queryFn: () => botifyDomainApi.getBots(),
     staleTime: 30000,
   });
 }
@@ -43,7 +44,7 @@ export function useBots() {
 export function useBot(id: string) {
   return useQuery({
     queryKey: queryKeys.bot(id),
-    queryFn: () => wpApi.getBot(id),
+    queryFn: () => botifyDomainApi.getBot(id),
     enabled: !!id,
   });
 }
@@ -52,7 +53,7 @@ export function useCreateBot() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (bot: Omit<Bot, 'id' | 'createdAt'>) => wpApi.createBot(bot),
+    mutationFn: (bot: Omit<Bot, 'id' | 'createdAt'>) => botifyDomainApi.createBot(bot),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.bots });
       toast.success('Bot criado com sucesso!');
@@ -68,7 +69,7 @@ export function useUpdateBot() {
 
   return useMutation({
     mutationFn: ({ id, updates }: { id: string; updates: Partial<Bot> }) =>
-      wpApi.updateBot(id, updates),
+      botifyDomainApi.updateBot(id, updates),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.bots });
       queryClient.invalidateQueries({ queryKey: queryKeys.bot(id) });
@@ -84,7 +85,7 @@ export function useDeleteBot() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => wpApi.deleteBot(id),
+    mutationFn: (id: string) => botifyDomainApi.deleteBot(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.bots });
       toast.success('Bot excluído!');
@@ -100,7 +101,7 @@ export function useDeleteBot() {
 export function useFlows(botId?: string) {
   return useQuery({
     queryKey: queryKeys.flows(botId),
-    queryFn: () => wpApi.getFlows(botId),
+    queryFn: () => botifyDomainApi.getFlows(botId),
     staleTime: 30000,
   });
 }
@@ -108,7 +109,7 @@ export function useFlows(botId?: string) {
 export function useFlow(id: string) {
   return useQuery({
     queryKey: queryKeys.flow(id),
-    queryFn: () => wpApi.getFlow(id),
+    queryFn: () => botifyDomainApi.getFlow(id),
     enabled: !!id,
   });
 }
@@ -118,7 +119,7 @@ export function useCreateFlow() {
 
   return useMutation({
     mutationFn: (flow: Omit<ConversationFlow, 'id' | 'createdAt' | 'updatedAt'>) =>
-      wpApi.createFlow(flow),
+      botifyDomainApi.createFlow(flow),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.flows(variables.botId) });
       toast.success('Fluxo criado!');
@@ -134,7 +135,7 @@ export function useUpdateFlow() {
 
   return useMutation({
     mutationFn: ({ id, updates }: { id: string; updates: Partial<ConversationFlow> }) =>
-      wpApi.updateFlow(id, updates),
+      botifyDomainApi.updateFlow(id, updates),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.flows() });
       queryClient.invalidateQueries({ queryKey: queryKeys.flow(id) });
@@ -150,7 +151,7 @@ export function useDeleteFlow() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => wpApi.deleteFlow(id),
+    mutationFn: (id: string) => botifyDomainApi.deleteFlow(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.flows() });
       toast.success('Fluxo excluído!');

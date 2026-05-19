@@ -27,8 +27,11 @@ export interface AuthTokens {
 }
 
 export interface LoginCredentials {
+  /** WordPress login or Omni email when VITE_BOTIFY_AUTH_SOURCE=omniconnect */
   username: string;
   password: string;
+  /** Optional explicit email for Omni auth */
+  email?: string;
 }
 
 export interface RefreshTokenRequest {

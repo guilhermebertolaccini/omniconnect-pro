@@ -4,33 +4,42 @@ import { logger } from '../utils/logger.js';
 import NodeCache from 'node-cache';
 
 export class WordPressClient {
-  private client: AxiosInstance;
+  private client: AxiosInstance | null = null;
   private cache: NodeCache;
 
   constructor() {
-    this.cache = new NodeCache({ stdTTL: 600 }); // Cache for 10 minutes (600 seconds)
-    const normalizedBaseUrl = config.WORDPRESS_API_URL.replace(/\/wp-json\/?$/, '');
+    this.cache = new NodeCache({ stdTTL: 600 });
+    const url = config.WORDPRESS_API_URL?.trim();
+    const key = config.WORDPRESS_API_KEY?.trim();
+    if (!url || !key) {
+      return;
+    }
 
+    const normalizedBaseUrl = url.replace(/\/wp-json\/?$/, '');
     this.client = axios.create({
       baseURL: normalizedBaseUrl,
       headers: {
-        'X-API-Key': config.WORDPRESS_API_KEY,
+        'X-API-Key': key,
         'Content-Type': 'application/json',
       },
       timeout: 10000,
     });
 
-    // Add response interceptor for error handling
     this.client.interceptors.response.use(
-      response => response,
-      error => {
+      (response) => response,
+      (error) => {
         logger.error('WordPress API error:', error.response?.data || error.message);
         throw error;
-      }
+      },
     );
   }
 
+  isConfigured(): boolean {
+    return this.client !== null;
+  }
+
   async healthCheck(): Promise<boolean> {
+    if (!this.client) return false;
     try {
       const response = await this.client.get('/wp-json/botflow/v1/health');
       return response.status === 200;
@@ -55,6 +64,7 @@ export class WordPressClient {
     eventType: string;
     payload: any;
   }): Promise<void> {
+    if (!this.client) return;
     try {
       await this.client.post('/wp-json/botflow/v1/microservice/webhook', {
         event: 'meta_webhook_received',
@@ -70,6 +80,7 @@ export class WordPressClient {
     eventType: string;
     payload: any;
   }): Promise<void> {
+    if (!this.client) return;
     try {
       await this.client.post('/wp-json/botflow/v1/microservice/webhook', {
         event: 'evolution_webhook_received',
@@ -84,6 +95,7 @@ export class WordPressClient {
     source: string;
     payload: any;
   }): Promise<void> {
+    if (!this.client) return;
     try {
       await this.client.post('/wp-json/botflow/v1/microservice/webhook', {
         event: 'generic_webhook_received',
@@ -104,6 +116,7 @@ export class WordPressClient {
     model: string;
     tokensUsed: number;
   }): Promise<void> {
+    if (!this.client) return;
     try {
       await this.client.post('/wp-json/botflow/v1/microservice/webhook', {
         event: 'ai_complete',
@@ -134,6 +147,7 @@ export class WordPressClient {
   }
 
   async getFlowConfig(flowId: string): Promise<any> {
+    if (!this.client) return null;
     const cacheKey = `flow_${flowId}`;
     const cachedFlow = this.cache.get(cacheKey);
 
@@ -156,6 +170,7 @@ export class WordPressClient {
   }
 
   async getAINodeConfig(flowId: string, nodeId: string): Promise<any> {
+    if (!this.client) return null;
     try {
       const response = await this.client.get(`/wp-json/botflow/v1/ai-config/${flowId}/${nodeId}`);
       return response.data.data;
@@ -165,6 +180,7 @@ export class WordPressClient {
   }
 
   async resolveConversation(botId: string, contactPhone: string, contactName?: string): Promise<string | null> {
+    if (!this.client) return null;
     try {
       const response = await this.client.post('/wp-json/botflow/v1/microservice/conversation/resolve', {
         bot_id: botId,
@@ -185,6 +201,7 @@ export class WordPressClient {
     content: string;
     metadata?: any;
   }): Promise<void> {
+    if (!this.client) return;
     try {
       if (!data.botId) {
         logger.debug('Skipping saveMessage because botId is missing');
@@ -224,6 +241,7 @@ export class WordPressClient {
       return [];
     }
     const lim = Math.min(80, Math.max(1, limit));
+    if (!this.client) return [];
     try {
       const response = await this.client.get(
         `/wp-json/botflow/v1/microservice/conversation/${cid}/messages`,
@@ -249,6 +267,7 @@ export class WordPressClient {
     conversationId?: string;
     message: string;
   }): Promise<boolean> {
+    if (!this.client) return false;
     try {
       if (!data.botId || !data.conversationId) {
         logger.debug('Skipping sendWhatsAppMessage because botId/conversationId is missing');

@@ -1,9 +1,8 @@
 import { Router, Request, Response } from 'express';
-import crypto from 'crypto';
 import { z } from 'zod';
+import { config } from '../config.js';
 import { WebhookHandler } from '../services/webhook-handler.js';
 import { logger } from '../utils/logger.js';
-import { AppError } from '../middleware/error-handler.js';
 
 const router = Router();
 const webhookHandler = new WebhookHandler();
@@ -16,13 +15,20 @@ router.get('/meta', (req: Request, res: Response) => {
 
   logger.info('Meta webhook verification request received');
 
-  if (mode === 'subscribe') {
-    // Verify token should be fetched from config/database
-    // For now, we'll accept any token and validate via WordPress
-    res.status(200).send(challenge);
-  } else {
-    res.status(403).json({ error: 'Verification failed' });
+  const verifyToken = config.META_WEBHOOK_VERIFY_TOKEN?.trim();
+  if (mode === 'subscribe' && token && challenge) {
+    if (verifyToken && token !== verifyToken) {
+      logger.warn('Meta webhook verification: invalid verify token');
+      return res.status(403).json({ error: 'Verification failed' });
+    }
+    if (!verifyToken) {
+      logger.warn(
+        'Meta webhook verification: META_WEBHOOK_VERIFY_TOKEN not set — accepting challenge (dev only)',
+      );
+    }
+    return res.status(200).send(challenge);
   }
+  res.status(403).json({ error: 'Verification failed' });
 });
 
 // Meta webhook events (POST)

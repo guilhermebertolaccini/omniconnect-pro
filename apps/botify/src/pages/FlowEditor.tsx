@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { ArrowLeft } from 'lucide-react';
-import { wpApi } from '@/services/wordpress-api';
+import { botifyDomainApi } from '@/services/botify-domain-api';
 import type { ConversationFlow, Bot } from '@/types/bot';
 import { toast } from 'sonner';
 import { Node, Edge } from 'reactflow';
@@ -41,7 +41,7 @@ export default function FlowEditorPage() {
   const [newFlowBotId, setNewFlowBotId] = useState('');
 
   useEffect(() => {
-    wpApi.getBots().then(setBots).catch(() => {});
+    botifyDomainApi.getBots().then(setBots).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -52,7 +52,7 @@ export default function FlowEditorPage() {
 
   const loadFlow = async (flowId: string) => {
     try {
-      const data = await wpApi.getFlow(flowId);
+      const data = await botifyDomainApi.getFlow(flowId);
       if (data) {
         setFlow(data);
         setFlowName(data.name);
@@ -92,10 +92,10 @@ export default function FlowEditorPage() {
       }));
 
       if (flow) {
-        await wpApi.updateFlow(flow.id, { nodes: flowNodes });
+        await botifyDomainApi.updateFlow(flow.id, { nodes: flowNodes });
         toast.success('Fluxo atualizado!');
       } else {
-        const created = await wpApi.createFlow({
+        const created = await botifyDomainApi.createFlow({
           botId: newFlowBotId || bots[0]?.id || '1',
           name: flowName,
           triggerKeyword: newFlowTrigger,
