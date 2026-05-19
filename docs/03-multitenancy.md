@@ -29,6 +29,10 @@ The following must always include `tenantId`:
 - `Webhook`
 - `BillingUsage`
 
+## Bridge and inbound webhooks (tenant resolution)
+
+- **`POST /webhooks/botify` (e outros bridges com `x-integration-id` + HMAC):** o `tenantId` efetivo vem da linha **`IntegrationConnection`** validada pelo id e segredo — **não** de campos do corpo do evento. Botify: ver **`docs/adr/ADR-0001-botify-tenancy-model.md`**.
+
 ## Request context
 
 Toda request autenticada resolve:

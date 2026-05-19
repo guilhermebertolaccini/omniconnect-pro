@@ -9,11 +9,13 @@ import { AdsEventProcessor } from './jobs/ads-event.processor';
 import { BotEventProcessor } from './jobs/bot-event.processor';
 import { SystemEventsModule } from '../system-events/system-events.module';
 import { BridgeEventDispatcherService } from './bridge-event-dispatcher.service';
+import { InsightAiModule } from '../insight-ai/insight-ai.module';
 
 @Module({
   imports: [
     ConfigModule,
     SystemEventsModule,
+    InsightAiModule,
     BullModule.registerQueue(
       { name: 'crm-events' },
       { name: 'ads-events' },

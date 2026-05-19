@@ -8,7 +8,6 @@
     "dev": "tsc -w"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "@omniconnect/tsconfig": "workspace:*"
+    "typescript": "^5.0.0"
   }
 }

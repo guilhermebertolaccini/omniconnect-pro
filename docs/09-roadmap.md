@@ -4,6 +4,19 @@ Roadmap em fases. Cada fase tem **goal claro**, **entregáveis** e **critério d
 
 > Detalhes operacionais da migração inicial (do `taticaofc` para `omniconnect-pro`) estão em `docs/migration/`. Este roadmap olha para frente, **depois** que a migração estiver concluída.
 
+### Como ler este documento (atualizado)
+
+As fases **não são uma fila única**. No repositório, **CRM imobiliário** e **Smart Ad Automator** avançaram **além** do desenho linear abaixo (domínio e APIs no `omniconnect-backend`, ver `docs/migration/sprint-2-saa.md`, `docs/migration/sprint-3-crm.md`). **InsightAI** também evoluiu (multi-provedor, custo, dashboards). O **próximo gargalo de produto** é **orquestração ponta a ponta**: eventos e processors dos bridges preenchendo CRM/SAA com regras de negócio, Insight→CRM na UX, recovery e retroalimentação de campanha (ver `docs/migration/06-next-actions.md`, `docs/migration/sprint-4-bridge-processors.md`).
+
+| Épico (este arquivo) | Leitura no código/docs (macro) |
+|----------------------|--------------------------------|
+| Fase 0 — Foundation | ✅ Concluída |
+| Fase 1 — InsightAI | ✅ Núcleo + observabilidade de custo + UI Inteligência (`/inteligencia`); rate limiting dedicado em rotas IA pode evoluir |
+| Fase 2 — CRM | 🟡 Muito além do “só bridge”: módulo CRM no Nest; critérios de “pronto” da tabela ainda guiam o que falta **na jornada** |
+| Fase 3 — Botify | ⏳ App no monorepo; triagem no **mesmo padrão** de bridge + fila a priorizar |
+| Fase 4 — Executive | 🟠 Base parcial (agregados, relatórios); dashboard CEO/CFO “fechado” ainda não |
+| Fase 5 — SAA | 🟡 Backend/OAuth/proxies/análises avançados; fechar loop **anúncio → lead → conversa → IA → qualidade de volta** |
+
 ---
 
 ## Fase 0 — Migration & Foundation
@@ -31,31 +44,33 @@ Roadmap em fases. Cada fase tem **goal claro**, **entregáveis** e **critério d
 
 **Goal:** Analisar conversas do WhatsApp e gerar inteligência comercial.
 
-**Entregáveis:**
-- Endpoint `POST /insight-ai/conversations/:id/analyze` (assíncrono via BullMQ)
-- Schema `ConversationAIAnalysis` com `tenantId`
-- Provider OpenAI + fallback heurístico
-- Prompt versionado (`v1`)
-- Output validado via Zod
-- PII redaction antes do LLM
-- Endpoint `GET /insight-ai/analyses?conversationId=X`
-- Endpoint `GET /insight-ai/dashboard/summary` (métricas agregadas)
-- Tracking de custo (`promptTokens`, `completionTokens`, `estimatedCost`)
-- Rate limiting via módulo interno `rate-limiting/`
-- UI: aba "Inteligência" na tela de conversa (omniconnect-frontend)
+**Entregáveis (alinhados ao que o monorepo entrega hoje):**
+- Análise **assíncrona** via fila `insight-ai` (Bull), com `jobId` determinístico e isolamento por tenant
+- `POST /insight-ai/analyze/:phone` (enfileira) e modo `sync` administrativo; `POST /insight-ai/analyze` em lote
+- Schema `ConversationAIAnalysis` + `AIUsageLog` + `ModelPricing` com `tenantId`
+- Provedores LLM plugáveis (**OpenAI**, **Anthropic**, **Gemini** como `google` em log/pricing) + **fallback heurístico** se chave ausente ou erro
+- Prompt versionado (`insight-ai.prompt` / `PROMPT_VERSION`), output alinhado a `@omniconnect/ai-contracts`, validação no serviço
+- **PII redaction** antes do LLM (`redactPII`)
+- `GET /insight-ai/analyses` (paginado `{ items, meta }`, filtros período/segmento/telefone — ver `docs/06-api-standards.md`)
+- `GET /insight-ai/dashboard/summary` e `GET /insight-ai/dashboard/usage` (agregados tenant-scoped)
+- Tracking de custo por chamada em `AIUsageLog`
+- UI: página **Inteligência** em `omniconnect-frontend` → rota `/inteligencia` (admin / supervisor / digital)
+- **Continua evoluindo:** rate limiting explícito só nas rotas InsightAI; agregações “billing” consolidadas em módulo dedicado se necessário
 
 **Critério de pronto:**
-- ✅ Análise de uma conversa real retorna JSON válido
-- ✅ Sem OPENAI_KEY, heurística produz output válido
-- ✅ Custo aparece em `/billing-usage/ai`
-- ✅ Tenant isolation testado
-- ✅ PII redaction testado com sample real
+- ✅ Análise de conversas reais retorna resultado válido (LLM ou heurística)
+- ✅ Sem chave de provedor configurada, heurística produz output utilizável
+- ✅ Custo e tokens rastreados por tenant (`AIUsageLog` + dashboards de uso)
+- ✅ Tenant isolation testado (incl. E2E HTTP em jobs e listagens)
+- ✅ PII redaction cobre amostras acordadas na governança (`docs/05-ai-governance.md`)
 
 ---
 
 ## Fase 2 — CRM Integration
 
 **Goal:** Levar insights da IA para o CRM Imobiliário.
+
+**Nota (estado do repositório):** O trabalho **não** se limitou ao bridge: há **domínio CRM** no `omniconnect-backend` (schema Prisma, assinaturas, storage, parser, realtime — ver `docs/migration/sprint-3-crm.md`). Esta fase no roadmap continua válida pelos **critérios de pronto centrados na experiência** (IA visível no CRM, eventos de stage, recovery). O que falta é **costura operacional** com InsightAI e processors de eventos.
 
 **Entregáveis:**
 - `crm-bridge` module no backend
@@ -77,6 +92,8 @@ Roadmap em fases. Cada fase tem **goal claro**, **entregáveis** e **critério d
 ## Fase 3 — Botify Triage
 
 **Goal:** Qualificar leads antes do handoff humano.
+
+**Plano de maturidade (repo):** decomposição em fases A–F, critérios mensuráveis e CI — `docs/migration/sprint-6-botify-maturity-plan.md`.
 
 **Entregáveis:**
 - `bot-bridge` module no backend
@@ -119,6 +136,8 @@ Roadmap em fases. Cada fase tem **goal claro**, **entregáveis** e **critério d
 ## Fase 5 — Smart Ad Automator Integration
 
 **Goal:** Conectar campanhas pagas ao funil de conversas.
+
+**Nota (estado do repositório):** O **SAA** já tem **módulo e schema** no `omniconnect-backend` (conexões de plataforma, proxies, análise IA de campanha, refresh de tokens — ver `docs/migration/sprint-2-saa.md`). Permanecem os entregáveis abaixo para **fechar o loop comercial** (lead pago ↔ conversa ↔ insight ↔ métrica de volta).
 
 **Entregáveis:**
 - `ads-bridge` module no backend
@@ -181,23 +200,41 @@ Cada decisão de fase consulta o **product filter** (ver skill `product-owner`):
 
 Se a resposta não é "sim, claramente", a feature volta pro backlog.
 
-## Snapshot timeline (estimativa)
+## Linhas de trabalho (paralelo) — preferir a `06-next-actions`
+
+A execução **antecipou** Fases 2 e 5 em relação à linha do tempo linear original. Use esta visão por **trilho**:
+
+| Trilho | Conteúdo típico |
+|--------|-----------------|
+| **Core conversacional** | WhatsApp, conversas, operação no `omniconnect-frontend` |
+| **InsightAI** | Análise, custo, dashboards; evoluição contínua de governança |
+| **CRM (Nest)** | Domínio + CRM bridge + processors que materializam leads/deals |
+| **SAA (Nest)** | Conexões ads, proxies, análise, integração com bridges |
+| **Orquestração** | `IntegrationEvent`, dedupe, `IntegrationEntityLink`, emit para satélites |
+| **Botify** | Triagem com mesmo rigor de tenant/secrets/bridges |
+| **Executive** | Agregações C-level quando os eventos do funil estiverem confiáveis |
+
+**Plano histórico (estimativa linear original — referência apenas):**
 
 | Fase | Duração estimada | Inicia |
 |---|---|---|
 | 0 — Migration | 2-3 semanas | Maio 2026 |
-| 1 — InsightAI MVP | 3-4 semanas | Junho 2026 |
-| 2 — CRM Integration | 3 semanas | Julho 2026 |
-| 3 — Botify Triage | 3-4 semanas | Agosto 2026 |
-| 4 — Executive Dashboard | 3 semanas | Setembro 2026 |
-| 5 — SAA Integration | 4 semanas | Outubro 2026 |
+| 1 — InsightAI MVP | 3-4 semanas | plano original |
+| 2 — CRM Integration | 3 semanas | plano original |
+| 3 — Botify Triage | 3-4 semanas | plano original |
+| 4 — Executive Dashboard | 3 semanas | plano original |
+| 5 — SAA Integration | 4 semanas | plano original |
 | 6 — Omnichannel | 6-8 semanas | Q4 2026 |
 | 7+ — Maturity | contínuo | 2027 |
 
-> Estimativas conservadoras assumindo 1 dev full-time + analista. Ajustar conforme time cresce.
+> Para “o que fazer agora”, priorizar **`docs/migration/06-next-actions.md`** e o filtro em `01-product-vision.md`.
 
 ## See also
 
 - `01-product-vision.md`
+- `docs/migration/06-next-actions.md` (operacional: próximo foco)
+- `docs/migration/pilot-flow-lead-to-recovery.md` (piloto: jornada ponta a ponta e aceite)
+- `docs/migration/sprint-6-botify-maturity-plan.md` (Botify: paridade operacional)
 - `docs/migration/03-migration-plan.md` (Fase 0 detalhada)
+- `docs/02-architecture.md` (diagrama e estratégia de dados atualizada)
 - skill `product-owner` (filtro de decisão)

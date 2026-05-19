@@ -23,9 +23,9 @@ omniconnect-pro/
 ├── apps/
 │   ├── omniconnect-backend/      # NestJS — the core
 │   ├── omniconnect-frontend/     # React — operational UI
-│   ├── botify/                   # React — bot/flows
-│   ├── crm-imobiliario/          # React + Supabase — sales
-│   └── smart-ad-automator/       # React + Supabase — ads
+│   ├── botify/                   # React — bots/fluxos (integração via bridge; **cutover WP → Nest**: ver ADR-0002)
+│   ├── crm-imobiliario/          # React — CRM imobiliário (consome APIs Nest CRM; ver sprints migração)
+│   └── smart-ad-automator/       # React — campanhas pagas (consome APIs Nest SAA / OAuth)
 ├── packages/
 │   ├── ai-contracts/             # tipos InsightAI
 │   ├── shared-types/             # DTOs entre apps
@@ -51,19 +51,28 @@ Todos dentro de `apps/omniconnect-backend/src/`. **Módulos já existentes em `t
 | **Messaging pipeline** | `message-queue`, `message-sending`, `message-validation`, `humanization`, `spintax`, `phone-validation`, `line-reputation` |
 | **Infrastructure** | `logger` (winston), `cache`, `archiving`, `health`, `health-check-cache`, `circuit-breaker` (opossum), `rate-limiting` (próprio), `system-events`, `api-logs`, `api-messages`, `reports` |
 
-**Módulos a criar para virar OmniconnectPRO:**
+**Módulos OmniconnectPRO (além do legado `taticaofc`):**
 
-| Módulo novo | Responsabilidade |
+| Módulo / área | Responsabilidade | Estado típico |
+|---|---|---|
+| `insight-ai` | Análise IA de conversas, fila, custo, dashboards API | ✅ Núcleo entregue (multi-provedor; ver `docs/migration/sprint-5-insight-ai-v2.md`) |
+| `crm-bridge` | Webhooks HMAC, eventos CRM ↔ core | ✅ Em evolução com processors |
+| `ads-bridge` | Webhooks / integração SAA ↔ core | ✅ Em evolução com processors |
+| `bot-bridge` | Eventos Botify ↔ core | ✅ Handoff HMAC; **definição de fluxos a migrar para Prisma** — [ADR-0002](adr/ADR-0002-botify-wordpress-to-backend-cutover.md) |
+| `integration-events` | `IntegrationEvent`, filas, processors CRM/Ads/Bot | ✅ (ver `docs/migration/sprint-4-bridge-processors.md`) |
+| `integration-bridge-emit` | Emissão controlada de eventos a partir de apps satélite (JWT) | ✅ |
+| Domínio **CRM** (Nest/Prisma) | Leads, deals, storage, parser, realtime operacional | ✅ Schema + APIs (ver Sprint 3) |
+| Domínio **SAA** (Nest/Prisma) | Conexões de ads, proxies, análise IA de campanha | ✅ (ver Sprint 2) |
+| `system-events` | Auditoria operacional de integrações | ✅ |
+| `rate-limiting` | Limites por chave/tenant (webhooks sensíveis, etc.) | ✅ Em expansão |
+
+**Ainda a consolidar como “produto fechado” (épicos de roadmap):**
+
+| Área | Responsabilidade |
 |---|---|
-| `tenants` | Tenant CRUD, configurações (multi-tenant retrofit) |
-| `insight-ai` | Análise IA de conversas (vem do patch) |
-| `dashboards` | Agregações executivas (lead lifecycle, AI cost, leakage) |
-| `events` | Eventos de domínio expostos a integrações (complementa `system-events`) |
-| `audit-logs` | Log de auditoria de ações sensíveis (multi-tenant) |
-| `billing-usage` | Consumo de IA, mensagens, custos por tenant |
-| `bot-bridge` | Ponte com app Botify |
-| `crm-bridge` | Ponte com CRM Imobiliário |
-| `ads-bridge` | Ponte com Smart Ad Automator |
+| `dashboards` / **Executive** | Agregações C-level (aquisição + conversão + leakage) além de relatórios atuais |
+| `billing-usage` | Faturamento comercial vs rastreio técnico — hoje custo IA em `AIUsageLog` + painéis Insight |
+| Catálogo formal de **eventos de domínio** | Complementar `system-events` com contratos estáveis (ver `.cursor/rules/13-events.mdc`) |
 
 > **Princípio:** reusar módulos existentes em vez de criar novos. Ex.: `humanization`, `spintax`, `phone-validation`, `circuit-breaker`, `rate-limiting` já resolvem casos que `taticaofc` já enfrentou.
 
@@ -74,7 +83,7 @@ Todos dentro de `apps/omniconnect-backend/src/`. **Módulos já existentes em `t
 3. Conversa inicia (`Conversation` + primeira `Message`)
 4. **Botify** (opcional) faz triagem do lead
 5. Lead atribuído a vendedor (humano) via `bot.handoff`
-6. **CRM** cria/atualiza `Deal` correspondente
+6. **CRM** (API Nest ou satélite) cria/atualiza `Deal` / entidades equivalentes, também via eventos dos bridges
 7. Mensagens fluem entre lead e vendedor (`Message` por turno)
 8. **InsightAI** analisa a conversa periodicamente (BullMQ job)
 9. Análise IA atualiza campos comerciais (`leadIntent`, `mainObjection`, `nextBestAction`)
@@ -83,7 +92,7 @@ Todos dentro de `apps/omniconnect-backend/src/`. **Módulos já existentes em `t
 
 ## Event-driven backbone
 
-Ações comerciais importantes emitem eventos internos (`lead.created`, `conversation.analyzed`, `crm.stage_changed`, etc.). Ver `13-events.mdc`.
+Ações comerciais importantes emitem eventos internos (`lead.created`, `conversation.analyzed`, `crm.stage_changed`, etc.). Ver `.cursor/rules/13-events.mdc`.
 
 Eventos alimentam:
 - Dashboards (agregação temporal)
@@ -106,20 +115,23 @@ Tudo lento ou caro **não bloqueia o request HTTP**:
 
 Infra: Postgres + Redis (BullMQ). O backend já tem `bullmq` e o legado `bull` instalados — preferir `bullmq` para código novo.
 
-## Hybrid backend strategy (Supabase × Postgres-NestJS)
+## Estratégia de dados (Postgres Nest × Supabase × satélites)
 
-Curto prazo (1-2 trimestres):
-- CRM e SAA permanecem em **Supabase**
-- Backend Nesjs continua dono dos dados operacionais (conversas, leads, IA)
-- Integração via HTTP entre apps
+**Hoje (2026):** grande parte do **domínio comercial estendido** (CRM imobiliário, SAA) foi **absorvida pelo Postgres do `omniconnect-backend`** (Prisma, migrations, módulos de domínio). Os apps `crm-imobiliario` e `smart-ad-automator` funcionam como **frontends satélite** que chamam essas APIs (e podem ainda usar **Supabase ou outro BFF** em transição para auth, realtime legado ou telas não migradas — ver docs de sprint por app).
 
-Médio prazo (3-6 meses):
-- Migração de tabelas críticas do Supabase para o Postgres do OmniConnect
-- Auth unificado (OmniConnect como IdP)
+**Tenancy:** `tenantId` em entidades operacionais; JWT e bridges resolvem contexto (ver `03-multitenancy.md`).
 
-Longo prazo (12+ meses):
-- Decisão final: tudo Postgres+NestJS, ou Supabase fica como camada de Realtime
-- Reavaliar baseado em escala e custo
+**Direção:** continuar **movendo fonte de verdade** para o monólito modular enquanto se fecha a **orquestração** (`IntegrationEvent` → processors → entidades CRM/SAA). Supabase pode permanecer como **realtime edge** ou ser reduzido conforme equivalentes em Nest/WebSocket maduram.
+
+**Curto prazo:** priorizar **eventos confiáveis** e **idempotência** entre Omni e satélites antes de novos extractors.
+
+**Médio / longo prazo:** auth unificado (OmniConnect como IdP para satélites), menos duplicação de modelo de dados, dashboard executivo alimentado pelos mesmos eventos.
+
+---
+
+**Histórico (trecho antigo Supabase-first):** em um plano anterior, CRM e SAA ficariam só no Supabase no curto prazo; a execução **antecipou** a absorção no Postgres Nest. Ignore esse roteiro em favor da seção anterior.
+
+---
 
 ## Scalability direction
 
@@ -146,6 +158,7 @@ Stack já instalada no `taticaofc`:
 ## See also
 
 - `01-product-vision.md`
+- `09-roadmap.md` (épicos e trilhos paralelos)
 - `03-multitenancy.md`
 - `06-api-standards.md`
 - `07-database-standards.md`

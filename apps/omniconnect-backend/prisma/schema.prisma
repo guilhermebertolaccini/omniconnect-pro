@@ -564,6 +564,8 @@ model MessageQueue {
   contactPhone String
   contactName  String?
   message      String    @db.Text
+  /// Optional structured triage from Botify handoff (`data.leadSummary`); validated at ingest.
+  leadSummary  Json?
   messageType  String    @default("text")
   mediaUrl     String?
   segment      Int?

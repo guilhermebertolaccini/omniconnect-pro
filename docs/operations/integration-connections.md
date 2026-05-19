@@ -4,6 +4,11 @@ Tenant-scoped rows in `IntegrationConnection` tell the backend **which webhook
 secret** validates inbound traffic from CRM / ads / Botify and **which UUID**
 browser apps send as `connectionId` on `POST /integrations/bridge/events`.
 
+## Botify tenancy (ADR)
+
+Modelo **1 instalação ↔ 1 `IntegrationConnection` (`provider=bot`)** é o padrão; `tenantId` no Omni vem **só** da linha apontada por `x-integration-id` + segredo HMAC válido.  
+Para vários tenants Omni no mesmo microserviço Botify, é obrigatório mapeamento **só em servidor** (por `bot_id` / site / réplica) — ver **`docs/adr/ADR-0001-botify-tenancy-model.md`**.
+
 ## Fields (operational)
 
 | Field | Notes |
@@ -26,7 +31,7 @@ browser apps send as `connectionId` on `POST /integrations/bridge/events`.
 
 4. Insert the row (Prisma Studio, migration, or SQL), e.g.:
 
-   - `id`: new UUID (this is the **`x-integration-id`** / **`VITE_*_BRIDGE_CONNECTION_ID`**).
+   - `id`: new UUID (this is the **`x-integration-id`** / **`VITE_*_BRIDGE_CONNECTION_ID`** / **`OMNICONNECT_BOT_BRIDGE_CONNECTION_ID`** no microserviço Botify).
    - `tenantId`: target tenant.
    - `provider`: `crm` | `ads` | `bot`.
    - `webhookSecretEncrypted`: output from step 3.
@@ -35,7 +40,7 @@ browser apps send as `connectionId` on `POST /integrations/bridge/events`.
 5. **Configure emitters**
    - CRM: `VITE_OMNICONNECT_BRIDGE_CONNECTION_ID=<uuid>` (`provider=crm`).
    - SAA: `VITE_OMNICONNECT_ADS_BRIDGE_CONNECTION_ID=<uuid>` (`provider=ads`).
-   - Botify microservice: connection id + plaintext secret envs (HMAC from server; see Botify README).
+   - Botify microservice: `OMNICONNECT_BOT_BRIDGE_*` — runbook **`docs/operations/botify-omniconnect-bridge.md`**.
 
 6. **Webhook callers** must send:
    - Header `x-integration-id: <connection id>`.
@@ -52,5 +57,6 @@ There is **no** tenant self-service CRUD for connections yet; use controlled adm
 
 ## Related docs
 
-- `docs/migration/sprint-4-bridge-processors.md` — bridge processors and emit path.
+- `docs/adr/ADR-0001-botify-tenancy-model.md` — 1:1 vs multi-tenant Botify; mapeamento `IntegrationConnection`.
+- `docs/operations/botify-omniconnect-bridge.md` — handoff Botify → Omni (envs, contrato, troubleshooting).
 - `apps/omniconnect-backend/src/integration-events/bridge-secret-cipher.ts` — encryption format.

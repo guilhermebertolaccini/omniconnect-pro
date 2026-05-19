@@ -94,6 +94,12 @@ Leitura agregada, sempre com `tenantId` do JWT (roles: `admin`, `supervisor`, `d
 
 `from` sem `to` (ou o inverso) → `400`.
 
+## Bridge inbound — Botify (`POST /webhooks/botify`)
+
+Evento suportado hoje: **`botify.handoff.created`** (`provider` interno `bot`). Headers: `x-integration-id` (UUID da `IntegrationConnection`), `x-signature` (HMAC-SHA256 do body), `idempotency-key` (recomendado).
+
+Envelope e campo **`data`** (telefone obrigatório; `leadSummary` opcional para triagem; demais campos): ver **`docs/operations/botify-omniconnect-bridge.md`**. Processamento: `BridgeEventDispatcherService` (upsert `Contact`, cria `MessageQueue` com `leadSummary` JSON quando presente; dedupe via `IntegrationEntityLink`).
+
 ## Sorting
 
 ```

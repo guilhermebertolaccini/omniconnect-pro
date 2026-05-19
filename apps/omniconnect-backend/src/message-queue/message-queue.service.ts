@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma.service';
+import { formatQueueMessageWithTriage } from './format-queue-message-with-triage';
 import { ConversationsService } from '../conversations/conversations.service';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 
@@ -90,7 +91,10 @@ export class MessageQueueService {
         await this.conversationsService.create(tenantId, {
           contactPhone: queuedMessage.contactPhone,
           contactName: queuedMessage.contactName || queuedMessage.contactPhone,
-          message: queuedMessage.message,
+          message: formatQueueMessageWithTriage(
+            queuedMessage.message,
+            queuedMessage.leadSummary,
+          ),
           sender: 'contact',
           messageType: queuedMessage.messageType,
           mediaUrl: queuedMessage.mediaUrl,

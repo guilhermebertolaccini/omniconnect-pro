@@ -4,12 +4,14 @@
  * Bull runs asynchronously in production; here the in-memory queue calls
  * `CrmEventProcessor.handle` synchronously to prove the full wiring without Redis.
  */
+import { ConfigService } from '@nestjs/config';
 import { BridgeEventDispatcherService } from '../integration-events/bridge-event-dispatcher.service';
 import { IntegrationEventsService } from '../integration-events/integration-events.service';
 import { IntegrationBridgeEmitService } from '../integration-bridge-emit/integration-bridge-emit.service';
 import { CrmEventProcessor } from '../integration-events/jobs/crm-event.processor';
 import { SystemEventsService } from '../system-events/system-events.service';
 import { PrismaService } from '../prisma.service';
+import { InsightAiService } from '../insight-ai/insight-ai.service';
 
 describe('Bridge emit → CRM processor → CrmLead (smoke)', () => {
   it('creates a tenant-scoped CrmLead and entity link end-to-end', async () => {
@@ -128,9 +130,23 @@ describe('Bridge emit → CRM processor → CrmLead (smoke)', () => {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as unknown as SystemEventsService;
 
+    const config = {
+      get: jest.fn().mockReturnValue(undefined),
+    } as unknown as ConfigService;
+    const insightAi = {
+      enqueueAnalyzeByPhone: jest.fn().mockResolvedValue({
+        jobId: 'iai:mock',
+        tenantId,
+        contactPhone: '',
+        status: 'queued' as const,
+      }),
+    } as unknown as InsightAiService;
+
     const dispatcher = new BridgeEventDispatcherService(
       prisma as unknown as PrismaService,
       systemEvents,
+      config,
+      insightAi,
     );
 
     const crmQueue = {

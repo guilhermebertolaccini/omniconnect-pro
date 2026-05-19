@@ -119,6 +119,8 @@ ANTHROPIC_MODEL="claude-3-5-haiku-20241022"
 GEMINI_API_KEY=""
 # ou: GOOGLE_AI_API_KEY=""
 GEMINI_MODEL="gemini-2.0-flash"
+# Opcional: após `botify.handoff.created`, enfileira análise InsightAI pelo mesmo E.164 (default off)
+# INSIGHT_AI_ON_BOTIFY_HANDOFF=true
 
 # Meta WhatsApp
 META_WEBHOOK_TOKEN="seu-token"

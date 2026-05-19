@@ -53,10 +53,14 @@ O que decidimos fazer. Direto ao ponto.
 
 `ADR-0001-<kebab-case-title>.md`, `ADR-0002-<...>.md`, etc. Sequencial, sem reuso.
 
+## Registro de ADRs
+
+| ID | Título |
+|----|--------|
+| [ADR-0001](ADR-0001-botify-tenancy-model.md) | Modelo de tenancy Botify ↔ OmniconnectPRO |
+| [ADR-0002](ADR-0002-botify-wordpress-to-backend-cutover.md) | Botify — cutover WordPress → backend (fonte de verdade) |
+
 ## ADRs sugeridos para criar cedo
 
-- `ADR-0001-multi-tenant-from-day-one.md`
-- `ADR-0002-monorepo-pnpm-workspaces.md`
-- `ADR-0003-supabase-hybrid-strategy.md`
-- `ADR-0004-ai-provider-abstraction.md`
-- `ADR-0005-event-driven-internal-bus.md`
+- `ADR-0003-supabase-hybrid-strategy.md` (estado legado CRM/SAA)
+- `ADR-0004-event-driven-internal-bus.md` (contratos estáveis além de `system-events`)

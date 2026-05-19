@@ -161,15 +161,19 @@ git add prisma/ pnpm-lock.yaml
 git commit -m "migration(prisma): <description>"
 ```
 
-## CI/CD (futuro)
+## CI/CD
 
-GitHub Actions:
-- `backend-ci.yml`: lint + test + build em PRs
-- `frontend-ci.yml`: lint + test + build em PRs
-- `security-ci.yml`: `pnpm audit`, dependabot
-- `deploy.yml`: deploy automático para staging em merge na `main`
+Workflow único: `.github/workflows/ci.yml` em PRs/push para `main` e `develop`:
 
-Production deploy: manual ou via tag (decisão futura: Coolify, Vercel, Railway, AWS).
+- **Backend** — `tsc`, Jest, `nest build`; job de integração com Postgres + Redis.
+- **omniconnect-frontend** — build obrigatório.
+- **botify** — `shared-types` build, ESLint, Vitest, `vite build` (bloqueante).
+- **botflow-microservice** — `npm ci`, `npm test`, `npm run build` na pasta do plugin (bloqueante).
+- **crm-imobiliario**, **smart-ad-automator** — build **não bloqueante** (`continue-on-error`) até sprint de migração.
+
+Roadmap: `pnpm audit` em CI, dependabot, `deploy.yml` para staging.
+
+Production deploy: manual ou via tag (Coolify, Vercel, Railway, AWS — decisão por app).
 
 ## Hot-fix workflow
 

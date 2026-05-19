@@ -12,6 +12,7 @@ import { UseGuards, Inject, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
 import { ConversationsService } from '../conversations/conversations.service';
+import { formatQueueMessageWithTriage } from '../message-queue/format-queue-message-with-triage';
 import { ControlPanelService } from '../control-panel/control-panel.service';
 import { MediaService } from '../media/media.service';
 import { LinesService } from '../lines/lines.service';
@@ -153,7 +154,10 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
               await this.conversationsService.create((user as any).tenantId || 'default-tenant', {
                 contactPhone: queuedMessage.contactPhone,
                 contactName: queuedMessage.contactName || queuedMessage.contactPhone,
-                message: queuedMessage.message,
+                message: formatQueueMessageWithTriage(
+                  queuedMessage.message,
+                  queuedMessage.leadSummary,
+                ),
                 sender: 'contact',
                 messageType: queuedMessage.messageType,
                 mediaUrl: queuedMessage.mediaUrl,

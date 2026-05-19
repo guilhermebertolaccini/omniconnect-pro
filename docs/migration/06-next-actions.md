@@ -30,12 +30,23 @@
 | CRM hardening (Sprint 3.2) — timelines + document audit via backend | ✅ |
 | InsightAI Sprint 5 — dashboard + custo multi-provider | ✅ |
 | Bridge processors (Sprint 4) — handlers + emitters + `IntegrationEntityLink` | ✅ |
+| Botify — paridade CRM/SAA (ver plano Sprint 6) + **cutover WP** (ADR-0002) | 🟡 Em andamento ([`sprint-6-botify-maturity-plan.md`](./sprint-6-botify-maturity-plan.md), [`ADR-0002`](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md)) |
 
-## Próximo foco — Sprint 6 (Botify) e continuidade
+## Próximo foco — Botify (maturidade) + Sprint 6 operacional
+
+**Plano detalhado:** [`docs/migration/sprint-6-botify-maturity-plan.md`](./sprint-6-botify-maturity-plan.md) — integração Omni, contrato de handoff, motor de fluxo, CI, tenancy, triagem rica e **Fase G (cutover WordPress → Nest/Prisma)**.
+
+**Decisão arquitetural:** [`docs/adr/ADR-0002-botify-wordpress-to-backend-cutover.md`](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md) (**Proposed**) — eliminar WP como fonte de verdade dos fluxos; Strangler Fig com fases G0–G7.
 
 Sprint 5 (InsightAI v2) está **concluída** — ver `docs/migration/sprint-5-insight-ai-v2.md`
 (`GET /insight-ai/dashboard/summary`, `GET /insight-ai/dashboard/usage`, `GET /insight-ai/analyses`,
 UI `/inteligencia` no `omniconnect-frontend`).
+
+**Piloto de produto (jornada ponta a ponta):** definir e validar o fluxo referência em [`pilot-flow-lead-to-recovery.md`](./pilot-flow-lead-to-recovery.md) (aceite binário, telas, seeds, runbook).
+
+O roadmap macro aponta **Fase 3 — Botify Triage** em `docs/09-roadmap.md`; o plano Sprint 6 acima decompõe em entregas incrementais.
+
+**Resumo Sprint 5 (InsightAI v2) — concluída:**
 
 | Bloco | Resumo |
 | --- | --- |
@@ -43,9 +54,6 @@ UI `/inteligencia` no `omniconnect-frontend`).
 | **2** ✅ | Anthropic + Gemini (`google`); resolver; flags disable; `ModelPricing` + migration. |
 | **3** ✅ | Dashboard: filtros de período/segmento, `AIUsageLog` agregado por provedor; UI Inteligência. |
 | **4** ✅ | Docs de governança, padrões de API, runbook (`DEPLOYMENT.md`) com envs. |
-
-O roadmap macro aponta **Sprint 6 — Botify** (segurança e alinhamento com bridges + API keys —
-ver lista em “Roadmap longo” abaixo).
 
 ## Sprint 1.3 — Hardening final pré-Sprint 2 ✅ CONCLUÍDA
 

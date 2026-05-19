@@ -170,10 +170,9 @@ jobs:
         run: pnpm --filter omniconnect-frontend run build
 
   # --------------------------------------------------------------------
-  # Satellite frontends — botify, crm-imobiliario, smart-ad-automator
-  # are scheduled for backend migration (sprints 3-5). They're tracked
-  # but kept non-blocking until each app's migration sprint finalises
-  # the new build contract. Each sprint flips its own app to blocking.
+  # Satellite frontends — crm-imobiliario, smart-ad-automator remain
+  # non-blocking until their migration sprints flip them. **botify** is
+  # validated in the dedicated `botify` job (Sprint 6 — Fase D).
   # --------------------------------------------------------------------
   frontends-satellite:
     name: ${{ matrix.app }} / build (non-blocking)
@@ -183,7 +182,6 @@ jobs:
       fail-fast: false
       matrix:
         app:
-          - botify
           - crm-imobiliario
           - smart-ad-automator
 
@@ -208,3 +206,82 @@ jobs:
       - name: Build ${{ matrix.app }}
         run: pnpm --filter ${{ matrix.app }} run build
         continue-on-error: true
+
+  # --------------------------------------------------------------------
+  # Botify (Vite) — Sprint 6 D2: lint + tests + build block PRs.
+  # --------------------------------------------------------------------
+  botify:
+    name: botify / lint + test + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared-types (workspace dep of botify)
+        run: pnpm --filter @omniconnect/shared-types run build
+
+      - name: Lint
+        run: pnpm --filter botify run lint
+
+      - name: Unit tests
+        run: pnpm --filter botify run test
+
+      - name: Production build
+        run: pnpm --filter botify run build
+
+  # --------------------------------------------------------------------
+  # BotFlow microservice (WordPress companion) — Sprint 6 D3.
+  # Standalone npm lockfile under the plugin tree.
+  # --------------------------------------------------------------------
+  botflow-microservice:
+    name: botflow-microservice / test + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: apps/botify/wordpress-plugin/botflow-manager/microservice
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/botify/wordpress-plugin/botflow-manager/microservice/package-lock.json
+
+      - name: Build @omniconnect/shared-types (file dependency)
+        working-directory: .
+        run: |
+          corepack enable pnpm
+          pnpm install --frozen-lockfile
+          pnpm --filter @omniconnect/shared-types run build
+
+      - name: Install (npm ci)
+        working-directory: apps/botify/wordpress-plugin/botflow-manager/microservice
+        run: npm ci
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { CrmLeadStage, Prisma } from '@prisma/client';
 import {
   EventModule,
@@ -13,6 +14,7 @@ import {
   parseBridgeEventPayload,
 } from './bridge-event-contract';
 import type { IntegrationProvider } from './integration-events.service';
+import { InsightAiService } from '../insight-ai/insight-ai.service';
 
 interface IntegrationEntityLinkDelegate {
   findUnique(args: {
@@ -48,6 +50,8 @@ export class BridgeEventDispatcherService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly systemEvents: SystemEventsService,
+    private readonly config: ConfigService,
+    private readonly insightAi: InsightAiService,
   ) {}
 
   private get entityLinks(): IntegrationEntityLinkDelegate {
@@ -177,6 +181,7 @@ export class BridgeEventDispatcherService {
     if (!phone) {
       throw new Error('botify.handoff.created requires data.phone');
     }
+    const leadSummary = this.botifyLeadSummaryFromData(payload.data);
     const name =
       this.stringFromData(payload.data, 'name', 255) ??
       this.stringFromData(payload.data, 'contactName', 255) ??
@@ -215,6 +220,7 @@ export class BridgeEventDispatcherService {
         contactPhone: phone,
         contactName: name,
         message,
+        ...(leadSummary !== undefined ? { leadSummary } : {}),
         messageType: 'text',
         segment,
         status: 'pending',
@@ -228,6 +234,32 @@ export class BridgeEventDispatcherService {
       'MessageQueue',
       String(queued.id),
     );
+    await this.maybeEnqueueInsightAiAfterBotifyHandoff(event.tenantId, phone);
+  }
+
+  /**
+   * Optional: prime InsightAI for the same E.164 after a new handoff row is created.
+   * Analysis reads messages persisted in Omni for that tenant+phone; the first run may
+   * be sparse until the human conversation exists — jobId hour-bucket allows re-run.
+   */
+  private async maybeEnqueueInsightAiAfterBotifyHandoff(
+    tenantId: string,
+    contactPhone: string,
+  ): Promise<void> {
+    const flag = this.config.get<string>('INSIGHT_AI_ON_BOTIFY_HANDOFF');
+    if (flag !== 'true' && flag !== '1') return;
+    try {
+      await this.insightAi.enqueueAnalyzeByPhone(tenantId, contactPhone, {
+        days: 14,
+        limit: 80,
+        persist: true,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `InsightAI enqueue after Botify handoff failed for tenant=${tenantId}: ${msg}`,
+      );
+    }
   }
 
   private crmLeadData(
@@ -271,6 +303,49 @@ export class BridgeEventDispatcherService {
     const estimatedValue = this.decimalFromData(payload.data, 'estimatedValue');
     if (estimatedValue !== undefined) data.estimatedValue = estimatedValue;
     return data;
+  }
+
+  /**
+   * Whitelist + size caps for Botify `data.leadSummary` (nested object).
+   * Aligns conceptually with triage fields in @omniconnect-pro/ai-contracts (LeadIntent, etc.) as free-text hints.
+   */
+  private botifyLeadSummaryFromData(
+    data: Record<string, unknown>,
+  ): Prisma.InputJsonValue | undefined {
+    const raw = data.leadSummary;
+    if (raw == null) return undefined;
+    if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const o = raw as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    const put = (key: string, max: number) => {
+      const v = this.stringFromData(o, key, max);
+      if (v) out[key] = v;
+    };
+    put('intent', 80);
+    put('urgency', 32);
+    put('budget', 120);
+    put('region', 120);
+    put('propertyInterest', 255);
+    put('notes', 500);
+    put('flowId', 120);
+    put('flowName', 120);
+    put('lastUserMessage', 600);
+    put('lastAssistantReply', 600);
+    const cf = o.collectedFields;
+    if (cf && typeof cf === 'object' && !Array.isArray(cf)) {
+      const collected: Record<string, string> = {};
+      let n = 0;
+      for (const [k, v] of Object.entries(cf)) {
+        if (n >= 15) break;
+        if (typeof k !== 'string' || !k.trim()) continue;
+        if (typeof v !== 'string') continue;
+        const t = v.trim().slice(0, 200);
+        if (t) collected[k.trim().slice(0, 60)] = t;
+        n++;
+      }
+      if (Object.keys(collected).length) out.collectedFields = collected;
+    }
+    return Object.keys(out).length > 0 ? (out as Prisma.InputJsonValue) : undefined;
   }
 
   private stringFromData(

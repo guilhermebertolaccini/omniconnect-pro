@@ -287,6 +287,17 @@ A escolha por jobs (em vez de chamada síncrona dentro da request HTTP) protege 
 - `AIUsageLog` é escopado por tenant para billing/relatório de consumo por cliente.
 - PII redaction é aplicada **antes** de montar o prompt; CPF, RG, telefone e e-mail nunca chegam ao provedor.
 
+## Botify handoff ↔ InsightAI (Sprint 6 Fase F)
+
+**Fonte de verdade para o prompt:** mensagens **persistidas no Omniconnect** (modelo `Message` / conversa operacional) para o **mesmo telefone** (`E.164`) e **mesmo `tenantId`** resolvido na ponte (connection / HMAC), nunca o transcript bruto armazenado no WordPress/Botify.
+
+- **F1 — Momento da análise:** o produto assume que a análise comercial útil acompanha a conversa **humana** no Omni após o handoff. O evento `botify.handoff.created` materializa fila/triagem; o InsightAI correlaciona pelo telefone já unificado no core.  
+  **Opcional:** `INSIGHT_AI_ON_BOTIFY_HANDOFF=true` enfileira `analyze-conversation` logo após criar um `MessageQueue` **novo** (idempotência do handoff inalterada). A primeira execução pode ver poucas mensagens até o atendente atuar; o `jobId` com bucket horário permite nova fila depois.
+
+- **F2 — PII e domínio cruzado:** não concatenar ao prompt um export completo do histórico Botify “só para enriquecer”. O objeto `leadSummary` no bridge é **resumo sanitizado** para operação (intent, último turno, campos coletados com teto de tamanho) — não substitui o transcript no LLM. Qualquer outro texto de sistemas externos que venha a entrar em prompts (ex.: notas sync de CRM) deve passar pelo mesmo **`redactPII`** que as mensagens de canal.
+
+Implementação de referência: `BridgeEventDispatcherService.createBotifyHandoff` + `InsightAiService.enqueueAnalyzeByPhone`.
+
 ## Output JSON example
 
 ```json

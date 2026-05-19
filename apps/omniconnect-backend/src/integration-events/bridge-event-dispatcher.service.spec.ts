@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { BridgeEventDispatcherService } from './bridge-event-dispatcher.service';
 import { parseBridgeEventPayload } from './bridge-event-contract';
 import {
@@ -8,11 +9,14 @@ import {
   SystemEventsService,
 } from '../system-events/system-events.service';
 import { PrismaService } from '../prisma.service';
+import { InsightAiService } from '../insight-ai/insight-ai.service';
 
 describe('BridgeEventDispatcherService', () => {
   let service: BridgeEventDispatcherService;
   let prisma: any;
   let systemEvents: jest.Mocked<Pick<SystemEventsService, 'logEvent'>>;
+  let config: jest.Mocked<Pick<ConfigService, 'get'>>;
+  let insightAi: jest.Mocked<Pick<InsightAiService, 'enqueueAnalyzeByPhone'>>;
 
   beforeEach(() => {
     prisma = {
@@ -33,9 +37,22 @@ describe('BridgeEventDispatcherService', () => {
       },
     };
     systemEvents = { logEvent: jest.fn().mockResolvedValue(undefined) };
+    config = {
+      get: jest.fn().mockReturnValue(undefined),
+    };
+    insightAi = {
+      enqueueAnalyzeByPhone: jest.fn().mockResolvedValue({
+        jobId: 'iai:mock',
+        tenantId: 'tenant-a',
+        contactPhone: '+5511888888888',
+        status: 'queued',
+      }),
+    };
     service = new BridgeEventDispatcherService(
       prisma as unknown as PrismaService,
       systemEvents as unknown as SystemEventsService,
+      config as unknown as ConfigService,
+      insightAi as unknown as InsightAiService,
     );
   });
 
@@ -224,6 +241,110 @@ describe('BridgeEventDispatcherService', () => {
         entityId: '1',
       },
     });
+    expect(insightAi.enqueueAnalyzeByPhone).not.toHaveBeenCalled();
+  });
+
+  it('enqueues InsightAI after new botify handoff when INSIGHT_AI_ON_BOTIFY_HANDOFF is enabled', async () => {
+    prisma.integrationEntityLink.findUnique.mockResolvedValue(null);
+    config.get.mockImplementation((key: string) =>
+      key === 'INSIGHT_AI_ON_BOTIFY_HANDOFF' ? 'true' : undefined,
+    );
+    await service.dispatch(
+      {
+        id: 'evt-bot',
+        tenantId: 'tenant-a',
+        provider: 'bot',
+        status: 'received',
+        payload: {
+          eventType: 'botify.handoff.created',
+          externalId: 'handoff-1',
+          occurredAt: '2026-05-18T22:00:00.000Z',
+          data: {
+            phone: '+5511888888888',
+            name: 'Lead Bot',
+            message: 'Precisa falar com humano',
+            segment: 7,
+          },
+        },
+      },
+      'bot',
+    );
+
+    expect(insightAi.enqueueAnalyzeByPhone).toHaveBeenCalledWith(
+      'tenant-a',
+      '+5511888888888',
+      expect.objectContaining({
+        days: 14,
+        limit: 80,
+        persist: true,
+      }),
+    );
+  });
+
+  it('persists sanitized botify leadSummary on MessageQueue when provided', async () => {
+    prisma.integrationEntityLink.findUnique.mockResolvedValue(null);
+    await service.dispatch(
+      {
+        id: 'evt-bot-sum',
+        tenantId: 'tenant-a',
+        provider: 'bot',
+        status: 'received',
+        payload: {
+          eventType: 'botify.handoff.created',
+          externalId: 'handoff-sum-1',
+          occurredAt: '2026-05-18T22:00:00.000Z',
+          data: {
+            phone: '+5511888888888',
+            leadSummary: {
+              intent: 'qualificado',
+              urgency: 'alta',
+              lastUserMessage: 'Quero agendar',
+              collectedFields: { quartos: '3', bairro: 'Centro' },
+            },
+          },
+        },
+      },
+      'bot',
+    );
+
+    expect(prisma.messageQueue.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        tenantId: 'tenant-a',
+        contactPhone: '+5511888888888',
+        leadSummary: {
+          intent: 'qualificado',
+          urgency: 'alta',
+          lastUserMessage: 'Quero agendar',
+          collectedFields: { quartos: '3', bairro: 'Centro' },
+        },
+      }),
+      select: { id: true },
+    });
+  });
+
+  it('ignores invalid botify leadSummary (non-object)', async () => {
+    prisma.integrationEntityLink.findUnique.mockResolvedValue(null);
+    await service.dispatch(
+      {
+        id: 'evt-bot-bad-sum',
+        tenantId: 'tenant-a',
+        provider: 'bot',
+        status: 'received',
+        payload: {
+          eventType: 'botify.handoff.created',
+          externalId: 'handoff-bad-sum',
+          occurredAt: '2026-05-18T22:00:00.000Z',
+          data: {
+            phone: '+5511888888888',
+            leadSummary: ['not-an-object'],
+          },
+        },
+      },
+      'bot',
+    );
+
+    const arg = prisma.messageQueue.create.mock.calls[0]?.[0];
+    expect(arg?.data?.leadSummary).toBeUndefined();
   });
 
   it('does not enqueue a duplicated botify handoff with same externalId', async () => {

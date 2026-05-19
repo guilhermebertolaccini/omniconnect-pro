@@ -24,7 +24,9 @@ Documentação de contexto e plano de migração para unificar 4 produtos num ú
 | 3.1 | [`sprint-3-1-crm-frontend.md`](./sprint-3-1-crm-frontend.md) | Sprint 3.1 — CRM frontend cutover |
 | 3.2 | [`sprint-3-2-crm-hardening.md`](./sprint-3-2-crm-hardening.md) | Sprint 3.2 — CRM hardening (audit/timelines) |
 | 4 | [`sprint-4-bridge-processors.md`](./sprint-4-bridge-processors.md) | Sprint 4 — Bridge processors + emitters |
-| 5 | [`sprint-5-insight-ai-v2.md`](./sprint-5-insight-ai-v2.md) | Sprint 5 — InsightAI v2 (planejada) |
+| 5 | [`sprint-5-insight-ai-v2.md`](./sprint-5-insight-ai-v2.md) | Sprint 5 — InsightAI v2 (multi-provider + dashboards) |
+| 6 | [`sprint-6-botify-maturity-plan.md`](./sprint-6-botify-maturity-plan.md) | Plano — Botify à paridade CRM/SAA (integração, motor, CI, tenancy) |
+| Pilot | [`pilot-flow-lead-to-recovery.md`](./pilot-flow-lead-to-recovery.md) | Fluxo referência piloto: anúncio → conversa → IA → CRM → recuperação (aceite e runbook) |
 
 ## Como usar
 
