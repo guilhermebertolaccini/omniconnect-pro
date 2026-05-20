@@ -17,7 +17,7 @@ interface HeaderProps {
 }
 
 export function Header({ onMenuClick }: HeaderProps) {
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const { user, signOut } = useAuth();
 
   const displayName = user?.name || user?.email || 'Admin';
