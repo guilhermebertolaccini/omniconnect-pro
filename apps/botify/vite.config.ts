@@ -2,6 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
+const omniconnectProxyTarget =
+  process.env.VITE_OMNICONNECT_PROXY_TARGET || "http://localhost:3000";
+
 // https://vitejs.dev/config/
 export default defineConfig(() => ({
   server: {
@@ -22,9 +25,13 @@ export default defineConfig(() => ({
         rewrite: (path) => path.replace(/^\/api\/microservice/, ""),
       },
       "/api": {
-        target: "http://localhost:3000",
+        target: omniconnectProxyTarget,
         changeOrigin: true,
         secure: false,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+        cookiePathRewrite: {
+          "/auth": "/api/auth",
+        },
       },
     },
   },

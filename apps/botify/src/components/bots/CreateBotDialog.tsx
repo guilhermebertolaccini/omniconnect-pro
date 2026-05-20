@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -16,7 +16,7 @@ import type { Bot } from '@/types/bot';
 interface CreateBotDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave: (bot: Omit<Bot, 'id' | 'createdAt'>) => void;
+  onSave: (bot: Omit<Bot, 'id' | 'createdAt'>) => Promise<void> | void;
   editBot?: Bot | null;
 }
 
@@ -24,24 +24,37 @@ export function CreateBotDialog({ open, onOpenChange, onSave, editBot }: CreateB
   const [name, setName] = useState(editBot?.name || '');
   const [description, setDescription] = useState(editBot?.description || '');
   const [phoneNumber, setPhoneNumber] = useState(editBot?.phoneNumber || '');
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!open) return;
+    setName(editBot?.name || '');
+    setDescription(editBot?.description || '');
+    setPhoneNumber(editBot?.phoneNumber || '');
+  }, [editBot, open]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave({
-      name,
-      description,
-      phoneNumber,
-      status: 'offline',
-      lineHealth: 'disconnected',
-      messagesReceived: 0,
-      messagesSent: 0,
-      activeConversations: 0,
-      lastActivity: new Date(),
-    });
-    setName('');
-    setDescription('');
-    setPhoneNumber('');
-    onOpenChange(false);
+    setIsSaving(true);
+    try {
+      await onSave({
+        name,
+        description,
+        phoneNumber,
+        status: 'offline',
+        lineHealth: 'disconnected',
+        messagesReceived: 0,
+        messagesSent: 0,
+        activeConversations: 0,
+        lastActivity: new Date(),
+      });
+      setName('');
+      setDescription('');
+      setPhoneNumber('');
+      onOpenChange(false);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -85,16 +98,24 @@ export function CreateBotDialog({ open, onOpenChange, onSave, editBot }: CreateB
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 placeholder="+55 11 99999-9999"
-                required
+                disabled={isSaving}
               />
+              <p className="text-xs text-muted-foreground">
+                Opcional. A linha oficial pode ser vinculada depois em Chips ou Configurações.
+              </p>
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isSaving}
+            >
               Cancelar
             </Button>
-            <Button type="submit">
-              {editBot ? 'Salvar Alterações' : 'Criar Bot'}
+            <Button type="submit" disabled={isSaving}>
+              {isSaving ? 'Salvando...' : editBot ? 'Salvar Alterações' : 'Criar Bot'}
             </Button>
           </DialogFooter>
         </form>

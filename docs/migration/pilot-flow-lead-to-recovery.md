@@ -249,6 +249,7 @@ O piloto só é considerado **pass** se **todos** os itens abaixo forem verdadei
 4. **Passo demo campanha:** disparar lead pago de teste.  
 5. **Passo conversa:** enviar mensagens mínimas (script ou UI).  
 6. **Passo Botify:** completar triagem mínima até handoff.  
+   Smoke local sem Meta real: `./scripts/botify-handoff-validation.sh` valida `botify.handoff.created`, dedupe e materialização em `MessageQueue`.
 7. **Passo Insight:** disparar análise conforme política §4.1.  
 8. **Passo CRM:** abrir lead/deal e validar §7 A4–A5.  
 9. **Passo dashboard:** validar §7 A6.  

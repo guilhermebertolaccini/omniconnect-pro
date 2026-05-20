@@ -139,7 +139,11 @@ const Chips = () => {
     return (saved as ApiProvider) || 'meta';
   });
 
-  const loadDataFromAPI = useCallback(async (bmId?: string) => {
+  const loadDataFromAPI = useCallback(async (
+    bmId?: string,
+    options: { showToast?: boolean } = {},
+  ) => {
+    const showToast = options.showToast ?? true;
     const targetBmId = bmId || activeAccount?.businessManagerId || businessManagerId;
     if (!targetBmId) return;
 
@@ -193,10 +197,14 @@ const Chips = () => {
       }
 
       setSpamReports(generateMockSpamReports());
-      toast.success('Dados atualizados com sucesso!');
+      if (showToast) {
+        toast.success('Dados atualizados com sucesso!');
+      }
     } catch (error) {
       console.error('Error loading data:', error);
-      toast.error('Erro ao carregar dados da API Meta');
+      if (showToast) {
+        toast.error('Erro ao carregar dados da API Meta');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -215,7 +223,7 @@ const Chips = () => {
       setConnectionName(account.name);
       metaGraphAPI.setAccessToken(token);
       metaGraphAPI.clearCache();
-      await loadDataFromAPI(account.businessManagerId);
+      await loadDataFromAPI(account.businessManagerId, { showToast: true });
     } catch {
       toast.error('Erro ao carregar conta Meta');
     }
@@ -317,9 +325,8 @@ const Chips = () => {
           setActiveAccount(withToken);
           setIsConnected(true);
           setConnectionName(account.name);
-          setActiveTab('numbers');
           metaGraphAPI.setAccessToken(token);
-          await loadDataFromAPI(account.businessManagerId);
+          await loadDataFromAPI(account.businessManagerId, { showToast: false });
         }
       } catch {
         toast.error('Erro ao carregar contas Meta (Omni)');
@@ -662,7 +669,7 @@ const Chips = () => {
                       <ul className="mt-1 space-y-1 text-muted-foreground">
                         <li>• Use um token de acesso com permissões de leitura para WABAs e números</li>
                         <li>• Tokens expiram - configure um token de longa duração ou System User</li>
-                        <li>• As credenciais são armazenadas localmente no seu navegador</li>
+                        <li>• As credenciais são armazenadas no Omni backend com acesso protegido</li>
                       </ul>
                     </div>
                   </div>

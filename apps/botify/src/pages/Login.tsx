@@ -206,7 +206,9 @@ export default function Login() {
               </Button>
               
               <p className="text-sm text-muted-foreground text-center">
-                Suas credenciais são gerenciadas pelo administrador WordPress.
+                {useOmniAuth
+                  ? 'Suas credenciais são gerenciadas pelo OmniConnect.'
+                  : 'Suas credenciais são gerenciadas pelo administrador WordPress.'}
               </p>
             </CardFooter>
           </form>

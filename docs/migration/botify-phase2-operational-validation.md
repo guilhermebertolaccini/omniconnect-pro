@@ -4,6 +4,35 @@ Objetivo: **provar** que o cutover interno (Nest ↔ microserviço) e as migraç
 
 **Pré-requisito:** [Fase 1](./botify-phase1-operational-setup.md).
 
+### Script executável (recomendado)
+
+Na raiz do monorepo, com backend a correr e `jq` + `curl` instalados:
+
+```bash
+cp scripts/botify-pilot-validation.env.example scripts/botify-pilot-validation.env
+# editar: BOTIFY_INTERNAL_SYNC_SECRET, OMNICONNECT_LOGIN_PASSWORD, etc.
+
+./scripts/botify-pilot-validation.sh
+```
+
+O script cobre os passos **1–9** (migrações, health, JWT, bot/fluxo/conta Meta, internal runtime/routing, simulate, health do microserviço). O passo **10** (webhook Meta real, handoff, CRM) fica documentado no output e em [`pilot-flow-lead-to-recovery.md`](./pilot-flow-lead-to-recovery.md).
+
+Flags úteis: `--skip-migrate`, `--skip-create`, `--cleanup` (apaga recursos criados nesta execução).
+
+Para validar o trecho de handoff server-to-server local (`POST /webhooks/botify` → `IntegrationEvent` → `MessageQueue` + dedupe):
+
+```bash
+./scripts/botify-handoff-validation.sh
+```
+
+Para validar o caminho com **webhook Meta simulado** passando pelo microserviço Botify (`/webhooks/meta` → runtime Omni → nó `transfer` → handoff):
+
+```bash
+./scripts/botify-meta-webhook-validation.sh
+```
+
+Fluxos HSM / SAA / orgânico: [`botify-inbound-channels-flow.md`](./botify-inbound-channels-flow.md).
+
 ---
 
 ## 1. Migrações no `omniconnect-backend`
@@ -19,6 +48,7 @@ Aceite:
 
 - Lista inclui **`20260522120000_sprint_6_message_queue_lead_summary`** aplicada.
 - Lista inclui **`20260523140000_sprint_6_botify_domain`** aplicada.
+- Lista inclui **`20260525100000_sprint_6_botify_meta_accounts`** aplicada (Chips Omni).
 
 ---
 

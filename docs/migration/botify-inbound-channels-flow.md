@@ -59,3 +59,11 @@ Routing: `GET /botify/internal/routing/meta/:accountId` consulta `BotifyMetaAcco
 | DELETE | `/botify/meta-accounts/:id` |
 
 Migração one-shot: contas em `localStorage` (`meta_accounts`) são importadas na primeira carga do Chips se o tenant ainda não tiver contas no Omni.
+
+## Validação automatizada
+
+```bash
+./scripts/botify-pilot-validation.sh
+```
+
+Ver também [`botify-phase2-operational-validation.md`](./botify-phase2-operational-validation.md).
