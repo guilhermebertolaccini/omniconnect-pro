@@ -12,9 +12,16 @@ import { BotifyConversationsService } from './botify-conversations.service';
 import { BotifyChannelConfigService } from './botify-channel-config.service';
 import { BotifyRoutingService } from './botify-routing.service';
 import { BotifyMetaAccountsService } from './botify-meta-accounts.service';
+import { BotifyAIChatService } from './botify-ai-chat.service';
+import { SystemEventsModule } from '../system-events/system-events.module';
 
 @Module({
-  imports: [IntegrationBridgeEmitModule, IntegrationEventsModule, WhatsappCloudModule],
+  imports: [
+    IntegrationBridgeEmitModule,
+    IntegrationEventsModule,
+    WhatsappCloudModule,
+    SystemEventsModule,
+  ],
   controllers: [BotifyController, BotifyInternalController],
   providers: [
     BotifyService,
@@ -24,6 +31,7 @@ import { BotifyMetaAccountsService } from './botify-meta-accounts.service';
     BotifyChannelConfigService,
     BotifyRoutingService,
     BotifyMetaAccountsService,
+    BotifyAIChatService,
     PrismaService,
   ],
   exports: [BotifyService, BotifyConversationsService, BotifyFlowEngineService],

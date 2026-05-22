@@ -32,6 +32,7 @@ import { CreateBotifyFlowDto } from './dto/create-flow.dto';
 import { UpdateBotifyFlowDto } from './dto/update-flow.dto';
 import { ImportWordpressSnapshotDto } from './dto/import-wordpress-snapshot.dto';
 import { SimulateBotifyFlowDto } from './dto/simulate-botify-flow.dto';
+import { ProcessBotifyFlowDto } from './dto/process-botify-flow.dto';
 
 function parseOptionalInt(v?: string): number | undefined {
   if (v === undefined || v === '') return undefined;
@@ -215,7 +216,11 @@ export class BotifyController {
     @CurrentUser() user: RequestUserLike,
     @Body() dto: ImportWordpressSnapshotDto,
   ) {
-    return this.botify.importWordpressSnapshot(ensureTenant(user), dto);
+    return this.botify.importWordpressSnapshot(
+      ensureTenant(user),
+      dto,
+      typeof user.id === 'number' ? user.id : undefined,
+    );
   }
 
   @Get('flows/:id')
@@ -269,6 +274,31 @@ export class BotifyController {
   ) {
     return this.engine.run(ensureTenant(user), dto.flowId, dto.text, {
       dryRun: true,
+    });
+  }
+
+  /**
+   * G3 — endpoint persistente do engine: resolve/cria `BotifyConversation`,
+   * salva a mensagem do usuário, executa o grafo (incluindo nó `ai` real
+   * com OpenAI Chat Completions + fallback heurístico) e persiste cada
+   * resposta `assistant`. `dryRun=true` desliga só a persistência e o
+   * handoff real (mantém o LLM, para QA/preview).
+   */
+  @Post('runtime/process')
+  @Roles(Role.admin, Role.supervisor, Role.digital, Role.operator)
+  @ApiOperation({
+    summary:
+      'Processa uma mensagem inbound num fluxo Botify (G3): persiste em BotifyConversation/Message, executa AI node real, emite handoff se nó transfer.',
+  })
+  process(
+    @CurrentUser() user: RequestUserLike,
+    @Body() dto: ProcessBotifyFlowDto,
+  ) {
+    return this.engine.run(ensureTenant(user), dto.flowId, dto.text, {
+      dryRun: dto.dryRun ?? false,
+      botId: dto.botId,
+      phone: dto.phone,
+      contactName: dto.contactName,
     });
   }
 

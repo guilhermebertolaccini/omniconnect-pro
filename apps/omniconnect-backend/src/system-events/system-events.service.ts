@@ -54,6 +54,29 @@ export enum EventType {
   // Bridge processors (Sprint 4)
   BRIDGE_EVENT_DISPATCHED = 'bridge_event_dispatched',
   BRIDGE_EVENT_FAILED = 'bridge_event_failed',
+
+  // Sprint Foundation — F1: MessageBroker (ADR-0005 pré-requisito)
+  MESSAGE_BROKER_CREATED = 'message_broker_created',
+  MESSAGE_BROKER_UPDATED = 'message_broker_updated',
+  MESSAGE_BROKER_DELETED = 'message_broker_deleted',
+  MESSAGE_BROKER_TESTED = 'message_broker_tested',
+  MESSAGE_BROKER_STATUS_CHANGED = 'message_broker_status_changed',
+
+  // Sprint Foundation — F2: TenantWallet (ADR-0005 pré-requisito)
+  WALLET_CREATED = 'wallet_created',
+  WALLET_CONFIG_CHANGED = 'wallet_config_changed',
+  WALLET_CHANNEL_COST_UPDATED = 'wallet_channel_cost_updated',
+  WALLET_DEBITED = 'wallet_debited',
+  WALLET_INSUFFICIENT = 'wallet_insufficient',
+  WALLET_TOPUP = 'wallet_topup',
+  WALLET_REFUND = 'wallet_refund',
+
+  // Sprint Foundation — F3: AntiFatigue (ADR-0005 pré-requisito)
+  ANTIFATIGUE_RULE_UPDATED = 'antifatigue_rule_updated',
+  ANTIFATIGUE_BLOCKED = 'antifatigue_blocked',
+
+  // Botify G6 — Importer WordPress → Omni (ADR-0002)
+  BOTIFY_IMPORT_RUN = 'botify_import_run',
 }
 
 export enum EventSeverity {
@@ -78,6 +101,10 @@ export enum EventModule {
   AUTH = 'auth',
   CRM_SIGNATURES = 'crm_signatures',
   BRIDGE_PROCESSORS = 'bridge_processors',
+  MESSAGE_BROKERS = 'message_brokers',
+  TENANT_WALLETS = 'tenant_wallets',
+  ANTI_FATIGUE = 'anti_fatigue',
+  BOTIFY = 'botify',
 }
 
 interface EventFilters {
@@ -167,6 +194,62 @@ export class SystemEventsService {
         orderBy: {
           createdAt: 'desc',
         },
+        take: filters.limit || 100,
+        skip: filters.offset || 0,
+      }),
+      this.prisma.systemEvent.count({ where }),
+    ]);
+
+    return {
+      events: events.map((event) => ({
+        ...event,
+        data: event.data ? JSON.parse(event.data) : null,
+      })),
+      total,
+    };
+  }
+
+  /**
+   * Sprint Quick-wins — Q2 Guards audit.
+   *
+   * Filtragem pré-definida sobre os módulos de guard
+   * (`ANTI_FATIGUE`, `TENANT_WALLETS`, `MESSAGE_BROKERS`, `LINES`)
+   * + types de bloqueio relevantes. Útil para a UI de auditoria sem
+   * precisar conhecer o catálogo de `EventType`.
+   */
+  async findGuardsEvents(
+    tenantId: string,
+    filters: { startDate?: Date; endDate?: Date; limit?: number; offset?: number },
+  ) {
+    if (!tenantId) {
+      throw new BadRequestException('tenantId is required');
+    }
+
+    const guardTypes = [
+      EventType.ANTIFATIGUE_BLOCKED,
+      EventType.WALLET_INSUFFICIENT,
+      EventType.MESSAGE_BROKER_STATUS_CHANGED,
+      EventType.LINE_BANNED,
+    ];
+
+    const where: any = {
+      tenantId,
+      type: { in: guardTypes },
+    };
+
+    if (filters.startDate || filters.endDate) {
+      where.createdAt = {};
+      if (filters.startDate) where.createdAt.gte = filters.startDate;
+      if (filters.endDate) where.createdAt.lte = filters.endDate;
+    }
+
+    const [events, total] = await Promise.all([
+      this.prisma.systemEvent.findMany({
+        where,
+        include: {
+          user: { select: { id: true, name: true, email: true, role: true } },
+        },
+        orderBy: { createdAt: 'desc' },
         take: filters.limit || 100,
         skip: filters.offset || 0,
       }),

@@ -13,8 +13,11 @@ build/
 .env
 .env.local
 .env.*.local
+.env.staging
+.env.production
 scripts/*.env
 !.env.example
+!.env.staging.example
 !scripts/*.env.example
 
 # OS / IDE

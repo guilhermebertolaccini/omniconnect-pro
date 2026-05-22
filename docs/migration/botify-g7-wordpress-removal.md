@@ -37,8 +37,8 @@ rg "wpApi|wordpress-api" apps/botify/src --glob '!**/botify-domain-api.ts'
 | # | Item | Estado | Notas |
 |---|------|--------|--------|
 | A1 | `BOTIFY_INTERNAL_SYNC_SECRET` + `OMNICONNECT_BOTIFY_TENANT_ID` alinhados backend ↔ microserviço | ✅ local | Fase 1/2 ops |
-| A2 | `BOTIFY_FLOW_SOURCE=omniconnect` em staging/piloto | ⬜ | Hoje default `wordpress` |
-| A3 | `VITE_BOTIFY_DATA_SOURCE=omniconnect` no Vite | ⬜ | Editor de grafos |
+| A2 | `BOTIFY_FLOW_SOURCE=omniconnect` default no `.env.example` do microserviço | ✅ | Resta flip operacional em staging Coolify (não-código) |
+| A3 | `VITE_BOTIFY_DATA_SOURCE=omniconnect` default no Vite | ✅ | G5 flipou `source()` default + `.env.example` já estava |
 | A4 | `WORDPRESS_*` opcionais em `microservice/src/config.ts` quando `BOTIFY_FLOW_SOURCE=omniconnect` | ✅ | Zod condicional wordpress/dual |
 | A5 | Health microserviço: WP não obrigatório em modo `omniconnect` | ✅ | `routes/health.ts` — WP `skipped` + `/ready` Omni |
 
@@ -50,14 +50,14 @@ rg "wpApi|wordpress-api" apps/botify/src --glob '!**/botify-domain-api.ts'
 
 | # | Item | Ficheiros / API | Depende de |
 |---|------|-----------------|------------|
-| B1 | Carregar grafo **só** via `omniconnect-flow-runtime.ts` (já existe) | `services/omniconnect-flow-runtime.ts` | A2, secret |
-| B2 | Remover `getFlowConfig` WP do caminho quando `omniconnect` | `flow-engine.ts`, `message-queue.ts` | B1 |
-| B3 | Config de nó IA a partir do **grafo publicado** (JSON no fluxo) ou endpoint Nest | `flow-engine.ts`, `ai-processor.ts`; hoje `getAINodeConfig` → WP | G2 + contrato `BotifyAiNodePersistedConfig` |
-| B4 | Histórico IA: `listConversationMessages` → **Omni** (Conversation/Message por tenant+phone ou conversationId) | Novo client ou extensão internal API | Bloco C |
-| B5 | `saveMessage` / `sendWhatsAppMessage` → Omni ou **ChannelConnection** existente no core | `wordpress-client.ts` métodos finais | Bloco C, D |
-| B6 | `resolveConversation` → criar/obter conversa no core (tenant-scoped) | WP `microservice/conversation/resolve` | Bloco C |
-| B7 | Logs webhook/IA para WP (`logMetaWebhook`, `logAIProcessing`, …) → structured logs ou tabela audit Omni | `webhook-handler.ts`, `ai-processor.ts` | opcional pós-MVP |
-| B8 | Testes Vitest: motor com `BOTIFY_FLOW_SOURCE=omniconnect` mock fetch runtime | `*.spec.ts` | B1–B3 |
+| B1 | Carregar grafo **só** via `omniconnect-flow-runtime.ts` | `services/omniconnect-flow-runtime.ts` | ✅ |
+| B2 | `getFlowConfig` WP só é consultado em `wordpress`/`dual`; em `omniconnect` o resolver pula WP | `flow-engine.ts` chama `resolveFlowConfigForEngine` | ✅ |
+| B3 | Config de nó IA persiste **dentro** do grafo publicado (`node.data.systemPrompt`/`model`/`temperature`/`maxTokens`); engine G3 lê do graph, sem `/ai-config/:flowId/:nodeId` em Omni; UI usa `saveAIConfig` eco do G5 facade | `botify-flow-engine.service.ts:308-404`, `botify-domain-api.ts:saveAIConfig` | ✅ via G3 + G5 |
+| B4 | Histórico IA: engine G3 lê `BotifyMessage.findMany({tenantId, conversationId})` — sem `listConversationMessages` WP em Omni | `botify-flow-engine.service.ts:329-348` | ✅ G3 |
+| B5 | `saveMessage` no Omni via `BotifyMessage.create` no engine; envio WhatsApp via `WhatsappCloudService` + handoff por bridge | engine G3 + bridge G2 | ✅ |
+| B6 | `resolveConversation` upsert por `(tenantId, botId, contactPhone)` direto no Prisma | `botify-flow-engine.service.ts:498-526` | ✅ G3 |
+| B7 | `ai-processor.logToWordPress` gateado por `BOTIFY_FLOW_SOURCE` — em `omniconnect` vira structured log local; WP audit só em modo legado | `services/ai-processor.ts:logToWordPress` + spec `ai-processor.spec.ts` (3/3) | ✅ G7 |
+| B8 | Vitest: `omniconnect-flow-runtime.spec.ts` (3 modes, 9 casos) + `ai-processor.spec.ts` (3 casos, gate WP write) | microserviço | ✅ |
 
 **Aceite B:** um fluxo publicado no Nest é executado de ponta a ponta (simulate ou webhook de teste) sem chamada HTTP ao WP.
 
@@ -101,12 +101,12 @@ Hoje o Nest Botify cobre **bots/fluxos**; conversas WhatsApp do Botify ainda viv
 | # | Item | Ficheiros | Notas |
 |---|------|-----------|--------|
 | E1 | Auth: login/refresh via Omni (`/auth/login`, cookie refresh) | ✅ | `src/lib/omniconnectClient.ts` + `AuthContext` + `VITE_BOTIFY_AUTH_SOURCE` |
-| E2 | Remover dependência de `wpApi` para sessão | 🟡 | Omni default; WP se `VITE_BOTIFY_AUTH_SOURCE=wordpress` |
+| E2 | Remover dependência de `wpApi` no data plane (conversas/mensagens/whatsappConfig/saveAIConfig) | ✅ G5 | Hooks `use-wordpress-api.ts` migrados ao facade; sessão WP (`wpApi.login`) ainda existe para `VITE_BOTIFY_AUTH_SOURCE=wordpress` legado |
 | E3 | `botify-domain-api`: conversas, mensagens, channel → Omni | ✅ | `omniconnect-botify-api` + `botify-domain-api` |
 | E4 | Páginas: `Messages`, `Settings`, `Health` sem `wpApi` directo | ✅ | Health usa `/api/health` + `/api/microservice/health` |
-| E5 | AI config no editor: gravar no grafo ou `PATCH /botify/flows/:id` | `FlowEditor.tsx`, hooks | alinhado B3 |
-| E6 | `VITE_BOTIFY_DATA_SOURCE=omniconnect` em `.env` piloto | `.env.example` | |
-| E7 | Documentar token Omni no Vite (nunca `BOTIFY_INTERNAL_SYNC_SECRET` no browser) | README + phase docs | segurança |
+| E5 | AI config no editor é gravado **dentro** do `BotifyFlowNode.data` via `updateFlow`; `saveAIConfig` virou eco no Omni (sem HTTP) | `FlowEditor.tsx:218-230` + `botify-domain-api.ts:saveAIConfig` | ✅ G5 |
+| E6 | `VITE_BOTIFY_DATA_SOURCE=omniconnect` em `.env.example` | `apps/botify/.env.example:15` | ✅ |
+| E7 | Documentar token Omni no Vite (nunca `BOTIFY_INTERNAL_SYNC_SECRET` no browser) | README + phase docs | ✅ — `.env.example` linha 19 alerta CI/scripts only |
 
 **Aceite E:** build Vite; operador edita fluxo e vê conversas sem URL WP no Network tab.
 

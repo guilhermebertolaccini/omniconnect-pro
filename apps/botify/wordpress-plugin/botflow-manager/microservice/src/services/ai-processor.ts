@@ -2,6 +2,7 @@ import { LovableProvider } from './providers/lovable.js';
 import { OpenAIProvider } from './providers/openai.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { WordPressClient } from './wordpress-client.js';
+import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 export interface Message {
@@ -181,6 +182,16 @@ export class AIProcessor {
   }
 
   private async logToWordPress(request: AIProcessRequest, result: AIProcessResult): Promise<void> {
+    // ADR-0002 G7: em modo `omniconnect`, WP saiu do caminho crítico —
+    // o log de IA fica como structured log local (audit Omni segue por
+    // `BotifyMessage.metadata.provider` gravado no engine G3) sem
+    // chamada HTTP ao plugin.
+    if (config.BOTIFY_FLOW_SOURCE === 'omniconnect') {
+      logger.info(
+        `[ai-processor] flow=${request.flowId} node=${request.nodeId} conv=${request.conversationId} provider=${result.provider} model=${result.model} tokens=${result.tokensUsed} — WP log skipped (BOTIFY_FLOW_SOURCE=omniconnect)`,
+      );
+      return;
+    }
     await this.wpClient.logAIProcessing({
       flowId: request.flowId,
       nodeId: request.nodeId,

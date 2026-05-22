@@ -20,6 +20,7 @@
     "dev:botify": "pnpm --filter botify run dev",
     "dev:crm": "pnpm --filter crm-imobiliario run dev",
     "dev:saa": "pnpm --filter smart-ad-automator run dev",
+    "dev:hub": "pnpm --filter omniconnect-hub run dev",
     "prisma:migrate": "pnpm --filter omniconnect-backend prisma migrate dev",
     "prisma:generate": "pnpm --filter omniconnect-backend run prisma:generate",
     "prisma:studio": "pnpm --filter omniconnect-backend prisma studio",

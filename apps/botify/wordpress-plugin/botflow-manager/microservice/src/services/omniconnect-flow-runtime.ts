@@ -74,11 +74,16 @@ export async function resolveFlowConfigForEngine(
     return null;
   }
 
-  // dual
+  // dual — Omni primeiro; se vazio/ausente, cai pra WP e loga (telemetria
+  // do cutover; ADR-0002 G4 — frequência de fallback deve cair a zero
+  // antes de virar `omniconnect`).
   const omniFirst = await fetchOmniconnectRuntimeFlowConfig(flowId);
   if (omniFirst && Array.isArray(omniFirst.nodes) && omniFirst.nodes.length > 0) {
     return { nodes: omniFirst.nodes as unknown[] };
   }
+  logger.warn(
+    `[BOTIFY_FLOW_SOURCE=dual] flow ${flowId} ausente/vazio em Omni; fallback para WordPress (ADR-0002 G4)`,
+  );
   const wpFlow = await wpGetFlow(flowId);
   if (
     wpFlow &&

@@ -1,0 +1,209 @@
+# docker-compose.staging.yml — staging local-mirror (Sprint Hub / PR 6).
+#
+# Reproduz a topologia que vai para o Coolify, num único host. Útil para:
+#   - validar Dockerfiles em ambiente isolado;
+#   - testar fluxo end-to-end Hub → backend → Postgres/Redis;
+#   - smoke do `botify-handoff-validation.sh` antes de subir staging real.
+#
+# Para staging real (público HTTPS) configurar cada serviço como uma Coolify
+# application apontando para os Dockerfiles na raiz do repo — ver
+# `docs/deployment/coolify-staging.md`.
+#
+# Uso:
+#   cp .env.staging.example .env.staging
+#   # editar segredos
+#   docker compose --env-file .env.staging -f docker-compose.staging.yml up -d
+#   docker compose -f docker-compose.staging.yml logs -f omniconnect-backend
+#
+# NÃO commitar `.env.staging`.
+
+name: omniconnect-pro-staging
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: omni-staging-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-omni}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_DB: ${POSTGRES_DB:-omniconnect}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-staging-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-omni} -d ${POSTGRES_DB:-omniconnect}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: omni-staging-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-staging-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  omniconnect-backend:
+    image: ${BACKEND_IMAGE:-omniconnect/backend:staging}
+    container_name: omni-staging-backend
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-7d}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      BRIDGE_SECRET_KEY: ${BRIDGE_SECRET_KEY:?BRIDGE_SECRET_KEY required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      INSIGHT_AI_DEFAULT_PROVIDER: ${INSIGHT_AI_DEFAULT_PROVIDER:-openai}
+      INSIGHT_AI_ON_BOTIFY_HANDOFF: ${INSIGHT_AI_ON_BOTIFY_HANDOFF:-true}
+      BOTIFY_INTERNAL_SYNC_SECRET: ${BOTIFY_INTERNAL_SYNC_SECRET:-}
+      ALLOW_PUBLIC_TENANT_SIGNUP: ${ALLOW_PUBLIC_TENANT_SIGNUP:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      APP_URL: ${APP_URL:-https://app.staging.example.com}
+      # Meta (preencher antes da PR 7)
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    volumes:
+      - backend-uploads:/app/uploads
+    restart: unless-stopped
+
+  omniconnect-hub:
+    image: ${HUB_IMAGE:-omniconnect/hub:staging}
+    container_name: omni-staging-hub
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_USE_MOCK_AUTH: ${VITE_USE_MOCK_AUTH:-false}
+        VITE_USE_MOCK_DATA: ${VITE_USE_MOCK_DATA:-false}
+        VITE_CRM_URL: ${VITE_CRM_URL:-}
+        VITE_OMNIHUB_URL: ${VITE_OMNIHUB_URL:-}
+        VITE_SAA_URL: ${VITE_SAA_URL:-}
+        VITE_BOTIFY_URL: ${VITE_BOTIFY_URL:-}
+    depends_on:
+      omniconnect-backend:
+        condition: service_started
+    # `vite dev` reads VITE_* from process.env at startup (não usa o
+    # bundle pré-buildado). Repassamos os mesmos valores em runtime para
+    # que omniconnectClient acerte `VITE_API_URL` etc.
+    environment:
+      NODE_ENV: production
+      VITE_API_URL: ${VITE_API_URL:-}
+      VITE_USE_MOCK_AUTH: ${VITE_USE_MOCK_AUTH:-false}
+      VITE_USE_MOCK_DATA: ${VITE_USE_MOCK_DATA:-false}
+      VITE_CRM_URL: ${VITE_CRM_URL:-}
+      VITE_OMNIHUB_URL: ${VITE_OMNIHUB_URL:-}
+      VITE_SAA_URL: ${VITE_SAA_URL:-}
+      VITE_BOTIFY_URL: ${VITE_BOTIFY_URL:-}
+    ports:
+      - "${HUB_PORT:-4173}:4173"
+    restart: unless-stopped
+
+  omniconnect-frontend:
+    image: ${OMNI_FRONTEND_IMAGE:-omniconnect/omniconnect-frontend:staging}
+    container_name: omni-staging-frontend
+    build:
+      context: .
+      dockerfile: Dockerfile.spa
+      args:
+        APP: omniconnect-frontend
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_USE_MOCK_DATA: ${VITE_USE_MOCK_DATA:-false}
+    depends_on:
+      omniconnect-backend:
+        condition: service_started
+    ports:
+      - "${OMNI_FRONTEND_PORT:-8080}:80"
+    restart: unless-stopped
+
+  crm-imobiliario:
+    image: ${CRM_IMAGE:-omniconnect/crm-imobiliario:staging}
+    container_name: omni-staging-crm
+    build:
+      context: .
+      dockerfile: Dockerfile.spa
+      args:
+        APP: crm-imobiliario
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_USE_MOCK_DATA: ${VITE_USE_MOCK_DATA:-false}
+    depends_on:
+      omniconnect-backend:
+        condition: service_started
+    ports:
+      - "${CRM_PORT:-8081}:80"
+    restart: unless-stopped
+
+  smart-ad-automator:
+    image: ${SAA_IMAGE:-omniconnect/smart-ad-automator:staging}
+    container_name: omni-staging-saa
+    build:
+      context: .
+      dockerfile: Dockerfile.spa
+      args:
+        APP: smart-ad-automator
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_USE_MOCK_DATA: ${VITE_USE_MOCK_DATA:-false}
+    depends_on:
+      omniconnect-backend:
+        condition: service_started
+    ports:
+      - "${SAA_PORT:-8082}:80"
+    restart: unless-stopped
+
+  # Botify (Vite app) — usa o mesmo padrão dos SPAs.
+  # O microserviço Botify (WordPress companion) tem seu próprio Dockerfile em
+  # apps/botify/wordpress-plugin/. Inclua manualmente quando precisar testar
+  # o caminho Meta → microserviço → Nest end-to-end.
+  botify:
+    image: ${BOTIFY_IMAGE:-omniconnect/botify:staging}
+    container_name: omni-staging-botify
+    build:
+      context: .
+      dockerfile: Dockerfile.spa
+      args:
+        APP: botify
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_USE_MOCK_DATA: ${VITE_USE_MOCK_DATA:-false}
+    depends_on:
+      omniconnect-backend:
+        condition: service_started
+    ports:
+      - "${BOTIFY_PORT:-8083}:80"
+    restart: unless-stopped
+
+volumes:
+  postgres-staging-data:
+  redis-staging-data:
+  backend-uploads:

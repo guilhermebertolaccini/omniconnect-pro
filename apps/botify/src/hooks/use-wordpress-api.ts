@@ -167,10 +167,7 @@ export function useDeleteFlow() {
 export function useConversations(botId?: string) {
   return useQuery({
     queryKey: queryKeys.conversations(botId),
-    queryFn: async () => {
-      const response = await wpApi.getConversations(botId);
-      return response.data;
-    },
+    queryFn: () => botifyDomainApi.getConversations(botId),
     staleTime: 10000,
   });
 }
@@ -178,10 +175,7 @@ export function useConversations(botId?: string) {
 export function useMessages(conversationId: string) {
   return useQuery({
     queryKey: queryKeys.messages(conversationId),
-    queryFn: async () => {
-      const response = await wpApi.getMessages(conversationId);
-      return response.data;
-    },
+    queryFn: () => botifyDomainApi.getMessages(conversationId),
     enabled: !!conversationId,
     staleTime: 5000,
   });
@@ -192,7 +186,7 @@ export function useSendMessage() {
 
   return useMutation({
     mutationFn: ({ conversationId, content }: { conversationId: string; content: string }) =>
-      wpApi.sendMessage(conversationId, content),
+      botifyDomainApi.sendMessage(conversationId, content),
     onSuccess: (_, { conversationId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.messages(conversationId) });
     },
@@ -207,7 +201,7 @@ export function useSendMessage() {
 export function useWhatsAppConfig(botId: string) {
   return useQuery({
     queryKey: queryKeys.whatsappConfig(botId),
-    queryFn: () => wpApi.getWhatsAppConfig(botId),
+    queryFn: () => botifyDomainApi.getWhatsAppConfig(botId),
     enabled: !!botId,
   });
 }
@@ -217,7 +211,7 @@ export function useUpdateWhatsAppConfig() {
 
   return useMutation({
     mutationFn: ({ botId, config }: { botId: string; config: Partial<WhatsAppConfig> }) =>
-      wpApi.updateWhatsAppConfig(botId, config),
+      botifyDomainApi.updateWhatsAppConfig(botId, config),
     onSuccess: (_, { botId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.whatsappConfig(botId) });
       toast.success('Configuração salva!');
@@ -314,7 +308,7 @@ export function useSaveAIConfig() {
       flowId: string;
       nodeId: string;
       config: AINodeConfigInput;
-    }) => wpApi.saveAIConfig(flowId, nodeId, config),
+    }) => botifyDomainApi.saveAIConfig(flowId, nodeId, config),
     onSuccess: (_, { flowId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.aiConfigs(flowId) });
       toast.success('Configuração de IA salva!');

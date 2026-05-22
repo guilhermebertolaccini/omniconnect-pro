@@ -170,9 +170,10 @@ jobs:
         run: pnpm --filter omniconnect-frontend run build
 
   # --------------------------------------------------------------------
-  # Satellite frontends — crm-imobiliario, smart-ad-automator remain
-  # non-blocking until their migration sprints flip them. **botify** is
-  # validated in the dedicated `botify` job (Sprint 6 — Fase D).
+  # Satellite frontends — crm-imobiliario, smart-ad-automator and
+  # omniconnect-hub (app shell, ADR-0004) remain non-blocking until
+  # their migration sprints flip them. **botify** is validated in the
+  # dedicated `botify` job (Sprint 6 — Fase D).
   # --------------------------------------------------------------------
   frontends-satellite:
     name: ${{ matrix.app }} / build (non-blocking)
@@ -184,6 +185,7 @@ jobs:
         app:
           - crm-imobiliario
           - smart-ad-automator
+          - omniconnect-hub
 
     steps:
       - name: Checkout

@@ -729,6 +729,12 @@ model Tenant {
   botifyConversations   BotifyConversation[]
   botifyMessages        BotifyMessage[]
   botifyMetaAccounts    BotifyMetaAccount[]
+
+  // Sprint Foundation (ADR-0005) — pré-requisitos da Régua de Acionamento
+  messageBrokers   MessageBroker[]
+  tenantWallet     TenantWallet?
+  antiFatigueRule  AntiFatigueRule?
+  lineHealthPolicy LineHealthPolicy?
 }
 
 model IntegrationConnection {
@@ -1770,4 +1776,184 @@ model BotifyMessage {
 
   @@index([tenantId, conversationId])
   @@index([conversationId, createdAt])
+}
+
+// Sprint Quick-wins — Line-health policy
+// Política por tenant para alertas e ações automáticas sobre saúde da linha
+// WhatsApp. Não calcula score — usa `line-reputation` existente. Sugere ou
+// aplica (`throttle` / `block`) por nível.
+enum LineHealthAction {
+  none // só alerta
+  throttle
+  block
+}
+
+model LineHealthPolicy {
+  id                       String           @id @default(cuid())
+  tenantId                 String           @unique
+  alertHoursMedium         Int              @default(6) // alerta quando linha está em status MEDIUM/FLAGGED há > N horas
+  alertHoursLow            Int              @default(2) // alerta quando linha está em status LOW/RESTRICTED há > N horas
+  autoActionOnCritical     LineHealthAction @default(none)
+  autoActionOnHigh         LineHealthAction @default(none)
+  suggestRotation          Boolean          @default(true)
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+// Sprint Foundation — F3: AntiFatigueRule
+// Janela mínima entre sends para o mesmo contato (anti-spam). Per-tenant
+// (1 regra global). Pré-requisito de execução da Régua (ADR-0005).
+enum AntiFatigueAppliesTo {
+  phone
+  document
+  both
+}
+
+model AntiFatigueRule {
+  id                   String               @id @default(cuid())
+  tenantId             String               @unique
+  enabled              Boolean              @default(true)
+  windowHours          Int                  @default(24)
+  appliesTo            AntiFatigueAppliesTo @default(both)
+  allowBypassForUrgent Boolean              @default(false)
+  businessHoursStart   String? // 'HH:MM' (UTC) — vazio = sem restrição
+  businessHoursEnd     String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+model AntiFatigueDedupeLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  contactKey String // phone E.164 ou documento (dígitos)
+  channel    String
+  blockedAt  DateTime @default(now())
+  refType    String?
+  refId      String?
+
+  @@index([tenantId])
+  @@index([tenantId, contactKey, blockedAt])
+  @@index([tenantId, blockedAt])
+}
+
+// Sprint Foundation — F2: TenantWallet
+// Orçamento por tenant com sub-budgets por canal, débito real-time
+// durante journey runs, histórico de transações. Hard ou soft block
+// configurável. Pré-requisito da Régua de Acionamento (ADR-0005).
+enum WalletResetCycle {
+  monthly
+  weekly
+}
+
+enum WalletGuardMode {
+  hard_block
+  soft_block
+}
+
+enum WalletTransactionType {
+  debit
+  credit
+  refund
+}
+
+model TenantWallet {
+  id               String           @id @default(cuid())
+  tenantId         String           @unique
+  totalBudgetCents Int              @default(0)
+  usedBudgetCents  Int              @default(0)
+  resetCycle       WalletResetCycle @default(monthly)
+  resetAt          DateTime?
+  guardMode        WalletGuardMode  @default(soft_block)
+  realtimeDebit    Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channelCosts WalletChannelCost[]
+  transactions WalletTransaction[]
+
+  @@index([tenantId])
+}
+
+model WalletChannelCost {
+  id        String @id @default(cuid())
+  walletId  String
+  channel   String
+  costCents Int    @default(0)
+
+  wallet TenantWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, channel])
+}
+
+model WalletTransaction {
+  id          String                @id @default(cuid())
+  tenantId    String
+  walletId    String
+  type        WalletTransactionType
+  channel     String?
+  amountCents Int
+  refType     String?
+  refId       String?
+  metadata    Json?
+  createdAt   DateTime              @default(now())
+
+  wallet TenantWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@index([walletId, type])
+}
+
+// Sprint Foundation — F1: MessageBroker
+// Provedores de canal outbound (SMS/Email/RCS). WhatsApp segue em `lines/`
+// (Meta Cloud). Cada tenant configura seus brokers; ADR-0005 documenta o
+// papel desta tabela como pré-requisito de execução da Régua.
+enum MessageBrokerChannel {
+  sms
+  email
+  rcs
+}
+
+enum MessageBrokerStatus {
+  connected
+  attention
+  disconnected
+}
+
+model MessageBroker {
+  id                     String               @id @default(cuid())
+  tenantId               String
+  channel                MessageBrokerChannel
+  vendor                 String
+  label                  String
+  status                 MessageBrokerStatus  @default(connected)
+  autoDisableOnBounce    Boolean              @default(true)
+  monthlyCostCents       Int                  @default(0)
+  fallbackBrokerId       String?
+  // statusMap: map vendor-specific → canônico {sent, invalid, duplicated, spam, bounced}
+  statusMap              Json
+  // Credenciais cifradas via BridgeSecretCipher (AES-256-GCM, v1.<iv>.<tag>.<ct>)
+  apiKeyEncrypted        String?
+  apiSecretEncrypted     String?
+  webhookSecretEncrypted String?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  createdById            Int?
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fallbackBroker MessageBroker?  @relation("BrokerFallback", fields: [fallbackBrokerId], references: [id], onDelete: SetNull)
+  fallbackOf     MessageBroker[] @relation("BrokerFallback")
+
+  @@index([tenantId])
+  @@index([tenantId, channel])
+  @@index([tenantId, status])
 }

@@ -1,0 +1,85 @@
+# syntax=docker/dockerfile:1.6
+#
+# omniconnect-hub — staging Dockerfile (TanStack Start).
+#
+# Build context: REPO ROOT.
+#
+# Coolify config:
+#   - Build context: repo root
+#   - Dockerfile path: Dockerfile.hub
+#   - Service port: 4173 (vite preview default)
+#   - Healthcheck: TCP/HTTP on /
+#
+# NOTE: o hub é um app TanStack Start, projetado para Cloudflare Workers em
+# produção (ver `wrangler.jsonc`). Esta imagem usa `vite preview` para servir
+# o build estático/SSR — adequado para **staging** e demo local-mirror, mas
+# o caminho oficial de produção é `wrangler deploy` em Workers. Documentado
+# em `docs/deployment/coolify-staging.md`.
+
+ARG NODE_VERSION=20
+ARG PNPM_VERSION=9.12.0
+
+# ─── base ──────────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION:-9.12.0} --activate
+WORKDIR /repo
+
+# ─── build ─────────────────────────────────────────────────────────────────
+FROM base AS build
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY packages/ai-contracts/package.json packages/ai-contracts/
+COPY packages/api-client/package.json packages/api-client/
+COPY packages/shared-types/package.json packages/shared-types/
+COPY packages/tsconfig/package.json packages/tsconfig/
+COPY apps/omniconnect-hub/package.json apps/omniconnect-hub/
+RUN pnpm install --frozen-lockfile --filter omniconnect-hub...
+COPY packages/ packages/
+COPY apps/omniconnect-hub/ apps/omniconnect-hub/
+WORKDIR /repo/apps/omniconnect-hub
+
+# Vite reads VITE_* from process.env AT BUILD TIME. Pass them as ARGs so
+# the same Dockerfile produces different bundles for staging vs prod.
+ARG VITE_API_URL=
+ARG VITE_USE_MOCK_AUTH=false
+ARG VITE_USE_MOCK_DATA=false
+ARG VITE_CRM_URL=
+ARG VITE_OMNIHUB_URL=
+ARG VITE_SAA_URL=
+ARG VITE_BOTIFY_URL=
+ENV VITE_API_URL=${VITE_API_URL}
+ENV VITE_USE_MOCK_AUTH=${VITE_USE_MOCK_AUTH}
+ENV VITE_USE_MOCK_DATA=${VITE_USE_MOCK_DATA}
+ENV VITE_CRM_URL=${VITE_CRM_URL}
+ENV VITE_OMNIHUB_URL=${VITE_OMNIHUB_URL}
+ENV VITE_SAA_URL=${VITE_SAA_URL}
+ENV VITE_BOTIFY_URL=${VITE_BOTIFY_URL}
+
+RUN pnpm run build
+
+# ─── runtime ───────────────────────────────────────────────────────────────
+FROM base AS runtime
+ENV NODE_ENV=production
+RUN apk add --no-cache wget tini
+WORKDIR /repo
+# Copy full repo (deps + build) — vite preview reads from dist/
+COPY --from=build /repo /repo
+WORKDIR /repo/apps/omniconnect-hub
+
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && chown -R nodejs:nodejs /repo
+USER nodejs
+
+EXPOSE 4173
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:4173/ || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--"]
+# `vite preview` não funciona com o build TanStack Start (target Cloudflare
+# Workers via @cloudflare/vite-plugin — emite `dist/server/index.js` em
+# formato Workers, sem `server.js` Node).  Para staging local-mirror, usamos
+# `vite dev` que serve SSR via middleware (mesmo path que Lovable preview).
+# Produção real continua sendo `wrangler deploy` em Workers — docs em
+# `docs/deployment/coolify-staging.md` §1 / Dockerfile.hub topo.
+CMD ["pnpm", "exec", "vite", "dev", "--host", "0.0.0.0", "--port", "4173"]

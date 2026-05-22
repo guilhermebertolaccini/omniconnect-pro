@@ -22,7 +22,8 @@ Executive Dashboards
 omniconnect-pro/
 ├── apps/
 │   ├── omniconnect-backend/      # NestJS — the core
-│   ├── omniconnect-frontend/     # React — operational UI
+│   ├── omniconnect-frontend/     # React — operational UI (consola de conversas; legado da Home/Inteligência migra para o Hub)
+│   ├── omniconnect-hub/          # React 19 + TanStack Start — app shell da plataforma (login + tenant + menu + superfícies plataforma-nativa). Ver ADR-0003 e ADR-0004.
 │   ├── botify/                   # React — bots/fluxos (integração via bridge; **cutover WP → Nest**: ver ADR-0002)
 │   ├── crm-imobiliario/          # React — CRM imobiliário (consome APIs Nest CRM; ver sprints migração)
 │   └── smart-ad-automator/       # React — campanhas pagas (consome APIs Nest SAA / OAuth)

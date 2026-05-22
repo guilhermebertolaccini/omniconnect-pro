@@ -5,6 +5,11 @@ set -e
 if [ -n "$DATABASE_URL" ]; then
   echo "🔄 Regenerando Prisma Client..."
   npx prisma generate
+
+  # Aplicar migrations versionadas. Idempotente — no-op se já no head.
+  # Sem isto, `seed` e `main` falham com "table does not exist" no primeiro boot.
+  echo "🚚 Aplicando migrations (prisma migrate deploy)..."
+  npx prisma migrate deploy
 fi
 
 # Executar seed apenas se não houver usuários no banco (se DATABASE_URL estiver definida)

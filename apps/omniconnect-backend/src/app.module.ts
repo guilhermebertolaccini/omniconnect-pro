@@ -41,6 +41,13 @@ import { AdvertiserCompaniesModule } from './advertiser-companies/advertiser-com
 import { AdCampaignsAiModule } from './ad-campaigns-ai/ad-campaigns-ai.module';
 import { AdPlatformTokensModule } from './ad-platform-tokens/ad-platform-tokens.module';
 import { TenantInvitationsModule } from './tenant-invitations/tenant-invitations.module';
+import { TenantsModule } from './tenants/tenants.module';
+import { DashboardsModule } from './dashboards/dashboards.module';
+import { MessageBrokersModule } from './message-brokers/message-brokers.module';
+import { TenantWalletsModule } from './tenant-wallets/tenant-wallets.module';
+import { AntiFatigueModule } from './anti-fatigue/anti-fatigue.module';
+import { Leads360Module } from './leads-360/leads-360.module';
+import { LineHealthModule } from './line-health/line-health.module';
 import { OAuthModule } from './oauth/oauth.module';
 import { CrmModule } from './crm/crm.module';
 import { CrmSignaturesModule } from './crm-signatures/crm-signatures.module';
@@ -102,6 +109,13 @@ import { BotifyModule } from './botify/botify.module';
     AdCampaignsAiModule,
     AdPlatformTokensModule,
     TenantInvitationsModule,
+    TenantsModule,
+    DashboardsModule,
+    MessageBrokersModule,
+    TenantWalletsModule,
+    AntiFatigueModule,
+    Leads360Module,
+    LineHealthModule,
     OAuthModule,
     CrmRealtimeModule,
     CrmModule,

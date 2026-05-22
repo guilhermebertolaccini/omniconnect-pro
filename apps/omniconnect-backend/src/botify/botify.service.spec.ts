@@ -22,9 +22,11 @@ describe('BotifyService — tenant isolation', () => {
       parseChannelConfig: jest.fn().mockReturnValue({}),
       lineHealth: jest.fn().mockReturnValue('disconnected'),
     };
+    const systemEvents = { logEvent: jest.fn() };
     service = new BotifyService(
       prisma as unknown as PrismaService,
       channelConfigService as never,
+      systemEvents as never,
     );
   });
 

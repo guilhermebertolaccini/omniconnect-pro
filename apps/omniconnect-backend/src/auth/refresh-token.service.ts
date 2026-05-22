@@ -178,11 +178,23 @@ export class RefreshTokenService {
   // Cookie config (consumida pelo controller)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Permite override explícito via `COOKIE_SECURE` env (Sprint Hub / PR 6).
+   * Em staging-mirror local (HTTP em localhost), o operador define
+   * `COOKIE_SECURE=false` para o browser aceitar o cookie. Em produção real
+   * (HTTPS), o default `NODE_ENV=production` ⇒ `Secure=true` continua valendo.
+   */
+  private resolveSecureFlag(): boolean {
+    const explicit = process.env.COOKIE_SECURE;
+    if (explicit === 'true') return true;
+    if (explicit === 'false') return false;
+    return process.env.NODE_ENV === 'production';
+  }
+
   buildCookieOptions(expiresAt?: Date) {
-    const inProd = process.env.NODE_ENV === 'production';
     return {
       httpOnly: true,
-      secure: inProd,
+      secure: this.resolveSecureFlag(),
       sameSite: 'lax' as const,
       path: this.cookiePath,
       expires: expiresAt,
@@ -190,10 +202,9 @@ export class RefreshTokenService {
   }
 
   buildClearCookieOptions() {
-    const inProd = process.env.NODE_ENV === 'production';
     return {
       httpOnly: true,
-      secure: inProd,
+      secure: this.resolveSecureFlag(),
       sameSite: 'lax' as const,
       path: this.cookiePath,
     };

@@ -9,6 +9,12 @@ import {
   type BotifyFlowGraph,
 } from '@omniconnect/shared-types';
 import { PrismaService } from '../prisma.service';
+import {
+  EventModule,
+  EventSeverity,
+  EventType,
+  SystemEventsService,
+} from '../system-events/system-events.service';
 import type { CreateBotifyBotDto } from './dto/create-bot.dto';
 import type { UpdateBotifyBotDto } from './dto/update-bot.dto';
 import type { CreateBotifyFlowDto } from './dto/create-flow.dto';
@@ -70,6 +76,7 @@ export class BotifyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly channelConfigService: BotifyChannelConfigService,
+    private readonly systemEvents: SystemEventsService,
   ) {}
 
   private clampPagination(page?: number, limit?: number): {
@@ -335,7 +342,11 @@ export class BotifyService {
     };
   }
 
-  async importWordpressSnapshot(tenantId: string, dto: ImportWordpressSnapshotDto) {
+  async importWordpressSnapshot(
+    tenantId: string,
+    dto: ImportWordpressSnapshotDto,
+    userId?: number,
+  ) {
     if (!dto.bots?.length) {
       throw new BadRequestException('Import requires at least one bot');
     }
@@ -400,6 +411,20 @@ export class BotifyService {
       });
       results.flowsUpserted += 1;
     }
+
+    await this.systemEvents.logEvent(
+      EventType.BOTIFY_IMPORT_RUN,
+      EventModule.BOTIFY,
+      {
+        botsUpserted: results.botsUpserted,
+        flowsUpserted: results.flowsUpserted,
+        botExternalIds: dto.bots.map((b) => b.externalSourceId),
+        flowExternalIds: (dto.flows ?? []).map((f) => f.externalSourceId),
+      },
+      userId ?? null,
+      EventSeverity.INFO,
+      tenantId,
+    );
 
     return results;
   }

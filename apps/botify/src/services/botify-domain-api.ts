@@ -1,13 +1,24 @@
 import { wpApi } from './wordpress-api';
 import { omniconnectBotifyApi } from './omniconnect-botify-api';
+import type { AINodeConfig, AINodeConfigInput } from '@/types/api';
 import type { Bot, Conversation, ConversationFlow, Message, WhatsAppConfig } from '@/types/bot';
 
 export type BotifyViteDataSource = 'wordpress' | 'omniconnect' | 'dual';
 
+/**
+ * Fonte canónica do data plane do Vite Botify (ADR-0002 G5):
+ *  - `omniconnect` (default) — lê/escreve direto no omniconnect-backend Nest
+ *  - `wordpress`              — back-compat com o WP legado
+ *  - `dual`                   — Omni primeiro, WP só se Omni falhar/vazio
+ *
+ * G4 (microserviço) e G5 (Vite app) compartilham o mesmo verbo de flag,
+ * mas envs distintas: `BOTIFY_FLOW_SOURCE` é runtime; `VITE_BOTIFY_DATA_SOURCE`
+ * é build-time do Vite.
+ */
 function source(): BotifyViteDataSource {
-  const v = (import.meta.env.VITE_BOTIFY_DATA_SOURCE || 'wordpress').toLowerCase();
+  const v = (import.meta.env.VITE_BOTIFY_DATA_SOURCE || 'omniconnect').toLowerCase();
   if (v === 'omniconnect' || v === 'dual' || v === 'wordpress') return v;
-  return 'wordpress';
+  return 'omniconnect';
 }
 
 async function tryOmni<T>(fn: () => Promise<T>): Promise<T | null> {
@@ -192,4 +203,46 @@ export const botifyDomainApi = {
     if (o) return o;
     return wpApi.updateWhatsAppConfig(botId, patch);
   },
+
+  /**
+   * Config de IA por nó. No Omni esses campos vivem **dentro** do
+   * `BotifyFlowNode.data` (engine lê `data.systemPrompt`, `data.model`,
+   * `data.temperature`, etc.), portanto o `updateFlow` já gravou tudo
+   * — aqui retornamos um eco coerente sem nova chamada HTTP. No modo
+   * WP continua o fluxo legado de gravar em `/ai-config/:flowId/:nodeId`.
+   */
+  async saveAIConfig(
+    flowId: string,
+    nodeId: string,
+    config: AINodeConfigInput,
+  ): Promise<AINodeConfig> {
+    const s = source();
+    if (s === 'wordpress') return wpApi.saveAIConfig(flowId, nodeId, config);
+    if (s === 'omniconnect') return aiConfigEcho(flowId, nodeId, config);
+    const wp = await tryOmni(() => wpApi.saveAIConfig(flowId, nodeId, config));
+    if (wp) return wp;
+    return aiConfigEcho(flowId, nodeId, config);
+  },
 };
+
+function aiConfigEcho(
+  flowId: string,
+  nodeId: string,
+  config: AINodeConfigInput,
+): AINodeConfig {
+  const now = new Date().toISOString();
+  const flowIdNum = Number.parseInt(flowId, 10);
+  return {
+    id: 0,
+    flowId: Number.isFinite(flowIdNum) ? flowIdNum : 0,
+    nodeId,
+    provider: config.provider,
+    model: config.model,
+    systemPrompt: config.systemPrompt ?? '',
+    userPromptTemplate: config.userPromptTemplate ?? '',
+    temperature: config.temperature ?? 0.7,
+    maxTokens: config.maxTokens ?? 1000,
+    createdAt: now,
+    updatedAt: now,
+  };
+}

@@ -162,28 +162,99 @@ Para **outros** `eventType` (`crm.*`, `ads.*`), esta matriz não aplica — ver 
 
 ---
 
-## 4. InsightAI → CRM (superfície de produto)
+## 4. InsightAI → CRM (superfície de produto) — DECISÕES FECHADAS
 
-### 4.1 Gatilho
+> Esta secção foi fechada em 2026-05-20 (PR 1 do Hub absorção, ver [ADR-0003](../adr/ADR-0003-hub-identity-and-roles.md) e [ADR-0004](../adr/ADR-0004-hub-into-monorepo.md)). Os placeholders anteriores (`A/B/C`, `X minutos`, "regra explícita no CRM") foram substituídos pelos valores normativos abaixo. Mudanças exigem PR + revisão dos critérios de aceite §7.
 
-Definir uma política piloto (uma só):
+### 4.1 Gatilho — **política C com tetos de custo**
 
-- **A)** análise sob demanda (botão no CRM/Omni), ou  
-- **B)** job após N mensagens ou após fechamento de conversa, ou  
-- **C)** ambos, com limite de custo por lead/dia.
+A análise InsightAI roda automaticamente após o handoff Botify quando houver contexto mínimo, e pode ser disparada manualmente pelos papéis autorizados.
 
-### 4.2 Campos mínimos visíveis no CRM
+**Gatilho automático:**
 
-Alinhar com `ConversationAIResult` / persistência em `ConversationAIAnalysis` (nomes exatos no Prisma). Objetivo do piloto:
+- Flag `INSIGHT_AI_ON_BOTIFY_HANDOFF=true` em `apps/omniconnect-backend/.env`.
+- Após `botify.handoff.created` criar um `MessageQueue` **novo** (idempotência inalterada), o backend enfileira `analyze-conversation` com `jobId` determinístico (`iai:sha256(tenantId|phone|days|limit|segment|userId|hourBucket)`, ver `docs/05-ai-governance.md`).
+- A primeira execução pode ver poucas mensagens (até o atendente atuar). O hour-bucket no `jobId` permite nova fila legítima depois.
 
-- Resumo executivo (1 parágrafo).
-- `leadIntent`, objeção principal, `nextBestAction`.
-- Scores relevantes para o corretor (ex.: qualificação / qualidade).
-- Flag ou derivado para **oportunidade recuperável** (regra de negócio explícita no CRM).
+**Gatilho manual:**
 
-### 4.3 Human-in-the-loop
+- `POST /insight-ai/analyze/:phone` (async, 202 + `jobId`) — papéis: `admin`, `supervisor`, `digital`.
+- `POST /insight-ai/analyze/:phone?sync=true` — apenas `admin`, para debug / smoke.
+- O Hub (`apps/omniconnect-hub`) pode acionar a mesma rota a partir do componente `InsightConversationAnalyzer` (também já presente no shell Lovable). Respeita os mesmos tetos.
+- `broker` / corretor **não** dispara análise — apenas consome o resultado. Mantém o custo previsível.
 
-Se existir `aiSuggestedStage`, o piloto deve mostrar **sugestão** e ação humana explícita (aprovar/realizar), em linha com `docs/05-ai-governance.md`.
+**Tetos de custo (enforcement no enqueue):**
+
+| Limite | Default | Fonte de verdade |
+|---|---|---|
+| Por lead / 24h (auto) | **1 análise** | `AIUsageLog` filtrado por `tenantId + conversationId + createdAt >= now()-24h` |
+| Por tenant / dia (auto + manual) | **500 análises** | `AIUsageLog` filtrado por `tenantId + createdAt >= today` |
+| Por tenant / minuto (rate) | **10 / min** | módulo interno `rate-limiting/` no controller |
+
+Excedido → **429** com `code: RATE_LIMITED`. Fallback heurístico permanece sempre habilitado (sem custo LLM).
+
+### 4.2 Campos visíveis — bloco "Inteligência Comercial" no CRM
+
+Bloco fixo no topo do detalhe de lead/deal em `crm-imobiliario`, alimentado pela `ConversationAIAnalysis` mais recente para o telefone primário do lead, no mesmo tenant.
+
+#### Para o papel `broker` (corretor)
+
+| Campo | Fonte (Prisma) | Elemento UI |
+|---|---|---|
+| Resumo executivo | `summary` | Parágrafo (≤ 280 char no card; texto completo no expand) |
+| `leadIntent` | `leadIntent` | Chip colorido (`frio` cinza, `qualificado` azul, `quente` laranja, `pronto_para_visita` verde) |
+| Objeção principal + top 2 | `mainObjection`, `objections[]` | Chips |
+| Score de qualificação | `qualificationScore` (0–100) | Barra única — sinal acionável primário |
+| `nextBestAction` | `nextBestAction` | Linha destacada com call-to-action, copy-to-clipboard |
+| Evidência (top 3) | `evidence[]` | Colapsável "Por quê?" com trechos citados das mensagens |
+| Badge "Recuperável" | derivado da §4.2.1 | Pílula amarela quando a regra dispara |
+| Provedor + frescura | `modelProvider`, `createdAt` | Rodapé: `Análise heurística há 4min` / `gpt-4o-mini há 4min` |
+| **Ações humanas** | — | Botões: **criar follow-up**, **marcar revisada**, **atribuir corretor** (mantêm-se ativos mesmo se IA falhar) |
+
+#### Adicional para `supervisor` / `admin` / `digital`
+
+| Campo | Fonte | Elemento UI |
+|---|---|---|
+| `sellerQualityScore` | `sellerQualityScore` | Barra 0–100 |
+| `hasSellerAbandonment` | `hasSellerAbandonment` | Pílula vermelha quando `true` |
+| `firstResponseMinutes` | `firstResponseMinutes` | Métrica inline |
+| Custo (lead, últimos 30d) | agregado `AIUsageLog` | Linha de rodapé, USD |
+
+#### Fora do bloco do piloto
+
+`opportunityStatus`, `risk`, `responseQualityScore`, `followUpScore`, `hasLeadAbandonment`, `hasQualification`, `hasSchedulingAttempt`, `hasProposalOrSimulationAttempt`, `metrics{}` — persistidos em `ConversationAIAnalysis` mas mantidos fora da superfície do corretor para evitar score-overload. Acessíveis via `GET /insight-ai/analyses` para quem precisar.
+
+#### 4.2.1 Regra de oportunidade recuperável
+
+```text
+recoverableOpportunity = TRUE  ⇔
+       leadIntent ∈ { 'qualificado', 'quente', 'pronto_para_visita' }    -- intenção média-a-alta
+   AND (
+            lostOpportunity = TRUE
+         OR conversationRisk ∈ { 'alto', 'critico' }
+         OR nextBestAction matches recovery/follow-up pattern
+       )
+   AND CRM lead/deal NOT IN status { 'sold', 'signed', 'closed_won' }
+   AND contact.blocklisted = FALSE
+```
+
+Notas de implementação (informativas, **não vinculam código nesta PR**):
+
+- Exposto como campo derivado no DTO de leitura da análise; calculado em query time para permitir tuning sem reanalisar conversas.
+- Persistido como boolean denormalizado **apenas** quando a query do A6 precisar (índice composto por `tenantId, createdAt`).
+
+#### 4.2.2 Lista de recuperáveis (broker / supervisor)
+
+`GET /crm/leads?filter=recoverable&sortBy=updatedAt&sortDir=desc` retorna os leads cuja `ConversationAIAnalysis` mais recente case com a regra, escopado por `tenantId`, e — para `broker` — `brokerId = currentUser.id`. Página default 25, máx. 200 (padrão `docs/06-api-standards.md`).
+
+UI: lista de leads do CRM com aba **"Recuperáveis"**.
+
+### 4.3 Human-in-the-loop — IA não muda estágio CRM
+
+- A IA **nunca** muda `CrmLead.status` / `CrmDeal.stage` automaticamente no piloto.
+- Quando `aiSuggestedStage` estiver presente, o bloco mostra a **sugestão** com ações explícitas **Aprovar / Rejeitar**.
+- Aprovação emite `crm.stage_changed` e grava `AuditLog` com `action='ai.analysis.accepted'`; rejeição grava `action='ai.analysis.overridden'`.
+- Auto-apply permanece **OFF** para o piloto (per-tenant config; revisitar após 30 dias de auditoria HITL).
 
 ---
 
@@ -233,9 +304,9 @@ O piloto só é considerado **pass** se **todos** os itens abaixo forem verdadei
 | A1 | Um evento `ads.lead.created` válido resulta em lead/conversa rastreável no tenant piloto, com `IntegrationEntityLink` quando aplicável. |
 | A2 | `botify.handoff.created` não duplica fila de atendimento para o mesmo `externalId` (reprocessamento / mesma idempotência). |
 | A3 | InsightAI gera análise persistida para o telefone/conversa do caso piloto; `AIUsageLog` com `tenantId` correto. |
-| A4 | CRM exibe os campos acordados em §4.2 para esse caso, em até **X minutos** após a análise (definir X, ex.: 2 min). |
-| A5 | Oportunidade recuperável aparece na lista/regra acordada em §4.2. |
-| A6 | Dashboard piloto mostra pelo menos **uma** métrica de vazamento ou abandono ligada ao caso (ex.: contagem ou flag agregada). |
+| A4 | CRM exibe os campos acordados em §4.2 para esse caso, em até **2 minutos** após a análise ser persistida (SLA fechado em 2026-05-20). |
+| A5 | Oportunidade recuperável aparece na lista/regra acordada em §4.2.1 / §4.2.2. |
+| A6 | **Hub `apps/omniconnect-hub` `/executive`** mostra um card **"Pilot Funnel"** com leads ingeridos, conversas criadas, handoffs Botify, análises geradas, recuperáveis e sinais de perda/abandono — alimentado por `GET /dashboards/pilot-overview` (ver Phase 6 do plano de execução). |
 | A7 | Não há leitura cross-tenant (validar com usuário de outro tenant ou teste automatizado equivalente). |
 | A8 | Runbook do piloto (§8) foi seguido por uma pessoa que não implementou o fluxo, sem passos “só o dev sabe”. |
 

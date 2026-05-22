@@ -104,5 +104,27 @@ export class SystemEventsController {
       endDate: query.endDate ? new Date(query.endDate) : undefined,
     });
   }
+
+  /**
+   * Sprint Quick-wins — Q2 Guards audit.
+   *
+   * Listagem dedicada de eventos de guards (anti-fadiga + wallet + broker
+   * + line-health). Mesma fonte que `GET /system-events`, mas pré-filtra
+   * para os módulos relevantes — facilita o frontend `/settings/audit`
+   * sem precisar conhecer o catálogo de `EventType`.
+   */
+  @Get('guards')
+  @Roles('admin', 'supervisor', 'digital')
+  async getGuardsAudit(
+    @CurrentUser() user: any,
+    @Query() query: GetEventsQueryDto,
+  ) {
+    return this.systemEventsService.findGuardsEvents(ensureTenant(user), {
+      startDate: query.startDate ? new Date(query.startDate) : undefined,
+      endDate: query.endDate ? new Date(query.endDate) : undefined,
+      limit: query.limit,
+      offset: query.offset,
+    });
+  }
 }
 

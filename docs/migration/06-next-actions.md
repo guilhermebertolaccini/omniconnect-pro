@@ -31,6 +31,104 @@
 | InsightAI Sprint 5 — dashboard + custo multi-provider | ✅ |
 | Bridge processors (Sprint 4) — handlers + emitters + `IntegrationEntityLink` | ✅ |
 | Botify — paridade CRM/SAA (ver plano Sprint 6) + **cutover WP** (ADR-0002) | 🟡 Em andamento ([`sprint-6-botify-maturity-plan.md`](./sprint-6-botify-maturity-plan.md), [`ADR-0002`](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md)) |
+| **Hub / app shell** absorvido como `apps/omniconnect-hub` ([ADR-0004](../adr/ADR-0004-hub-into-monorepo.md)) | ✅ Concluído em 2026-05-20 (PR 2 — Sprint Hub) |
+| **Hub identity cutover** Supabase Auth → backend Omni ([ADR-0003](../adr/ADR-0003-hub-identity-and-roles.md)) | ✅ Concluído em 2026-05-20 (PR 3 — Sprint Hub) |
+| Backend `GET /tenants/me` (alimenta tenant-selector do Hub) | ✅ Concluído em 2026-05-20 (PR 3 — Sprint Hub) |
+| **Pilot §4 fechado** (gatilho C, recuperável, A4=2min, A6=Hub `/executive`) ver [`pilot-flow-lead-to-recovery.md`](./pilot-flow-lead-to-recovery.md) §4 | ✅ Decidido em 2026-05-20 (PR 1 — Sprint Hub) |
+| **`GET /dashboards/pilot-overview`** (alimenta A6) + card "Pilot Funnel" no Hub `/executive` | ✅ Concluído em 2026-05-20 (PR 4 — Sprint Hub) |
+| Staging Coolify — Dockerfiles workspace-aware + compose mirror + runbook | ✅ Concluído em 2026-05-20 (PR 6 — Sprint Hub) |
+| **PR 7-prep (Track A)** — runbook Meta + preflight script + template de evidência | ✅ Concluído em 2026-05-20 (Sprint Hub) |
+| **PR 7-exec (Track B)** — provisionamento Meta + Coolify deploy + smoke real (human-only) | 🟠 Pendente (humano) |
+
+## Próximo foco paralelo — Sprint Hub (absorção do app shell + orquestração do piloto)
+
+Decisão de produto (2026-05-20): o projeto Lovable `omniconnect-hub-3af79e2e-main` é absorvido como `apps/omniconnect-hub` e passa a ser o **app shell** da plataforma (login + tenant + menu + superfícies plataforma-nativa). Cada app de domínio (CRM, OmniHub, SAA, Botify) **mantém UI própria**. ADRs vinculantes:
+
+- [ADR-0003](../adr/ADR-0003-hub-identity-and-roles.md) — Hub adota auth do `omniconnect-backend` (cutover Supabase Auth → `omniconnectClient`); backend `Tenant` + `UserTenant` + enum `Role` ficam canónicos; Hub mantém mapa de rótulos display (`corretor → broker`, `atendente → operator`, `gestor_comercial → supervisor`, `analista_agencia → digital`, `ceo_cfo → digital` provisório).
+- [ADR-0004](../adr/ADR-0004-hub-into-monorepo.md) — Hub vira o 5.º frontend do `pnpm-workspace`, CI não-bloqueante inicial; `omniconnect-frontend` permanece como consola operacional sem aposentadoria.
+
+A Sprint Hub corre **em paralelo** com a Sprint 6 Botify — sem disputar prioridade. Botify Fase G continua. O Hub destrava a A6 do piloto (que antes não tinha casa) e o Module Gateway para staging Coolify.
+
+### Plano de PRs (Sprint Hub)
+
+| PR | Conteúdo | Estado |
+|---|---|---|
+| **PR 1** | ADRs 0003 + 0004; pilot §4 fechado; atualização desta secção | ✅ Esta entrega |
+| **PR 2** | Move físico `omniconnect-hub-3af79e2e-main` → `apps/omniconnect-hub`; workspace + scripts + CI não-bloqueante; remove `bun`/`package-lock.json`, padroniza `pnpm` | ✅ Esta entrega |
+| **PR 3** | Hub identity Block A — `omniconnectClient` substitui Supabase Auth; tenant selector via `GET /tenants/me`; role mapping; Supabase gated por `VITE_USE_MOCK_AUTH=true` | ✅ Esta entrega |
+| **PR 4** | Backend `GET /dashboards/pilot-overview` + E2E tenant isolation; Hub `/executive` ganha card "Pilot Funnel" (fecha A6) | ✅ Esta entrega |
+| **PR 5** | Hub `/insightai` consome `GET /insight-ai/dashboard/*` + `GET /insight-ai/analyses` + `POST /insight-ai/analyze/:phone` (real, com tetos da §4.1) | ✅ Esta entrega |
+| **PR 6** | Packaging Coolify staging — Dockerfiles, `docker-compose.staging.yml` ou definições Coolify, `.env.staging.example`, healthchecks, runbook de deploy | ✅ Esta entrega |
+| **PR 7-prep** | Track A (Claude): runbook Meta click-by-click, `scripts/meta-staging-preflight.sh` (read-only Graph API checks), template de evidência em `docs/migration/pilot-run-evidence.md` | ✅ Esta entrega |
+| **PR 7-exec** | Track B (humano): criar app Meta Developer, provisionar WABA + número de teste, configurar webhook + tokens, deployar via Coolify, executar smoke real, fechar `pilot-run-evidence.md` | 🟠 |
+| **PR 8** | Hub mock isolation — Home + `/executive` KPIs wired ao backend real (`/insight-ai/dashboard/summary` + `/dashboards/pilot-overview`); `/leads/*`, `/journeys/*`, `/settings/*` gated por `<MockOnlyPage>` (preview Lovable apenas em `VITE_USE_MOCK_DATA=true`); `useTenantStats` hook compartilhado | ✅ Esta entrega |
+
+---
+
+## Sprint Foundation — Régua de Acionamento, pré-requisitos
+
+Decisão arquitetural: [ADR-0005](../adr/ADR-0005-regua-as-botify-extension.md) — Régua **estende** o flow engine do Botify ([ADR-0002](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md)) em vez de motor separado. Foundation entrega só os guards de execução (Brokers, Wallet, Anti-fadiga). Engine + sinks ficam pra Sprint Régua-Engine (depende de Botify G2 fechado).
+
+Plano detalhado: [`/Users/tatica/.claude/plans/distributed-tumbling-galaxy.md`](file:///Users/tatica/.claude/plans/distributed-tumbling-galaxy.md).
+
+| PR | Conteúdo | Estado |
+|---|---|---|
+| **F0 — ADR-0005** | Régua como extensão do Botify engine — docs only | ✅ Esta entrega |
+| **F1 — MessageBroker** | Schema + CRUD `/message-brokers` (SMS/email/RCS, credenciais cifradas via `BridgeSecretCipher`, fallback chain, `mask()` em listagens). Frontend `/settings/brokers` cutover. E2E tenant isolation. | ✅ 15/15 E2E green + smoke real |
+| **F2 — TenantWallet** | Schema `TenantWallet` + `WalletChannelCost` + `WalletTransaction`. Endpoints `/tenant-wallets/me*`. Helper interno `debitForSend(...)` com optimistic-lock retry + soft/hard block. Frontend `/settings/budget` cutover (edit config + custos por canal + top-up + lista de transações). | ✅ 14/14 E2E green + smoke real |
+| **F3 — AntiFatigueRule** | Schema `AntiFatigueRule` (1/tenant) + `AntiFatigueDedupeLog`. Endpoints `/anti-fatigue/*`. Helpers `checkBeforeSend(...)` (`window` / `off_hours` / urgent bypass + janela cruzando meia-noite) + `recordSend(...)`. Frontend `/settings/anti-fatigue` cutover. | ✅ 17/17 E2E green + smoke real |
+
+Quick-wins (Leads 360° + Line-health + Guards audit) podem rodar **em paralelo** — não bloqueiam Régua.
+
+---
+
+## Sprint Quick-wins — Leads 360° + Line-health + Guards audit
+
+Paralela à Foundation. Materializa superfícies que já tinham backend (CRM, line-reputation, system-events) e estavam mock-only no Hub.
+
+| PR | Conteúdo | Estado |
+|---|---|---|
+| **Q1 — Leads 360°** | `GET /leads/360` (lista paginada com filtros search/temperature/crm) + `GET /leads/360/:contactId` (detalhe com timeline). Aggregator sobre `Contact + ConversationAIAnalysis + CrmLead + Conversation + MessageQueue + CrmInteraction`. Temperatura derivada do `leadIntent` canônico. Roles: todos os 6 autenticados (broker inclusive). Frontend `/leads` + `/leads/$leadId` cutover sem mock. | ✅ 11/11 E2E + smoke real |
+| **Q2 — Line-health + Guards audit** | `LineHealthPolicy` schema + CRUD `/line-health/policy` + `GET /line-health/lines` (reusa `LineReputationService.calculateReputation`). `GET /system-events/guards` filtra `ANTIFATIGUE_BLOCKED / WALLET_INSUFFICIENT / MESSAGE_BROKER_STATUS_CHANGED / LINE_BANNED`. Defaults HITL (`autoAction=none`). Frontends `/settings/line-health` + `/settings/audit` cutover. | ✅ smoke real green |
+
+---
+
+## Sprint 6 — Botify cutover ([ADR-0002](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md))
+
+| Fase | Entrega | Estado |
+|---|---|---|
+| G0 | Contrato JSON em `packages/shared-types/src/botify-flow.ts` | ✅ pré-existente |
+| G1 | Schema Prisma multi-tenant (`BotifyBot`, `BotifyFlow`, `BotifyConversation`, `BotifyMessage`, `BotifyMetaAccount`) | ✅ pré-existente (Sprint 6 migrations) |
+| **G2** | `GET/POST/PATCH/DELETE /botify/bots` + `/botify/flows` + `POST /botify/flows/:id/publish` / `unpublish`. DTOs com class-validator, paginação `PaginatedResult`, roles `[admin, supervisor, digital, operator]` para read e `[admin, supervisor, digital]` para mutação. E2E HTTP em `src/test/botify-g2-tenant-isolation.e2e.spec.ts` (27 casos cobrindo auth/roles, CRUD bots+flows, publish lifecycle, cross-tenant 404, DTO validation, cascade flow→bot, paginação). | ✅ **27/27 E2E + condição 8 da ADR-0002 satisfeita** |
+| **G3** | Motor (port do `flow-engine` para o Nest): `BotifyFlowEngineService` executa grafo `start → message → ai → action(transfer)`, com persistência em `BotifyConversation`/`BotifyMessage` via `upsert` por `(tenantId, botId, contactPhone)`; nó `ai` chama OpenAI Chat Completions (`BotifyAIChatService` com `OPENAI_API_KEY`/`OPENAI_MODEL`) e cai num fallback determinístico quando key ausente; endpoint `POST /botify/runtime/process` (DTO `ProcessBotifyFlowDto`, roles `[admin, supervisor, digital, operator]`) liga o caminho persistente, enquanto `/runtime/simulate` segue como dry-run. E2E HTTP em `src/test/botify-g3-engine.e2e.spec.ts` (10 casos: auth/roles, DTO, cross-tenant 404, upsert de conversa, normalização de phone, `dryRun=true` skip persistence). | ✅ **10/10 E2E — Sprint Régua-Engine destravada** |
+| **G4** | Microserviço lê fluxos do Omni com flag `BOTIFY_FLOW_SOURCE` (`wordpress` \| `omniconnect` \| `dual`, default `wordpress`). `apps/botify/wordpress-plugin/botflow-manager/microservice/src/services/omniconnect-flow-runtime.ts:resolveFlowConfigForEngine` decide a fonte: `wordpress` lê só do WP; `omniconnect` lê só do Nest via `GET /botify/internal/flows/:id/runtime-config` (Bearer `BOTIFY_INTERNAL_SYNC_SECRET` + `X-Omni-Tenant-Id`); `dual` tenta Omni primeiro, e quando o flow vem ausente/vazio cai pra WP com `logger.warn` rotulado `[BOTIFY_FLOW_SOURCE=dual]` — esse warn é a métrica de telemetria do cutover (deve cair a zero antes de virar `omniconnect`). `config.ts` valida que `dual`/`omniconnect` exigem `OMNICONNECT_BACKEND_URL` + secret + tenant. Spec `src/services/omniconnect-flow-runtime.spec.ts` (9 casos cobrindo as 3 modes + shape inválido + 404 + nodes vazio + network error + ambos vazios). | ✅ **9/9 unit + endpoint backend `/botify/internal/flows/:id/runtime-config` já entregue** |
+| **G5** | Vite Botify substitui `wordpress-api` por API Nest. `apps/botify/src/services/botify-domain-api.ts` é o facade canónico (`VITE_BOTIFY_DATA_SOURCE` = `omniconnect` (**novo default**) \| `wordpress` \| `dual`); todos os hooks de data-plane em `src/hooks/use-wordpress-api.ts` foram migrados ao facade — bots/flows CRUD, `useConversations`/`useMessages`/`useSendMessage`, `useWhatsAppConfig`/`useUpdateWhatsAppConfig`, `useSaveAIConfig`. `setFlowActive` faz publish/unpublish no Omni e `updateFlow({isActive})` no WP. `saveAIConfig` é eco sem HTTP no Omni — a config de IA mora dentro de `BotifyFlowNode.data` (engine G3 lê `data.systemPrompt`/`data.model`/etc., já gravados via `updateFlow`). Spec `src/services/botify-domain-api.spec.ts` (13 casos: default omniconnect, override, getBots nos 3 modes + dual reject→WP, setFlowActive WP-vs-Omni-vs-dual, saveAIConfig echo vs WP). Auth/webhook-logs/health/Meta-accounts continuam no `wpApi`/serviços dedicados — não são data plane do flow runtime e ficam pra G6/G7. | ✅ **13/13 unit + cutover do data plane completo** |
+| **G6** | Importador idempotente WP → Omni: `POST /botify/import/wordpress` (roles `[admin, supervisor, digital]`) recebe `ImportWordpressSnapshotDto` (`bots[]` + `flows[]` com `externalSourceId` estável e `botExternalSourceId` linkando flow→bot). `BotifyService.importWordpressSnapshot` faz upsert via `@@unique([tenantId, externalSourceId])` — re-importar o mesmo snapshot é no-op idempotente; `externalSourceId` é per-tenant, então o mesmo ID em A e B cria recursos separados. Cada execução emite `SystemEventsService.logEvent(BOTIFY_IMPORT_RUN, BOTIFY, {botsUpserted, flowsUpserted, botExternalIds, flowExternalIds}, userId, INFO, tenantId)` (novos enums em `system-events.service.ts`). Falha cedo: 400 quando `bots[]` vazio, 400 quando flow aponta pra `botExternalSourceId` não importado no mesmo payload. E2E `src/test/botify-g6-importer.e2e.spec.ts` (12 casos: auth/roles, happy path, idempotência, mutação por update, audit log, DTO inválido, cross-tenant). | ✅ **12/12 E2E — cutover do snapshot legado destravado** |
+| **G7** | WP fora do caminho crítico (cutover de código completo): `.env.example` do microserviço e do Vite default para `omniconnect`; `ai-processor.logToWordPress` gateado por `BOTIFY_FLOW_SOURCE` (em Omni vira structured log local, sem chamada HTTP ao plugin); checklist G7 atualizado marcando A2/A3/B1–B8/E2/E5/E6/E7 ✅ (todos os itens de código). Resta operacional: flip da env em staging/piloto Coolify + smoke + descontinuar instalação plugin pra clientes novos. WP-plugin segue aceitando `POST /botify/import/wordpress` (G6) durante a janela de migração de clientes legados. | ✅ **código fechado** ([botify-g7-wordpress-removal.md](./botify-g7-wordpress-removal.md)) — resta ops |
+
+**Sprint Régua-Engine** (ADR-0005) está destravada: G3 fechou o motor + persistência + `POST /botify/runtime/process`. Próximo passo é estender `executeSingleNode` com novos node types (`email`, `sms`, `rcs`, `hsm`, `stage`, `notify`) e plugar os guards de execução já existentes (`TenantWallet.debitForSend`, `AntiFatigueRule.checkBeforeSend`, `MessageBroker`).
+
+### Endpoints novos derivados do plano
+
+| Endpoint | Origem | Roles |
+|---|---|---|
+| `GET /tenants/me` | PR 3 ✅ | autenticado |
+| `GET /dashboards/pilot-overview` | PR 4 ✅ | `admin`, `supervisor`, `digital` |
+| `GET /leads/360/:id` (opcional, só se piloto exigir) | PR 5+ | `admin`, `supervisor`, `digital`, `broker` (apenas leads próprios) |
+
+Decisão de scope para Leads 360°: **manter mock no Hub** até o piloto provar necessidade real. Não bloquear staging.
+
+### Não fazer nesta sprint
+
+- Não reaproveitar Supabase como fonte de verdade.
+- Não criar tabelas de tenant/user no Hub.
+- Não passar JWT em query string.
+- Não permitir IA mudar `CrmLead.status` / `CrmDeal.stage` automaticamente.
+- Não construir backend de Journeys / Régua antes de fechar scope com produto.
+- Não redesenhar UIs de satélites (CRM/SAA/OmniHub/Botify) agora.
+- Não usar validação Meta local como prova final — Meta real só em staging HTTPS público.
+- Não armazenar Meta tokens em `localStorage`.
+- Não duplicar configuração de chips fora de `BotifyMetaAccount`.
 
 ## Próximo foco — Botify (maturidade) + Sprint 6 operacional
 
@@ -237,3 +335,8 @@ Detalhamento completo: ver `docs/migration/sprint-3-2-crm-hardening.md`.
    plug-in, dashboard com filtros, custo agregado por tenant.
 3. **Sprint 6** — Botify: revisar segurança, alinhar ao mesmo padrão
    de bridges + ApiKeys que CRM/SAA estão usando.
+4. **Sprint Hub** — Absorção do `omniconnect-hub` ([ADR-0004](../adr/ADR-0004-hub-into-monorepo.md)),
+   cutover de identidade ([ADR-0003](../adr/ADR-0003-hub-identity-and-roles.md)),
+   `/dashboards/pilot-overview` para A6, packaging Coolify staging, validação
+   Meta real, aceite A1–A8 do piloto. Plano de PRs detalhado na secção
+   **"Próximo foco paralelo — Sprint Hub"** acima.

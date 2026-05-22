@@ -8,9 +8,11 @@ import {
   type BotifyFlowGraph,
   type BotifyLeadSummary,
 } from '@omniconnect/shared-types';
+import { BotifyMessageRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { IntegrationBridgeEmitService } from '../integration-bridge-emit/integration-bridge-emit.service';
 import { findFlowEntryNode, resolveNextNodeId } from './botify-flow-navigation';
+import { BotifyAIChatService } from './botify-ai-chat.service';
 import type { BotifyFlow } from '@prisma/client';
 
 export interface BotifyEngineRunOptions {
@@ -18,6 +20,14 @@ export interface BotifyEngineRunOptions {
   /** Dígitos ou E.164 — obrigatório para handoff real (`dryRun: false`). */
   phone?: string;
   conversationId?: string;
+  /**
+   * Quando passado + `dryRun=false` + `phone`, o engine resolve/cria a
+   * `BotifyConversation` e persiste `BotifyMessage` (user + assistant)
+   * em nós `message` e `ai`. Sem `botId`, o run permanece transitório
+   * (mantém compatibilidade do endpoint `/runtime/simulate`).
+   */
+  botId?: string;
+  contactName?: string;
 }
 
 export interface BotifyEngineStep {
@@ -121,6 +131,7 @@ export class BotifyFlowEngineService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bridgeEmit: IntegrationBridgeEmitService,
+    private readonly aiChat: BotifyAIChatService,
   ) {}
 
   private pickRuntimeGraph(flow: BotifyFlow): BotifyFlowGraph {
@@ -155,7 +166,31 @@ export class BotifyFlowEngineService {
       text?: string;
       flowId: string;
       lastAssistantReply?: string;
+      /** ID DB da BotifyConversation persistente (modo non-dry-run + botId + phone). */
+      conversationDbId?: string;
     } = { text: userText, flowId };
+
+    // Persistência da conversa: só quando explicitamente solicitada.
+    // - `dryRun=false` + `botId` + `phone` ⇒ resolve/cria `BotifyConversation`
+    //   e grava a mensagem do usuário como `BotifyMessage(role=user)`.
+    if (!opts.dryRun && opts.botId && opts.phone) {
+      const conv = await this.resolveConversation(
+        tenantId,
+        opts.botId,
+        opts.phone,
+        opts.contactName,
+      );
+      context.conversationDbId = conv.id;
+      if (userText && userText.trim()) {
+        await this.appendMessage(
+          tenantId,
+          conv.id,
+          BotifyMessageRole.user,
+          userText.trim(),
+          { source: 'engine.inbound', flowId },
+        );
+      }
+    }
 
     let current: Record<string, unknown> | null = start;
     let guard = 0;
@@ -213,7 +248,12 @@ export class BotifyFlowEngineService {
     tenantId: string,
     flow: BotifyFlow,
     node: Record<string, unknown>,
-    context: { text?: string; flowId: string; lastAssistantReply?: string },
+    context: {
+      text?: string;
+      flowId: string;
+      lastAssistantReply?: string;
+      conversationDbId?: string;
+    },
     outboundMessages: string[],
     steps: BotifyEngineStep[],
     opts: BotifyEngineRunOptions,
@@ -233,6 +273,16 @@ export class BotifyFlowEngineService {
         const content = typeof data.content === 'string' ? data.content.trim() : '';
         if (content) {
           outboundMessages.push(content);
+          context.lastAssistantReply = content;
+          if (context.conversationDbId) {
+            await this.appendMessage(
+              tenantId,
+              context.conversationDbId,
+              BotifyMessageRole.assistant,
+              content,
+              { source: 'engine.message', flowId: flow.id, nodeId: String(node.id) },
+            );
+          }
         }
         return;
       }
@@ -256,11 +306,99 @@ export class BotifyFlowEngineService {
         return;
 
       case 'ai': {
+        const userMessage =
+          typeof context.text === 'string' && context.text.trim()
+            ? context.text.trim()
+            : '';
+        const systemPrompt =
+          typeof data.systemPrompt === 'string'
+            ? data.systemPrompt
+            : typeof data.prompt === 'string'
+              ? data.prompt
+              : undefined;
+        const model = typeof data.model === 'string' ? data.model : undefined;
+        const temperature =
+          typeof data.temperature === 'number' ? data.temperature : undefined;
+        const maxTokens =
+          typeof data.maxTokens === 'number' ? data.maxTokens : undefined;
+
+        // Lê histórico recente (até 20 últimas mensagens) quando persistindo.
+        const history: Array<{
+          role: 'user' | 'assistant' | 'system';
+          content: string;
+        }> = [];
+        if (context.conversationDbId) {
+          const recent = await this.prisma.botifyMessage.findMany({
+            where: { tenantId, conversationId: context.conversationDbId },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+            select: { role: true, content: true },
+          });
+          for (let i = recent.length - 1; i >= 0; i--) {
+            const r = recent[i];
+            history.push({ role: r.role, content: r.content });
+          }
+          // O `userMessage` já está no histórico (foi salvo no início). Removemos
+          // a última ocorrência igual para não duplicar.
+          for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i].role === 'user' && history[i].content === userMessage) {
+              history.splice(i, 1);
+              break;
+            }
+          }
+        }
+
         const lastAi = steps[steps.length - 1];
-        if (lastAi) {
-          lastAi.detail = {
-            note: 'Backend engine does not run LLM; use microserviço or future AI service.',
-          };
+
+        if (opts.dryRun && !userMessage) {
+          if (lastAi) {
+            lastAi.detail = {
+              note: 'AI node em dry-run sem texto do usuário — skip.',
+            };
+          }
+          return;
+        }
+
+        try {
+          const { text, provider } = await this.aiChat.chat({
+            systemPrompt,
+            model,
+            temperature,
+            maxTokens,
+            history,
+            userMessage,
+          });
+          if (text) {
+            outboundMessages.push(text);
+            context.lastAssistantReply = text;
+            if (lastAi) {
+              lastAi.detail = { provider, hasText: true };
+            }
+            if (context.conversationDbId && !opts.dryRun) {
+              await this.appendMessage(
+                tenantId,
+                context.conversationDbId,
+                BotifyMessageRole.assistant,
+                text,
+                {
+                  source: 'engine.ai',
+                  flowId: flow.id,
+                  nodeId: String(node.id),
+                  provider,
+                },
+              );
+            }
+          }
+        } catch (err) {
+          if (lastAi) {
+            lastAi.detail = {
+              note: 'AI node failed',
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+          this.logger.warn(
+            `AI node ${String(node.id)} falhou: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
         return;
       }
@@ -350,5 +488,61 @@ export class BotifyFlowEngineService {
       default:
         this.logger.warn(`Unknown node type: ${type}`);
     }
+  }
+
+  /**
+   * Upsert da `BotifyConversation` (mesma chave do
+   * `BotifyConversationsService.resolveConversation`, sem injetar todo
+   * o service pra evitar deps cruzadas no engine).
+   */
+  private async resolveConversation(
+    tenantId: string,
+    botId: string,
+    phone: string,
+    contactName?: string,
+  ): Promise<{ id: string }> {
+    const digits = phone.replace(/\D/g, '');
+    const normalized = digits ? `+${digits}` : phone.trim();
+    const conv = await this.prisma.botifyConversation.upsert({
+      where: {
+        tenantId_botId_contactPhone: {
+          tenantId,
+          botId,
+          contactPhone: normalized,
+        },
+      },
+      create: {
+        tenantId,
+        botId,
+        contactPhone: normalized,
+        contactName: contactName?.trim() || null,
+      },
+      update: {
+        ...(contactName ? { contactName: contactName.trim() } : {}),
+      },
+      select: { id: true },
+    });
+    return conv;
+  }
+
+  private async appendMessage(
+    tenantId: string,
+    conversationId: string,
+    role: BotifyMessageRole,
+    content: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.prisma.botifyMessage.create({
+      data: {
+        tenantId,
+        conversationId,
+        role,
+        content,
+        metadata:
+          metadata && Object.keys(metadata).length > 0
+            ? (metadata as Prisma.InputJsonValue)
+            : undefined,
+      },
+    });
   }
 }

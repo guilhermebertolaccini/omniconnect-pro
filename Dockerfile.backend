@@ -1,0 +1,111 @@
+# syntax=docker/dockerfile:1.6
+#
+# omniconnect-backend — staging Dockerfile (workspace-aware).
+#
+# Build context: REPO ROOT.  This file lives at the root so `pnpm-workspace.yaml`,
+# `pnpm-lock.yaml`, and the `packages/*` shared deps are visible to the build.
+#
+# Coolify config (per ADR-0004 §5 + docs/deployment/coolify-staging.md):
+#   - Build context: repo root
+#   - Dockerfile path: Dockerfile.backend
+#   - Service port: 3000
+#   - Healthcheck: GET /health (built into the image)
+#
+# Multi-stage layout:
+#   1. base     — node:20-alpine + pnpm@9.12.0
+#   2. deps     — frozen install scoped to `omniconnect-backend...` (deps + transitive)
+#   3. build    — adds source, runs prisma generate + nest build
+#   4. prod-deps — fresh prod-only install (no devDeps in runtime)
+#   5. runtime  — slim image with built dist + prod node_modules + entrypoint
+
+ARG NODE_VERSION=20
+ARG PNPM_VERSION=9.12.0
+
+# ─── base ──────────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION:-9.12.0} --activate
+WORKDIR /repo
+
+# ─── deps ──────────────────────────────────────────────────────────────────
+FROM base AS deps
+# Copy workspace metadata first for layer cacheability
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY packages/ai-contracts/package.json packages/ai-contracts/
+COPY packages/api-client/package.json packages/api-client/
+COPY packages/shared-types/package.json packages/shared-types/
+COPY packages/tsconfig/package.json packages/tsconfig/
+COPY apps/omniconnect-backend/package.json apps/omniconnect-backend/
+RUN pnpm install --frozen-lockfile --filter omniconnect-backend...
+
+# ─── build ─────────────────────────────────────────────────────────────────
+FROM deps AS build
+COPY packages/ packages/
+COPY apps/omniconnect-backend/ apps/omniconnect-backend/
+# Build workspace deps PRIMEIRO em ordem topológica.
+# `@omniconnect/shared-types` e `@omniconnect/ai-contracts` são pacotes
+# TS-only; o backend importa `dist/index.js` desses pacotes via npm resolution.
+# Sem este passo, o runtime crash com "Cannot find module .../dist/index.js".
+WORKDIR /repo
+RUN pnpm --filter "omniconnect-backend^..." run build
+
+WORKDIR /repo/apps/omniconnect-backend
+# Prisma config exige DATABASE_URL mesmo só para `generate` (apenas o client é
+# emitido). Stub aceita qualquer string Postgres válida; o valor real é
+# injetado em runtime via env.
+RUN DATABASE_URL="postgresql://stub:stub@localhost:5432/stub?schema=public" \
+    pnpm exec prisma generate
+RUN pnpm run build
+RUN test -f dist/main.js
+
+# ─── prod-deps ─────────────────────────────────────────────────────────────
+FROM base AS prod-deps
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY packages/ai-contracts/package.json packages/ai-contracts/
+COPY packages/api-client/package.json packages/api-client/
+COPY packages/shared-types/package.json packages/shared-types/
+COPY packages/tsconfig/package.json packages/tsconfig/
+COPY apps/omniconnect-backend/package.json apps/omniconnect-backend/
+RUN pnpm install --frozen-lockfile --prod --filter omniconnect-backend...
+
+# ─── runtime ───────────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS runtime
+ENV NODE_ENV=production
+ENV PORT=3000
+RUN apk add --no-cache wget tini
+WORKDIR /app
+
+# Workspace prod deps (pnpm hoists into /repo/node_modules + symlinks)
+COPY --from=prod-deps /repo /app
+
+# Workspace packages: o prod-deps stage cria os symlinks
+# `node_modules/@omniconnect/* → packages/*` mas os `dist/` desses pacotes
+# só são gerados no `build` stage. Sobrescrever com a versão buildada.
+COPY --from=build /repo/packages /app/packages
+
+# Built artifacts
+COPY --from=build /repo/apps/omniconnect-backend/dist /app/apps/omniconnect-backend/dist
+# Prisma schema + migrations (needed for `prisma migrate deploy` at boot).
+# O cliente é regerado pelo `docker-entrypoint.sh` (`npx prisma generate`)
+# antes de carregar `dist/main.js`; em pnpm workspace o `.prisma` vive
+# dentro do virtual store hoisted, então não vale a pena copiar entre stages.
+COPY --from=build /repo/apps/omniconnect-backend/prisma /app/apps/omniconnect-backend/prisma
+COPY --from=build /repo/apps/omniconnect-backend/prisma.config.ts /app/apps/omniconnect-backend/prisma.config.ts
+# Entrypoint already in repo
+COPY apps/omniconnect-backend/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+# Non-root user
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && chown -R nodejs:nodejs /app
+USER nodejs
+
+WORKDIR /app/apps/omniconnect-backend
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:3000/health || exit 1
+
+# `tini` reaps zombies and forwards signals (BullMQ workers spawn child timers)
+ENTRYPOINT ["/sbin/tini", "--", "/app/docker-entrypoint.sh"]
+CMD ["node", "dist/main"]

@@ -32,7 +32,8 @@ Comece por:
 omniconnect-pro/
 ├── apps/
 │   ├── omniconnect-backend/      # NestJS (núcleo)
-│   ├── omniconnect-frontend/     # React
+│   ├── omniconnect-frontend/     # React (consola operacional)
+│   ├── omniconnect-hub/          # React 19 + TanStack Start (app shell — ADR-0003/0004)
 │   ├── botify/                   # React
 │   ├── crm-imobiliario/          # React + Supabase
 │   └── smart-ad-automator/       # React + Supabase
