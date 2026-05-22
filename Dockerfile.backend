@@ -87,11 +87,17 @@ COPY --from=build /repo/packages /app/packages
 # Built artifacts
 COPY --from=build /repo/apps/omniconnect-backend/dist /app/apps/omniconnect-backend/dist
 # Prisma schema + migrations (needed for `prisma migrate deploy` at boot).
-# O cliente é regerado pelo `docker-entrypoint.sh` (`npx prisma generate`)
-# antes de carregar `dist/main.js`; em pnpm workspace o `.prisma` vive
-# dentro do virtual store hoisted, então não vale a pena copiar entre stages.
 COPY --from=build /repo/apps/omniconnect-backend/prisma /app/apps/omniconnect-backend/prisma
 COPY --from=build /repo/apps/omniconnect-backend/prisma.config.ts /app/apps/omniconnect-backend/prisma.config.ts
+
+# Generate Prisma Client inside the final pnpm virtual store. The build stage
+# has dev dependencies, while runtime has a fresh prod install with a different
+# node_modules tree; generating here prevents missing `.prisma/client/*` files
+# before the real runtime DATABASE_URL is available.
+WORKDIR /app/apps/omniconnect-backend
+RUN DATABASE_URL="postgresql://stub:stub@localhost:5432/stub?schema=public" \
+    npx prisma generate
+
 # Entrypoint already in repo
 COPY apps/omniconnect-backend/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
