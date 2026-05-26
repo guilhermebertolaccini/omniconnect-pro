@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { AuthService } from './auth.service';
@@ -111,6 +112,12 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
+    const originalEnv = process.env.NODE_ENV;
+
+    afterEach(() => {
+      process.env.NODE_ENV = originalEnv;
+    });
+
     it('issues access+refresh through RefreshTokenService scoped to the active tenant', async () => {
       const mockUser = {
         id: 1,
@@ -144,6 +151,53 @@ describe('AuthService', () => {
         {},
       );
       expect(mockPrismaService.user.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses to issue a production session without a real tenant membership', async () => {
+      process.env.NODE_ENV = 'production';
+      mockPrismaService.userTenant.findMany.mockResolvedValue([
+        { tenantId: 'default-tenant' },
+      ]);
+
+      await expect(
+        service.login({
+          id: 7,
+          email: 'admin@example.com',
+          name: 'Admin',
+          role: 'admin',
+        }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(mockRefresh.issue).not.toHaveBeenCalled();
+      expect(mockPrismaService.user.update).not.toHaveBeenCalled();
+    });
+
+    it('selects a real tenant instead of the development sentinel in production', async () => {
+      process.env.NODE_ENV = 'production';
+      mockPrismaService.userTenant.findMany.mockResolvedValue([
+        { tenantId: 'default-tenant' },
+        { tenantId: 'tenant-real' },
+      ]);
+      (mockRefresh.issue as jest.Mock).mockResolvedValue({
+        accessToken: 'access-jwt',
+        accessExpiresIn: 900,
+        refreshToken: 'raw-refresh',
+        refreshExpiresAt: new Date('2030-01-01T00:00:00Z'),
+        refreshTokenId: 'rt-1',
+      });
+
+      await service.login({
+        id: 1,
+        email: 'admin@example.com',
+        name: 'Admin',
+        role: 'admin',
+      });
+
+      expect(mockRefresh.issue).toHaveBeenCalledWith(
+        { id: 1, email: 'admin@example.com', role: 'admin' },
+        'tenant-real',
+        {},
+      );
     });
 
     it('flips operator status to Online on login', async () => {

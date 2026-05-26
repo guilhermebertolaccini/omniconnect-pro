@@ -5,7 +5,6 @@
     "rootDir": "./prisma",
     "incremental": false
   },
-  "include": ["prisma/seed.ts"],
+  "include": ["prisma/seed.ts", "prisma/seed-production-tenant.ts"],
   "exclude": ["src", "dist", "node_modules", "**/*.spec.ts"]
 }
-

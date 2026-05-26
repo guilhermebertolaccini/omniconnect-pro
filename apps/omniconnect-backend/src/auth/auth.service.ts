@@ -64,18 +64,30 @@ export class AuthService {
   }
 
   async login(user: any, ctx: IssueContext = {}) {
+    const userTenants = await this.prisma.userTenant.findMany({
+      where: { userId: user.id },
+    });
+    const inProd = process.env.NODE_ENV === 'production';
+    const activeTenant = inProd
+      ? userTenants.find(
+          (membership) => membership.tenantId !== 'default-tenant',
+        )
+      : userTenants[0];
+
+    if (inProd && !activeTenant) {
+      throw new UnauthorizedException(
+        'User is not assigned to a production tenant',
+      );
+    }
+
+    const activeTenantId = activeTenant?.tenantId ?? 'default-tenant';
+
     if (user.role === 'operator') {
       await this.prisma.user.update({
         where: { id: user.id },
         data: { status: 'Online' },
       });
     }
-
-    const userTenants = await this.prisma.userTenant.findMany({
-      where: { userId: user.id },
-    });
-    const activeTenantId =
-      userTenants.length > 0 ? userTenants[0].tenantId : 'default-tenant';
 
     const session = await this.refreshTokens.issue(
       { id: user.id, email: user.email, role: user.role },

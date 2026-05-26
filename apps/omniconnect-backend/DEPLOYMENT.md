@@ -18,7 +18,7 @@ Ao subir o container, o entrypoint executa automaticamente:
    npx prisma migrate deploy
    ```
 
-2. **Seed (apenas primeira vez)**: Se o banco estiver vazio, executa o seed
+2. **Seed de desenvolvimento (apenas fora de produção)**: Se o banco estiver vazio, executa o seed
    ```bash
    npx tsx prisma/seed.ts
    ```
@@ -27,8 +27,14 @@ Ao subir o container, o entrypoint executa automaticamente:
    - Cria usuário Operator
    - Cria segmento padrão
    - Cria tags de exemplo
+   - Exige `SEED_ADMIN_PASSWORD`, `SEED_SUPERVISOR_PASSWORD` e `SEED_OPERATOR_PASSWORD`
 
-3. **Inicia aplicação**: Sobe o servidor NestJS
+3. **Bootstrap de tenant em produção (opt-in)**: Quando
+   `PRODUCTION_BOOTSTRAP_ENABLED=true`, associa um usuário já existente a um
+   tenant real por `prisma/seed-production-tenant.ts`. Ele não cria usuário
+   nem aceita `default-tenant`.
+
+4. **Inicia aplicação**: Sobe o servidor NestJS
    ```bash
    node dist/main
    ```
@@ -105,6 +111,14 @@ PORT=3000
 NODE_ENV=production
 APP_URL="https://seu-dominio.com"
 
+# Bootstrap operacional de uma conta existente (usar somente em um deploy)
+PRODUCTION_BOOTSTRAP_ENABLED=false
+PRODUCTION_BOOTSTRAP_TENANT_ID=""
+PRODUCTION_BOOTSTRAP_TENANT_NAME=""
+PRODUCTION_BOOTSTRAP_ADMIN_EMAIL=""
+# Opcional: rotaciona a senha e revoga sessoes ativas; minimo de 16 caracteres.
+PRODUCTION_BOOTSTRAP_ADMIN_PASSWORD=""
+
 # CORS
 CORS_ORIGINS="https://seu-frontend.com"
 
@@ -133,7 +147,7 @@ META_APP_SECRET="seu-secret"
 # Ver logs do container
 docker logs vend-backend
 
-# Você deve ver:
+# Em desenvolvimento, você deve ver:
 # 🔄 Executando migrações do Prisma...
 # ✅ Migrações concluídas
 # 🌱 Verificando se precisa executar seed...
@@ -141,19 +155,41 @@ docker logs vend-backend
 # ✅ Seed concluído com sucesso!
 ```
 
-## Credenciais padrão criadas pelo seed
+## Seed de desenvolvimento
 
-| Usuário    | Email                 | Senha                    |
-|------------|----------------------|--------------------------|
-| Admin      | admin@vend.com       | <@P0d3ro50ço#a$S@@      |
-| Supervisor | supervisor@vend.com  | ..?SuP3RV15o4)(ALt      |
-| Operator   | operator@vend.com    | ç~^OpeR4t0R=3}}ooo      |
+O seed de desenvolvimento cria os usuários de exemplo somente com senhas
+fornecidas por variáveis `SEED_*_PASSWORD`. Senhas não são versionadas nem
+impressas nos logs. Ele falha deliberadamente se executado com
+`NODE_ENV=production`.
+
+## Vincular conta a tenant em produção
+
+No painel de ambiente do container, habilite temporariamente:
+
+```env
+PRODUCTION_BOOTSTRAP_ENABLED=true
+PRODUCTION_BOOTSTRAP_TENANT_ID=tatica-marketing
+PRODUCTION_BOOTSTRAP_TENANT_NAME="Tatica Marketing"
+PRODUCTION_BOOTSTRAP_ADMIN_EMAIL=admin@vend.com
+PRODUCTION_BOOTSTRAP_ADMIN_PASSWORD="<senha-nova-segura>"
+```
+
+Faça um deploy do backend e verifique no log:
+
+```text
+Production tenant membership ensured for admin@vend.com in tatica-marketing.
+Administrator password rotated: yes.
+```
+
+Depois, remova `PRODUCTION_BOOTSTRAP_*` do ambiente e faça novo restart/deploy.
+O campo de senha deve ser usado quando a conta tiver passado por um seed antigo
+ou outra credencial exposta; a rotação revoga todas as sessões refresh ativas.
 
 ## Troubleshooting
 
 ### Seed não executa
 ```bash
-# Executar manualmente dentro do container
+# Somente desenvolvimento, com as senhas SEED_* definidas
 docker exec -it vend-backend npx tsx prisma/seed.ts
 ```
 

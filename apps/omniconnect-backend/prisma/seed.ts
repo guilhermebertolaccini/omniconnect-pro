@@ -14,6 +14,16 @@ const prisma = new PrismaClient({ adapter });
 const SEED_TENANT_ID = 'default-tenant';
 const SEED_TENANT_NAME = 'Default Tenant (seed)';
 
+function requireDevelopmentPassword(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value || value.length < 12) {
+    throw new Error(
+      `Set ${name} with at least 12 characters before running the development seed.`,
+    );
+  }
+  return value;
+}
+
 async function ensureSeedTenant() {
   return prisma.tenant.upsert({
     where: { id: SEED_TENANT_ID },
@@ -27,6 +37,12 @@ async function ensureSeedTenant() {
 }
 
 async function main() {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'Development seed is disabled in production. Use prisma:seed:production-tenant instead.',
+    );
+  }
+
   console.log('🌱 Iniciando seed...');
 
   const tenant = await ensureSeedTenant();
@@ -43,7 +59,9 @@ async function main() {
 
   console.log('✅ Segmento criado:', segment.name);
 
-  const adminPassword = await argon2.hash('<@P0d3ro50ço#a$S@@');
+  const adminPassword = await argon2.hash(
+    requireDevelopmentPassword('SEED_ADMIN_PASSWORD'),
+  );
   const admin = await prisma.user.upsert({
     where: { email: 'admin@vend.com' },
     update: {},
@@ -64,7 +82,9 @@ async function main() {
 
   console.log('✅ Admin criado:', admin.email);
 
-  const supervisorPassword = await argon2.hash('..?SuP3RV15o4)(ALt');
+  const supervisorPassword = await argon2.hash(
+    requireDevelopmentPassword('SEED_SUPERVISOR_PASSWORD'),
+  );
   const supervisor = await prisma.user.upsert({
     where: { email: 'supervisor@vend.com' },
     update: {},
@@ -86,7 +106,9 @@ async function main() {
 
   console.log('✅ Supervisor criado:', supervisor.email);
 
-  const operatorPassword = await argon2.hash('ç~^OpeR4t0R=3}}ooo');
+  const operatorPassword = await argon2.hash(
+    requireDevelopmentPassword('SEED_OPERATOR_PASSWORD'),
+  );
   const operator = await prisma.user.upsert({
     where: { email: 'operator@vend.com' },
     update: {},
@@ -135,10 +157,12 @@ async function main() {
 
   console.log('✅ Seed concluído com sucesso!');
   console.log('\n📋 Dados criados:');
-  console.log('👥 Usuários:');
-  console.log('   Admin:      admin@vend.com | <@P0d3ro50ço#a$S@@');
-  console.log('   Supervisor: supervisor@vend.com | ..?SuP3RV15o4)(ALt');
-  console.log('   Operator:   operator@vend.com | ç~^OpeR4t0R=3}}ooo');
+  console.log(
+    '👥 Usuários: admin@vend.com, supervisor@vend.com, operator@vend.com',
+  );
+  console.log(
+    '   Senhas carregadas de SEED_*_PASSWORD e não exibidas em logs.',
+  );
   console.log('\n🏷️  Tags:');
   console.log('   emp1, emp2');
 }
