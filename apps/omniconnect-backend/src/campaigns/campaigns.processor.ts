@@ -52,6 +52,14 @@ export class CampaignsProcessor {
     } = job.data;
 
     try {
+      const campaign = await this.prisma.campaign.findFirst({
+        where: { id: campaignId, tenantId: jobTenantId },
+        select: { id: true },
+      });
+      if (!campaign) {
+        throw new Error('Campanha não encontrada para o tenant ativo');
+      }
+
       // Normalizar telefone (adicionar 55, remover caracteres especiais)
       const contactPhone = this.phoneValidationService.normalizePhone(rawContactPhone);
 
@@ -67,7 +75,7 @@ export class CampaignsProcessor {
       }
 
       // Verificar CPC (Contato por Cliente)
-      const cpcCheck = await this.controlPanelService.canContactCPC(contactPhone, contactSegment);
+      const cpcCheck = await this.controlPanelService.canContactCPC(jobTenantId, contactPhone, contactSegment);
       if (!cpcCheck.allowed) {
         this.logger.warn(
           `Campanha: Bloqueio CPC para ${contactPhone}`,
@@ -82,7 +90,7 @@ export class CampaignsProcessor {
       }
 
       // Verificar reenvio (intervalo mínimo entre campanhas)
-      const resendCheck = await this.controlPanelService.canResend(contactPhone, contactSegment);
+      const resendCheck = await this.controlPanelService.canResend(jobTenantId, contactPhone, contactSegment);
       if (!resendCheck.allowed) {
         this.logger.warn(
           `Campanha: Bloqueio reenvio para ${contactPhone}`,
@@ -129,8 +137,8 @@ export class CampaignsProcessor {
       }
 
       // Buscar o App para obter o accessToken
-      const app = await this.prisma.app.findUnique({
-        where: { id: line.appId },
+      const app = await this.prisma.app.findFirst({
+        where: { id: line.appId, tenantId: jobTenantId },
       });
 
       if (!app || !app.accessToken || !line.numberId) {
@@ -172,6 +180,7 @@ export class CampaignsProcessor {
             // Registrar envio de template
             await this.prisma.templateMessage.create({
               data: {
+                tenantId: jobTenantId,
                 templateId: template.id,
                 contactPhone,
                 contactName,
@@ -195,7 +204,7 @@ export class CampaignsProcessor {
 
           // Buscar operadores da linha e distribuir (máximo 2)
           const lineOperators = await this.prisma.lineOperator.findMany({
-            where: { lineId },
+            where: { tenantId: jobTenantId, lineId },
             include: {
               user: true,
             },
@@ -214,6 +223,7 @@ export class CampaignsProcessor {
               onlineOperators.map(async (operator) => {
                 const count = await this.prisma.conversation.count({
                   where: {
+                    tenantId: jobTenantId,
                     userLine: lineId,
                     userId: operator.id,
                     tabulation: null,
@@ -264,6 +274,7 @@ export class CampaignsProcessor {
             if (useTemplate && templateId) {
               await this.prisma.templateMessage.create({
                 data: {
+                  tenantId: jobTenantId,
                   templateId,
                   contactPhone,
                   contactName,

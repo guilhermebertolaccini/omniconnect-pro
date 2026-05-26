@@ -27,6 +27,7 @@ import { MessageValidationService } from '../message-validation/message-validati
 import { MessageSendingService } from '../message-sending/message-sending.service';
 import { AppLoggerService } from '../logger/logger.service';
 import { WhatsappCloudService } from '../whatsapp-cloud/whatsapp-cloud.service';
+import { isCorsOriginAllowed } from '../common/config/cors-options';
 import axios from 'axios';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -34,14 +35,14 @@ import * as path from 'path';
 @WebSocketGateway({
   cors: {
     origin: (origin, callback) => {
-      const allowedOrigins = process.env.CORS_ORIGINS
-        ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
-        : ['http://localhost:5173', 'http://localhost:3001'];
-
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
+      try {
+        if (isCorsOriginAllowed(origin)) {
+          callback(null, true);
+          return;
+        }
         callback(new Error('Not allowed by CORS'));
+      } catch (error) {
+        callback(error as Error);
       }
     },
     credentials: true,
@@ -51,7 +52,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   @WebSocketServer()
   server: Server;
 
-  private connectedUsers: Map<number, string> = new Map();
+  private connectedUsers: Map<string, string> = new Map();
   private operatorConnectionTime: Map<number, number> = new Map(); // userId -> timestamp de conexão
 
   constructor(
@@ -87,19 +88,63 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         return;
       }
 
-      const payload = this.jwtService.verify(token);
-      const user = await (this.prisma as any).user.findUnique({
+      const payload = this.jwtService.verify(token) as {
+        sub?: number;
+        tenantId?: string;
+      };
+      const tenantId =
+        payload.tenantId ??
+        (process.env.NODE_ENV === 'production' ? null : 'default-tenant');
+
+      if (
+        !payload.sub ||
+        !tenantId ||
+        (process.env.NODE_ENV === 'production' &&
+          tenantId === 'default-tenant')
+      ) {
+        console.warn(
+          `[WebSocket] Conexão rejeitada: sessão sem tenant válido (socket: ${client.id})`,
+        );
+        client.disconnect();
+        return;
+      }
+
+      const account = await (this.prisma as any).user.findUnique({
         where: { id: payload.sub },
       });
 
-      if (!user) {
+      if (!account || account.isActive === false) {
         console.warn(`[WebSocket] Conexão rejeitada: Usuário não encontrado para token (sub: ${payload.sub})`);
         client.disconnect();
         return;
       }
 
+      const membership =
+        tenantId === 'default-tenant' && process.env.NODE_ENV !== 'production'
+          ? null
+          : await (this.prisma as any).userTenant.findUnique({
+              where: { userId_tenantId: { userId: account.id, tenantId } },
+              include: { tenant: { select: { isActive: true } } },
+            });
+      if (
+        (process.env.NODE_ENV === 'production' && !membership) ||
+        membership?.tenant?.isActive === false
+      ) {
+        console.warn(
+          `[WebSocket] Conexão rejeitada: usuário sem membership ativa para o tenant da sessão (sub: ${payload.sub})`,
+        );
+        client.disconnect();
+        return;
+      }
+
+      const user = {
+        ...account,
+        tenantId,
+        role: membership?.role ?? account.role,
+      };
       client.data.user = user;
-      this.connectedUsers.set(user.id, client.id);
+      client.join(this.tenantRoom(tenantId));
+      this.connectedUsers.set(this.userSocketKey(tenantId, user.id), client.id);
       this.operatorConnectionTime.set(user.id, Date.now()); // Rastrear tempo de conexão
 
       console.log(`[WebSocket] Usuário ${user.name} (ID: ${user.id}) conectado e adicionado ao mapa. Socket: ${client.id}`);
@@ -119,6 +164,10 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       // Enviar conversas ativas ao conectar (apenas para operators)
       // Buscar por userId mesmo se não tiver linha, pois as conversas estão vinculadas ao operador
       if (user.role === 'operator') {
+        const assignedLine = await (this.prisma as any).lineOperator.findFirst({
+          where: { tenantId: user.tenantId, userId: user.id },
+          select: { lineId: true },
+        });
         // Buscar conversas escopadas pelo tenant do JWT do socket.
         const activeConversations = await this.conversationsService.findActiveConversations(
           user.tenantId,
@@ -130,7 +179,10 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         // Processar mensagens pendentes na fila quando operador fica online
         try {
           // Buscar mensagens pendentes do segmento do operador
-          const whereClause: any = { status: 'pending' };
+          const whereClause: any = {
+            tenantId: user.tenantId,
+            status: 'pending',
+          };
           if (user.segment) {
             whereClause.segment = user.segment;
           }
@@ -163,7 +215,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
                 mediaUrl: queuedMessage.mediaUrl,
                 segment: queuedMessage.segment,
                 userId: user.id,
-                userLine: user.line,
+                userLine: assignedLine?.lineId ?? null,
               });
 
               await (this.prisma as any).messageQueue.update({
@@ -171,7 +223,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
                 data: { status: 'sent', processedAt: new Date() },
               });
 
-              this.emitToUser(user.id, 'queued-message-processed', {
+              this.emitToUser(user.tenantId, user.id, 'queued-message-processed', {
                 messageId: queuedMessage.id,
                 contactPhone: queuedMessage.contactPhone,
               });
@@ -232,7 +284,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         console.error(`❌ [WebSocket] Erro ao atualizar status na desconexão:`, error);
       } finally {
         // SEMPRE remover do Map, mesmo com erro
-        this.connectedUsers.delete(userId);
+        this.connectedUsers.delete(this.userSocketKey(client.data.user.tenantId, userId));
         this.operatorConnectionTime.delete(userId); // Remover rastreamento de tempo
       }
     }
@@ -262,6 +314,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     if (!currentLineId) {
       const activeConversation = await (this.prisma as any).conversation.findFirst({
         where: {
+          tenantId: user.tenantId,
           contactPhone: data.contactPhone,
           tabulation: null, // Apenas conversas ativas
           userLine: { not: null }, // Apenas conversas que têm linha associada
@@ -279,6 +332,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     if (!currentLineId) {
       const availableLine = await (this.prisma as any).linesStock.findFirst({
         where: {
+          tenantId: user.tenantId,
           segment: user.segment,
           lineStatus: 'active',
         },
@@ -320,13 +374,14 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
     try {
       // Verificar CPC
-      const cpcCheck = await this.controlPanelService.canContactCPC(data.contactPhone, user.segment);
+      const cpcCheck = await this.controlPanelService.canContactCPC(user.tenantId, data.contactPhone, user.segment);
       if (!cpcCheck.allowed) {
         return { error: cpcCheck.reason };
       }
 
       // Verificar repescagem
       const repescagemCheck = await this.controlPanelService.checkRepescagem(
+        user.tenantId,
         data.contactPhone,
         user.id,
         user.segment
@@ -342,8 +397,8 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       }
 
       // Buscar linha atual do operador (sempre usar a linha atual, não a linha antiga da conversa)
-      let line = await (this.prisma as any).linesStock.findUnique({
-        where: { id: currentLineId },
+      let line = await (this.prisma as any).linesStock.findFirst({
+        where: { id: currentLineId, tenantId: user.tenantId },
       });
 
       if (!line || line.lineStatus !== 'active') {
@@ -351,8 +406,8 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       }
 
       // Buscar o App para obter o accessToken
-      let app = await (this.prisma as any).app.findUnique({
-        where: { id: line.appId },
+      let app = await (this.prisma as any).app.findFirst({
+        where: { id: line.appId, tenantId: user.tenantId },
       });
 
       if (!app) {
@@ -523,7 +578,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
       // Buscar contato
       const contact = await (this.prisma as any).contact.findFirst({
-        where: { phone: data.contactPhone },
+        where: { tenantId: user.tenantId, phone: data.contactPhone },
       });
 
       // Salvar conversa usando a linha ATUAL do operador
@@ -550,12 +605,13 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       // client.emit('message-sent', { message: conversation });
 
       // Se houver supervisores online do mesmo segmento, enviar para eles também
-      this.emitToSupervisors(user.segment, 'new_message', { message: conversation });
+      this.emitToSupervisors(user.tenantId, user.segment, 'new_message', { message: conversation });
 
       // Executar registros e validações em paralelo (não bloquear resposta)
       Promise.all([
         // Registrar mensagem do operador para controle de repescagem (assíncrono)
         this.controlPanelService.registerOperatorMessage(
+          user.tenantId,
           data.contactPhone,
           user.id,
           user.segment
@@ -604,7 +660,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
       // Verificar erro de janela de 24h (131047)
       if (errorCode === 131047) {
-        this.emitToUser(user.id, 'message-error', {
+        this.emitToUser(user.tenantId, user.id, 'message-error', {
           type: '24h_window_expired',
           contactPhone: data.contactPhone,
           message: 'A janela de 24h para enviar mensagens livres expirou. Use um template para reativar a conversa.',
@@ -643,8 +699,9 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { contactPhone: string; typing: boolean },
   ) {
-    // Emitir evento de digitação para outros usuários
-    client.broadcast.emit('user-typing', {
+    const user = client.data.user;
+    if (!user?.tenantId) return;
+    client.to(this.tenantRoom(user.tenantId)).emit('user-typing', {
       contactPhone: data.contactPhone,
       typing: data.typing,
     });
@@ -656,6 +713,11 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   // Método para emitir mensagens recebidas via webhook
   async emitNewMessage(conversation: any) {
+    const tenantId = conversation.tenantId as string | undefined;
+    if (!tenantId) {
+      console.warn('[WebSocket] Evento sem tenantId não será entregue em tempo real');
+      return { success: false };
+    }
     console.log(`📤 Emitindo new_message para contactPhone: ${conversation.contactPhone}`, {
       userId: conversation.userId,
       userLine: conversation.userLine,
@@ -670,7 +732,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     if (conversation.userId) {
       // Garantir que userId é um número (pode vir como string)
       const userIdNum = Number(conversation.userId);
-      const socketId = this.connectedUsers.get(userIdNum);
+      const socketId = this.connectedUsers.get(this.userSocketKey(tenantId, userIdNum));
       console.log(`  → Procurando userId ${userIdNum} (tipo: ${typeof userIdNum}) em connectedUsers: socketId=${socketId || 'NÃO ENCONTRADO'}`);
 
       // Se o usuário está em connectedUsers, ele está conectado via WebSocket
@@ -692,13 +754,14 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
           segment: conversation.segment,
           status: 'Online',
           role: 'operator',
+          tenants: { some: { tenantId, role: 'operator' } },
         },
       });
 
       console.log(`  → Encontrados ${segmentOperators.length} operador(es) online no segmento ${conversation.segment}`);
 
       segmentOperators.forEach(op => {
-        const socketId = this.connectedUsers.get(op.id);
+        const socketId = this.connectedUsers.get(this.userSocketKey(tenantId, op.id));
         if (socketId) {
           console.log(`  ✅ Enviando para ${op.name} (${op.role}) - operador do segmento`);
           this.server.to(socketId).emit('new_message', { message: conversation });
@@ -712,6 +775,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       console.log(`  → Tentando encontrar operador por conversas ativas do contato ${conversation.contactPhone}`);
       const activeConversation = await (this.prisma as any).conversation.findFirst({
         where: {
+          tenantId,
           contactPhone: conversation.contactPhone,
           tabulation: null,
           userId: { not: null },
@@ -741,7 +805,9 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       });
 
       if (activeConversation?.userId) {
-        const socketId = this.connectedUsers.get(activeConversation.userId);
+        const socketId = this.connectedUsers.get(
+          this.userSocketKey(tenantId, activeConversation.userId),
+        );
         if (socketId) {
           const user = await (this.prisma as any).user.findUnique({
             where: { id: activeConversation.userId },
@@ -761,7 +827,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
     // Emitir para supervisores do segmento
     if (conversation.segment) {
-      this.emitToSupervisors(conversation.segment, 'new_message', { message: conversation });
+      this.emitToSupervisors(tenantId, conversation.segment, 'new_message', { message: conversation });
     }
 
     return { success: true, conversation };
@@ -775,8 +841,8 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   // Método público para enviar notificação para um usuário específico
-  public emitToUser(userId: number, event: string, data: any) {
-    const socketId = this.connectedUsers.get(userId);
+  public emitToUser(tenantId: string, userId: number, event: string, data: any) {
+    const socketId = this.connectedUsers.get(this.userSocketKey(tenantId, userId));
     if (socketId) {
       this.server.to(socketId).emit(event, data);
       return true;
@@ -784,16 +850,16 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     return false;
   }
 
-  private async emitToSupervisors(segment: number, event: string, data: any) {
+  private async emitToSupervisors(tenantId: string, segment: number, event: string, data: any) {
     const supervisors = await (this.prisma as any).user.findMany({
       where: {
-        role: 'supervisor',
         segment,
+        tenants: { some: { tenantId, role: 'supervisor' } },
       },
     });
 
     supervisors.forEach(supervisor => {
-      const socketId = this.connectedUsers.get(supervisor.id);
+      const socketId = this.connectedUsers.get(this.userSocketKey(tenantId, supervisor.id));
       if (socketId) {
         this.server.to(socketId).emit(event, data);
       }
@@ -801,8 +867,16 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   // Emitir atualização de conversa tabulada
-  async emitConversationTabulated(contactPhone: string, tabulationId: number) {
-    this.server.emit('conversation-tabulated', { contactPhone, tabulationId });
+  async emitConversationTabulated(tenantId: string, contactPhone: string, tabulationId: number) {
+    this.server.to(this.tenantRoom(tenantId)).emit('conversation-tabulated', { contactPhone, tabulationId });
+  }
+
+  private userSocketKey(tenantId: string, userId: number): string {
+    return `${tenantId}:${userId}`;
+  }
+
+  private tenantRoom(tenantId: string): string {
+    return `tenant:${tenantId}`;
   }
 
   /**

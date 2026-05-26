@@ -28,6 +28,7 @@ export class MessageValidationService {
    * Centraliza todas as validações (elimina duplicação)
    */
   async validateMessage(
+    tenantId: string,
     userId: number,
     contactPhone: string,
     lineId: number,
@@ -64,7 +65,7 @@ export class MessageValidationService {
       }
 
       // 3. Validação CPC
-      const cpcCheck = await this.controlPanelService.canContactCPC(contactPhone, user.segment);
+      const cpcCheck = await this.controlPanelService.canContactCPC(tenantId, contactPhone, user.segment);
       if (!cpcCheck.allowed) {
         this.logger.warn(
           `Bloqueio CPC para ${contactPhone}`,
@@ -80,6 +81,7 @@ export class MessageValidationService {
 
       // 4. Validação Repescagem
       const repescagemCheck = await this.controlPanelService.checkRepescagem(
+        tenantId,
         contactPhone,
         userId,
         user.segment,
@@ -124,8 +126,8 @@ export class MessageValidationService {
       }
 
       // 7. Validação de linha ativa
-      const line = await this.prisma.linesStock.findUnique({
-        where: { id: lineId },
+      const line = await this.prisma.linesStock.findFirst({
+        where: { id: lineId, tenantId },
       });
 
       if (!line || line.lineStatus !== 'active') {
@@ -149,4 +151,3 @@ export class MessageValidationService {
     }
   }
 }
-

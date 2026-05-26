@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/select";
 import { useNotificationSound } from "@/hooks/useNotificationSound";
 import { toast } from "@/hooks/use-toast";
-import { conversationsService, tabulationsService, contactsService, templatesService, linesService, usersService, Contact, Conversation as APIConversation, Tabulation, Template, getAuthToken } from "@/services/api";
+import { conversationsService, tabulationsService, contactsService, templatesService, linesService, usersService, Contact, Conversation as APIConversation, Tabulation, Template, authenticatedFetch } from "@/services/api";
 import { useRealtimeConnection, useRealtimeSubscription } from "@/hooks/useRealtimeConnection";
 import { WS_EVENTS, realtimeSocket } from "@/services/websocket";
 import { format } from "date-fns";
@@ -785,16 +785,8 @@ export default function Atendimento() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const token = getAuthToken();
-      if (!token) {
-        throw new Error('Não autenticado');
-      }
-
-      const response = await fetch(`${API_BASE_URL}/media/upload`, {
+      const response = await authenticatedFetch('/media/upload', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
         body: formData,
       });
 
@@ -1108,16 +1100,8 @@ export default function Atendimento() {
 
     setIsDeletingConversation(true);
     try {
-      const token = getAuthToken();
-      if (!token) {
-        throw new Error('Não autenticado');
-      }
-
-      const response = await fetch(`${API_BASE_URL}/conversations/contact/${encodeURIComponent(selectedConversation.contactPhone)}`, {
+      const response = await authenticatedFetch(`/conversations/contact/${encodeURIComponent(selectedConversation.contactPhone)}`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
       });
 
       if (!response.ok) {

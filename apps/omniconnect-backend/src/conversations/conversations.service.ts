@@ -447,14 +447,14 @@ export class ConversationsService {
     );
 
     if (firstConversation.userId) {
-      this.websocketGateway.emitToUser(firstConversation.userId, 'conversation-transferred', {
+      this.websocketGateway.emitToUser(tenantId, firstConversation.userId, 'conversation-transferred', {
         contactPhone,
         toOperatorId: targetOperatorId,
         toOperatorName: targetOperator.name,
       });
     }
 
-    this.websocketGateway.emitToUser(targetOperatorId, 'conversation-received', {
+    this.websocketGateway.emitToUser(tenantId, targetOperatorId, 'conversation-received', {
       contactPhone,
       contactName: activeConversations[0]?.contactName || 'Contato',
       fromOperatorId: firstConversation.userId,

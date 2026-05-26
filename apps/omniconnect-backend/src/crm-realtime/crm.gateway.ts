@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma.service';
 import { CrmRealtimeEmitter, CrmRealtimeService } from './crm-realtime.service';
+import { isCorsOriginAllowed } from '../common/config/cors-options';
 
 interface CrmSocketUser {
   userId: number;
@@ -46,13 +47,14 @@ interface CrmSocketUser {
   namespace: '/crm',
   cors: {
     origin: (origin, callback) => {
-      const allowed = process.env.CORS_ORIGINS
-        ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
-        : ['http://localhost:5173', 'http://localhost:3001'];
-      if (!origin || allowed.includes(origin)) {
-        callback(null, true);
-      } else {
+      try {
+        if (isCorsOriginAllowed(origin)) {
+          callback(null, true);
+          return;
+        }
         callback(new Error('Not allowed by CORS'));
+      } catch (error) {
+        callback(error as Error);
       }
     },
     credentials: true,
@@ -104,14 +106,20 @@ export class CrmGateway
       }
       const user = (await (this.prisma as any).user.findUnique({
         where: { id: payload.sub },
-        select: { id: true, role: true, tenantId: true },
-      })) as { id: number; role: string; tenantId: string | null } | null;
-      if (!user) {
+        select: { id: true, role: true, tenantId: true, isActive: true },
+      })) as { id: number; role: string; tenantId: string | null; isActive: boolean } | null;
+      if (!user || user.isActive === false) {
         client.disconnect();
         return;
       }
-      const tenantId = payload.tenantId ?? user.tenantId;
-      if (!tenantId) {
+      const tenantId =
+        payload.tenantId ??
+        (process.env.NODE_ENV === 'production' ? null : user.tenantId);
+      if (
+        !tenantId ||
+        (process.env.NODE_ENV === 'production' &&
+          tenantId === 'default-tenant')
+      ) {
         this.logger.warn(`[crm-ws] user ${user.id} has no tenantId; disconnecting`);
         client.disconnect();
         return;
@@ -119,8 +127,16 @@ export class CrmGateway
       // Resolve effective role (UserTenant.role overrides User.role for the active tenant).
       const userTenant = (await (this.prisma as any).userTenant.findFirst({
         where: { userId: user.id, tenantId },
-        select: { role: true },
-      })) as { role: string } | null;
+        select: { role: true, tenant: { select: { isActive: true } } },
+      })) as { role: string; tenant: { isActive: boolean } } | null;
+      if (
+        (process.env.NODE_ENV === 'production' && !userTenant) ||
+        userTenant?.tenant?.isActive === false
+      ) {
+        this.logger.warn(`[crm-ws] inactive membership for user=${user.id}; disconnecting`);
+        client.disconnect();
+        return;
+      }
       const effectiveRole = userTenant?.role ?? user.role;
 
       const sUser: CrmSocketUser = {

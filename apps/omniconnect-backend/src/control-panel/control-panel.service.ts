@@ -11,15 +11,15 @@ export class ControlPanelService {
   ) {}
 
   // Buscar configurações (global ou por segmento) - COM CACHE
-  async findOne(segmentId?: number) {
-    const cacheKey = `control-panel:${segmentId ?? 'global'}`;
+  async findOne(tenantId: string, segmentId?: number) {
+    const cacheKey = `control-panel:${tenantId}:${segmentId ?? 'global'}`;
     
     // Cache: 5 minutos (configurações mudam raramente)
     return await this.cacheService.getOrSet(
       cacheKey,
       async () => {
         const config = await this.prisma.controlPanel.findFirst({
-          where: { segmentId: segmentId ?? null },
+          where: { tenantId, segmentId: segmentId ?? null },
         });
 
         if (!config) {
@@ -57,9 +57,9 @@ export class ControlPanelService {
   }
 
   // Criar ou atualizar configurações
-  async upsert(dto: UpdateControlPanelDto) {
+  async upsert(tenantId: string, dto: UpdateControlPanelDto) {
     const existing = await this.prisma.controlPanel.findFirst({
-      where: { segmentId: dto.segmentId ?? null },
+      where: { tenantId, segmentId: dto.segmentId ?? null },
     });
 
     const data = {
@@ -101,7 +101,7 @@ export class ControlPanelService {
       });
       
       // Invalidar cache após atualização
-      const cacheKey = `control-panel:${dto.segmentId ?? 'global'}`;
+      const cacheKey = `control-panel:${tenantId}:${dto.segmentId ?? 'global'}`;
       await this.cacheService.del(cacheKey);
       
       return {
@@ -114,13 +114,14 @@ export class ControlPanelService {
     const created = await this.prisma.controlPanel.create({
       data: {
         ...data,
+        tenantId,
         blockPhrases: data.blockPhrases ?? '[]',
         activeLines: data.activeLines ?? null,
       } as any, // Temporário até migration ser aplicada
     });
     
     // Invalidar cache após criação
-    const cacheKey = `control-panel:${dto.segmentId ?? 'global'}`;
+    const cacheKey = `control-panel:${tenantId}:${dto.segmentId ?? 'global'}`;
     await this.cacheService.del(cacheKey);
     
     return {
@@ -131,34 +132,34 @@ export class ControlPanelService {
   }
 
   // Adicionar frase de bloqueio
-  async addBlockPhrase(phrase: string, segmentId?: number) {
-    const config = await this.findOne(segmentId);
+  async addBlockPhrase(tenantId: string, phrase: string, segmentId?: number) {
+    const config = await this.findOne(tenantId, segmentId);
     const phrases = config.blockPhrases || [];
 
     if (!phrases.includes(phrase)) {
       phrases.push(phrase);
     }
 
-    return this.upsert({
+    return this.upsert(tenantId, {
       segmentId: segmentId ?? undefined,
       blockPhrases: phrases,
     });
   }
 
   // Remover frase de bloqueio
-  async removeBlockPhrase(phrase: string, segmentId?: number) {
-    const config = await this.findOne(segmentId);
+  async removeBlockPhrase(tenantId: string, phrase: string, segmentId?: number) {
+    const config = await this.findOne(tenantId, segmentId);
     const phrases = (config.blockPhrases || []).filter((p: string) => p !== phrase);
 
-    return this.upsert({
+    return this.upsert(tenantId, {
       segmentId: segmentId ?? undefined,
       blockPhrases: phrases,
     });
   }
 
   // Verificar se uma mensagem contém uma frase de bloqueio
-  async checkBlockPhrases(message: string, segmentId?: number): Promise<boolean> {
-    const config = await this.findOne(segmentId);
+  async checkBlockPhrases(tenantId: string, message: string, segmentId?: number): Promise<boolean> {
+    const config = await this.findOne(tenantId, segmentId);
     
     // Se frases de bloqueio estiverem desativadas, retornar false
     if (!config.blockPhrasesEnabled) {
@@ -171,8 +172,8 @@ export class ControlPanelService {
   }
 
   // Verificar se pode enviar para um CPC (baseado no temporizador)
-  async canContactCPC(contactPhone: string, segmentId?: number): Promise<{ allowed: boolean; reason?: string; hoursRemaining?: number }> {
-    const config = await this.findOne(segmentId);
+  async canContactCPC(tenantId: string, contactPhone: string, segmentId?: number): Promise<{ allowed: boolean; reason?: string; hoursRemaining?: number }> {
+    const config = await this.findOne(tenantId, segmentId);
 
     // Se temporizador de CPC estiver desativado, permitir sempre
     if (!config.cpcCooldownEnabled) {
@@ -180,7 +181,7 @@ export class ControlPanelService {
     }
 
     const contact = await this.prisma.contact.findFirst({
-      where: { phone: contactPhone },
+      where: { tenantId, phone: contactPhone },
     });
 
     if (!contact || !contact.isCPC) {
@@ -207,8 +208,8 @@ export class ControlPanelService {
   }
 
   // Verificar se pode reenviar para um telefone
-  async canResend(contactPhone: string, segmentId?: number): Promise<{ allowed: boolean; reason?: string; hoursRemaining?: number }> {
-    const config = await this.findOne(segmentId);
+  async canResend(tenantId: string, contactPhone: string, segmentId?: number): Promise<{ allowed: boolean; reason?: string; hoursRemaining?: number }> {
+    const config = await this.findOne(tenantId, segmentId);
 
     // Se controle de reenvio estiver desativado, permitir sempre
     if (!config.resendCooldownEnabled) {
@@ -216,7 +217,7 @@ export class ControlPanelService {
     }
 
     const lastSend = await this.prisma.sendHistory.findFirst({
-      where: { contactPhone },
+      where: { tenantId, contactPhone },
       orderBy: { sentAt: 'desc' },
     });
 
@@ -240,15 +241,15 @@ export class ControlPanelService {
   }
 
   // Verificar repescagem (controle de mensagens seguidas)
-  async checkRepescagem(contactPhone: string, operatorId: number, segmentId?: number): Promise<{ allowed: boolean; reason?: string }> {
-    const config = await this.findOne(segmentId);
+  async checkRepescagem(tenantId: string, contactPhone: string, operatorId: number, segmentId?: number): Promise<{ allowed: boolean; reason?: string }> {
+    const config = await this.findOne(tenantId, segmentId);
 
     if (!config.repescagemEnabled) {
       return { allowed: true };
     }
 
     let repescagem = await this.prisma.contactRepescagem.findFirst({
-      where: { contactPhone, operatorId },
+      where: { tenantId, contactPhone, operatorId },
     });
 
     if (!repescagem) {
@@ -278,20 +279,21 @@ export class ControlPanelService {
   }
 
   // Registrar mensagem enviada pelo operador (para controle de repescagem)
-  async registerOperatorMessage(contactPhone: string, operatorId: number, segmentId?: number): Promise<void> {
-    const config = await this.findOne(segmentId);
+  async registerOperatorMessage(tenantId: string, contactPhone: string, operatorId: number, segmentId?: number): Promise<void> {
+    const config = await this.findOne(tenantId, segmentId);
 
     if (!config.repescagemEnabled) {
       return;
     }
 
     let repescagem = await this.prisma.contactRepescagem.findFirst({
-      where: { contactPhone, operatorId },
+      where: { tenantId, contactPhone, operatorId },
     });
 
     if (!repescagem) {
       repescagem = await this.prisma.contactRepescagem.create({
         data: {
+          tenantId,
           contactPhone,
           operatorId,
           messagesCount: 1,
@@ -353,10 +355,10 @@ export class ControlPanelService {
   }
 
   // Registrar resposta do cliente (reseta repescagem)
-  async registerClientResponse(contactPhone: string): Promise<void> {
+  async registerClientResponse(tenantId: string, contactPhone: string): Promise<void> {
     // Resetar todos os controles de repescagem para este contato
     await this.prisma.contactRepescagem.updateMany({
-      where: { contactPhone },
+      where: { tenantId, contactPhone },
       data: {
         messagesCount: 0,
         blockedUntil: null,
@@ -367,20 +369,21 @@ export class ControlPanelService {
   }
 
   // Registrar envio para histórico (para controle de reenvio)
-  async registerSend(contactPhone: string, campaignId?: number, lineId?: number): Promise<void> {
+  async registerSend(tenantId: string, contactPhone: string, campaignId?: number, lineId?: number): Promise<void> {
     await this.prisma.sendHistory.create({
       data: {
         contactPhone,
         campaignId,
         lineId,
+        tenantId,
       },
     });
   }
 
   // Marcar contato como CPC
-  async markAsCPC(contactPhone: string, isCPC: boolean): Promise<void> {
+  async markAsCPC(tenantId: string, contactPhone: string, isCPC: boolean): Promise<void> {
     await this.prisma.contact.updateMany({
-      where: { phone: contactPhone },
+      where: { tenantId, phone: contactPhone },
       data: {
         isCPC,
         lastCPCAt: isCPC ? new Date() : null,
@@ -399,7 +402,7 @@ export class ControlPanelService {
   }
 
   // Atribuição em massa de linhas aos operadores
-  async assignLinesToAllOperators(): Promise<{
+  async assignLinesToAllOperators(tenantId: string): Promise<{
     success: boolean;
     assigned: number;
     skipped: number;
@@ -416,7 +419,7 @@ export class ControlPanelService {
     // Buscar todos os operadores (online e offline)
     const operators = await this.prisma.user.findMany({
       where: {
-        role: 'operator',
+        tenants: { some: { tenantId, role: 'operator' } },
       },
       orderBy: {
         segment: 'asc',
@@ -459,6 +462,7 @@ export class ControlPanelService {
           // Buscar linhas do segmento específico
           availableLines = await tx.linesStock.findMany({
           where: {
+            tenantId,
             lineStatus: 'active',
             segment: segment,
           },
@@ -474,6 +478,7 @@ export class ControlPanelService {
         // Primeiro tentar linhas com segmento null
         const nullSegmentLines = await tx.linesStock.findMany({
           where: {
+            tenantId,
             lineStatus: 'active',
             segment: null,
           },
@@ -489,12 +494,13 @@ export class ControlPanelService {
         } else {
           // Se não encontrou linhas com segmento null, buscar segmento "Padrão"
           const defaultSegment = await tx.segment.findFirst({
-            where: { name: 'Padrão' },
+            where: { tenantId, name: 'Padrão' },
           });
 
           if (defaultSegment) {
             availableLines = await tx.linesStock.findMany({
               where: {
+                tenantId,
                 lineStatus: 'active',
                 segment: defaultSegment.id,
               },
@@ -537,18 +543,15 @@ export class ControlPanelService {
       let lineIndex = 0;
       for (const operator of segmentOperators) {
         // Verificar se operador já tem linha
-        let currentLineId = operator.line;
-        if (!currentLineId) {
-          const lineOperator = await (tx as any).lineOperator.findFirst({
-            where: { userId: operator.id },
-          });
-          currentLineId = lineOperator?.lineId || null;
-        }
+        const lineOperator = await (tx as any).lineOperator.findFirst({
+          where: { tenantId, userId: operator.id },
+        });
+        let currentLineId = lineOperator?.lineId || null;
 
         // Se operador tem linha, verificar se é de uma evolution ativa
         if (currentLineId) {
           const currentLine = await tx.linesStock.findFirst({
-            where: { id: currentLineId },
+            where: { id: currentLineId, tenantId },
           });
           
           if (currentLine) {
@@ -559,13 +562,7 @@ export class ControlPanelService {
               
               // Remover vínculo
               await (tx as any).lineOperator.deleteMany({
-                where: { userId: operator.id, lineId: currentLineId },
-              });
-              
-              // Limpar campo legacy
-              await tx.user.update({
-                where: { id: operator.id },
-                data: { line: null },
+                where: { tenantId, userId: operator.id, lineId: currentLineId },
               });
               
               // Continuar para atribuir nova linha
@@ -585,18 +582,11 @@ export class ControlPanelService {
               continue;
             }
           } else {
-            // Sem restrição de evolutions, manter linha atual
-            results.skipped++;
-            results.details.push({
-              operatorName: operator.name,
-              operatorId: operator.id,
-              segment: operator.segment,
-              linePhone: currentLine.phone,
-              lineId: currentLineId,
-              status: 'already_has_line',
-              reason: 'Operador já possui linha atribuída',
+            // Vínculo órfão: removê-lo antes de procurar outra linha do tenant.
+            await (tx as any).lineOperator.deleteMany({
+              where: { tenantId, userId: operator.id, lineId: currentLineId },
             });
-            continue;
+            currentLineId = null;
           }
         }
 
@@ -609,7 +599,7 @@ export class ControlPanelService {
         for (const candidateLine of availableLines) {
           // Verificar quantos operadores já estão vinculados
           const operatorsCount = await (tx as any).lineOperator.count({
-            where: { lineId: candidateLine.id },
+            where: { tenantId, lineId: candidateLine.id },
           });
 
           // Se linha já tem 2 operadores, pular
@@ -620,6 +610,7 @@ export class ControlPanelService {
           // Verificar se operador já está vinculado a esta linha
           const existing = await (tx as any).lineOperator.findFirst({
             where: {
+              tenantId,
               lineId: candidateLine.id,
               userId: operator.id,
             },
@@ -631,7 +622,7 @@ export class ControlPanelService {
 
           // Verificar se a linha já tem operadores de outro segmento
           const existingOperators = await (tx as any).lineOperator.findMany({
-            where: { lineId: candidateLine.id },
+            where: { tenantId, lineId: candidateLine.id },
             include: { user: true },
           });
 
@@ -661,20 +652,15 @@ export class ControlPanelService {
           // Vincular operador à linha (usando tx dentro da transaction)
           await (tx as any).lineOperator.create({
             data: {
+              tenantId,
               lineId: assignedLine.id,
               userId: operator.id,
             },
           });
 
-          // Atualizar campos legacy
-          await tx.user.update({
-            where: { id: operator.id },
-            data: { line: assignedLine.id },
-          });
-
           // Se for o primeiro operador da linha, atualizar linkedTo
           const operatorsCount = await (tx as any).lineOperator.count({
-            where: { lineId: assignedLine.id },
+            where: { tenantId, lineId: assignedLine.id },
           });
           if (operatorsCount === 1) {
             await tx.linesStock.update({
@@ -710,7 +696,7 @@ export class ControlPanelService {
           let linesWithSpace = 0;
           for (const line of availableLines) {
             const count = await (tx as any).lineOperator.count({
-              where: { lineId: line.id },
+              where: { tenantId, lineId: line.id },
             });
             if (count < 2) {
               linesWithSpace++;
@@ -746,8 +732,8 @@ export class ControlPanelService {
     }, { timeout: 30000 }); // Timeout de 30 segundos para a transaction
   }
 
-  // Desatribuir todas as linhas dos operadores e alterar todas as linhas para segmento "Padrão"
-  async unassignAllLines(): Promise<{
+  // Desatribuir as linhas do tenant e alterar suas linhas para segmento "Padrão"
+  async unassignAllLines(tenantId: string): Promise<{
     success: boolean;
     unassignedOperators: number;
     linesUpdated: number;
@@ -759,63 +745,41 @@ export class ControlPanelService {
 
       // 1. Buscar segmento "Padrão"
       const defaultSegment = await this.prisma.segment.findFirst({
-        where: { name: 'Padrão' },
+        where: { tenantId, name: 'Padrão' },
       });
 
       if (!defaultSegment) {
         throw new Error('Segmento "Padrão" não encontrado no banco de dados');
       }
 
-      // 2. Desatribuir TODOS os operadores de TODAS as linhas (sem exceção)
-      // Primeiro, contar quantos vínculos existem
-      const totalLinksBefore = await (this.prisma as any).lineOperator.count({});
+      // 2. Desatribuir os operadores das linhas da empresa ativa.
+      const totalLinksBefore = await (this.prisma as any).lineOperator.count({
+        where: { tenantId },
+      });
       console.log(`🔍 [Desatribuição em Massa] Total de vínculos antes: ${totalLinksBefore}`);
       
-      const deletedCount = await (this.prisma as any).lineOperator.deleteMany({});
+      const deletedCount = await (this.prisma as any).lineOperator.deleteMany({
+        where: { tenantId },
+      });
       console.log(`✅ [Desatribuição em Massa] ${deletedCount.count} vínculos de operadores removidos`);
       
       // Verificar se realmente removeu tudo
-      const totalLinksAfter = await (this.prisma as any).lineOperator.count({});
+      const totalLinksAfter = await (this.prisma as any).lineOperator.count({
+        where: { tenantId },
+      });
       if (totalLinksAfter > 0) {
         console.warn(`⚠️ [Desatribuição em Massa] Ainda existem ${totalLinksAfter} vínculos após deleteMany! Forçando remoção...`);
         // Forçar remoção novamente
-        await (this.prisma as any).lineOperator.deleteMany({});
+        await (this.prisma as any).lineOperator.deleteMany({ where: { tenantId } });
       }
 
-      // 3. Limpar campo legacy 'line' de TODOS os operadores (sem exceção)
-      const updatedUsers = await this.prisma.user.updateMany({
-        where: {
-          role: 'operator',
-        },
-        data: {
-          line: null,
-        },
-      });
-      console.log(`✅ [Desatribuição em Massa] Campo legacy "line" limpo de ${updatedUsers.count} operadores`);
-      
-      // Verificar se realmente limpou tudo
-      const operatorsWithLine = await this.prisma.user.count({
-        where: {
-          role: 'operator',
-          line: { not: null },
-        },
-      });
-      if (operatorsWithLine > 0) {
-        console.warn(`⚠️ [Desatribuição em Massa] Ainda existem ${operatorsWithLine} operadores com campo 'line' preenchido! Forçando limpeza...`);
-        await this.prisma.user.updateMany({
-          where: {
-            role: 'operator',
-            line: { not: null },
-          },
-          data: {
-            line: null,
-          },
-        });
-      }
+      // `User.line` e global ao usuario; o vinculo multi-tenant valido e
+      // LineOperator. Alterar o campo legado quebraria outro tenant do usuario.
 
-      // 4. Limpar campo legacy 'linkedTo' de TODAS as linhas
+      // 3. Limpar campo legacy 'linkedTo' apenas das linhas deste tenant.
       await this.prisma.linesStock.updateMany({
         where: {
+          tenantId,
           lineStatus: 'active',
         },
         data: {
@@ -824,9 +788,10 @@ export class ControlPanelService {
       });
       console.log('✅ [Desatribuição em Massa] Campo legacy "linkedTo" limpo de todas as linhas');
 
-      // 5. Atualizar todas as linhas ativas para o segmento "Padrão"
+      // 4. Atualizar as linhas ativas do tenant para o segmento "Padrão"
       const updatedLines = await this.prisma.linesStock.updateMany({
         where: {
+          tenantId,
           lineStatus: 'active',
           segment: { not: defaultSegment.id },
         },
@@ -836,9 +801,10 @@ export class ControlPanelService {
       });
       console.log(`✅ [Desatribuição em Massa] ${updatedLines.count} linhas atualizadas para o segmento "Padrão"`);
 
-      // 6. Também atualizar linhas com segmento null
+      // 5. Também atualizar linhas com segmento null.
       const updatedNullLines = await this.prisma.linesStock.updateMany({
         where: {
+          tenantId,
           lineStatus: 'active',
           segment: null,
         },
@@ -863,4 +829,3 @@ export class ControlPanelService {
     }
   }
 }
-

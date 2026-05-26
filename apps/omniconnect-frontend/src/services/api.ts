@@ -1,43 +1,95 @@
 // API Configuration
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const LEGACY_TOKEN_KEY = 'vend_token';
 
-// Token management
+// Auth state: access token is volatile; persistence lives only in the HttpOnly
+// refresh cookie issued by the backend.
 let authToken: string | null = null;
+let refreshInFlight: Promise<boolean> | null = null;
 
-export const setAuthToken = (token: string | null) => {
-  authToken = token;
-  if (token) {
-    localStorage.setItem('vend_token', token);
-  } else {
-    localStorage.removeItem('vend_token');
+const removeLegacyToken = () => {
+  if (typeof window !== 'undefined') {
+    window.localStorage.removeItem(LEGACY_TOKEN_KEY);
   }
 };
 
-export const getAuthToken = (): string | null => {
-  if (authToken) return authToken;
-  return localStorage.getItem('vend_token');
+export const setAuthToken = (token: string | null) => {
+  authToken = token;
+  removeLegacyToken();
 };
+
+export const getAuthToken = (): string | null => authToken;
+
+removeLegacyToken();
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    try {
+      const response = await apiRequest<Pick<LoginResponse, 'access_token'>>(
+        '/auth/refresh',
+        { method: 'POST' },
+        true,
+      );
+      if (!response.access_token) return false;
+      setAuthToken(response.access_token);
+      return true;
+    } catch {
+      setAuthToken(null);
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
+}
+
+export async function authenticatedFetch(
+  endpointOrUrl: string,
+  options: RequestInit = {},
+  skipRefresh = false,
+): Promise<Response> {
+  const token = getAuthToken();
+  const headers = new Headers(options.headers);
+  if (options.body && typeof options.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const url = endpointOrUrl.startsWith('http')
+    ? endpointOrUrl
+    : `${API_BASE_URL}${endpointOrUrl}`;
+  let response = await fetch(url, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+
+  if (
+    response.status === 401 &&
+    !skipRefresh &&
+    !endpointOrUrl.includes('/auth/')
+  ) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      response = await authenticatedFetch(endpointOrUrl, options, true);
+    }
+  }
+
+  return response;
+}
 
 // API Request helper
 async function apiRequest<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  skipRefresh = false,
 ): Promise<T> {
-  const token = getAuthToken();
-
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
-
-  if (token) {
-    (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  const response = await authenticatedFetch(endpoint, options, skipRefresh);
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Erro na requisição' }));
@@ -50,15 +102,17 @@ async function apiRequest<T>(
 // ==================== AUTH ====================
 export interface LoginResponse {
   access_token: string;
+  access_expires_in?: number;
   user: {
     id: number;
     name: string;
     email: string;
-    role: 'admin' | 'supervisor' | 'operator' | 'ativador';
+    role: 'admin' | 'supervisor' | 'operator' | 'ativador' | 'digital' | 'broker';
     segment: number | null;
     line: number | null;
     status: 'Online' | 'Offline';
     oneToOneActive?: boolean;
+    tenantId: string;
   };
 }
 
@@ -67,14 +121,29 @@ export const authService = {
     const response = await apiRequest<LoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
-    });
+    }, true);
     setAuthToken(response.access_token);
     return response;
   },
 
+  restoreSession: async (): Promise<LoginResponse['user'] | null> => {
+    const restored = await refreshAccessToken();
+    if (!restored) return null;
+    try {
+      return await apiRequest<LoginResponse['user']>('/auth/me', {}, true);
+    } catch {
+      setAuthToken(null);
+      return null;
+    }
+  },
+
   logout: async (): Promise<void> => {
     try {
-      await apiRequest('/auth/logout', { method: 'POST' });
+      await apiRequest('/auth/logout', { method: 'POST' }, true);
+    } catch {
+      if (await refreshAccessToken()) {
+        await apiRequest('/auth/logout', { method: 'POST' }, true).catch(() => undefined);
+      }
     } finally {
       setAuthToken(null);
     }
@@ -158,15 +227,11 @@ export const usersService = {
   },
 
   uploadCSV: async (file: File): Promise<{ message: string; success: number; errors: string[] }> => {
-    const token = getAuthToken();
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE_URL}/users/upload-csv`, {
+    const response = await authenticatedFetch('/users/upload-csv', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
       body: formData,
     });
 
@@ -216,15 +281,11 @@ export const segmentsService = {
   },
 
   uploadCSV: async (file: File): Promise<{ message: string; success: number; errors: string[] }> => {
-    const token = getAuthToken();
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE_URL}/segments/upload-csv`, {
+    const response = await authenticatedFetch('/segments/upload-csv', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
       body: formData,
     });
 
@@ -523,10 +584,8 @@ export const campaignsService = {
     if (useTemplate) formData.append('useTemplate', useTemplate);
     if (templateId) formData.append('templateId', templateId);
 
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/campaigns/${id}/upload`, {
+    const response = await authenticatedFetch(`/campaigns/${id}/upload`, {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     });
 
@@ -707,15 +766,11 @@ export const tabulationsService = {
   },
 
   uploadCSV: async (file: File): Promise<{ message: string; success: number; errors: string[] }> => {
-    const token = getAuthToken();
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE_URL}/tabulations/upload-csv`, {
+    const response = await authenticatedFetch('/tabulations/upload-csv', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
       body: formData,
     });
 
@@ -1038,14 +1093,10 @@ export const templatesService = {
 
   downloadCsv: async (params?: { search?: string; segmentId?: number; status?: string }): Promise<Blob> => {
     const query = params ? `?${new URLSearchParams(params as Record<string, string>)}` : '';
-    const url = `${API_BASE_URL}/templates/export/csv${query}`;
-
-    const token = getAuthToken();
-    const response = await fetch(url, {
+    const response = await authenticatedFetch(`/templates/export/csv${query}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
@@ -1141,14 +1192,10 @@ export const reportsService = {
     if (params.endDate) queryParams.append('endDate', params.endDate);
     if (params.segment) queryParams.append('segment', params.segment.toString());
 
-    const url = `${API_BASE_URL}/reports/${endpoint}?${queryParams.toString()}`;
-
-    const token = getAuthToken();
-    const response = await fetch(url, {
+    const response = await authenticatedFetch(`/reports/${endpoint}?${queryParams.toString()}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 

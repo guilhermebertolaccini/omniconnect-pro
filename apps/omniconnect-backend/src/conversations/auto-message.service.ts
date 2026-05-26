@@ -57,9 +57,20 @@ export class AutoMessageService implements OnModuleInit {
    * DESATIVADO: Só executa se autoMessageEnabled estiver true no painel de controle
    */
   async checkAndSendAutoMessages() {
+    const tenants = await this.prisma.tenant.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+
+    for (const tenant of tenants) {
+      await this.checkAndSendAutoMessagesForTenant(tenant.id);
+    }
+  }
+
+  private async checkAndSendAutoMessagesForTenant(tenantId: string) {
     try {
       // Buscar configuração global
-      const globalConfig = await this.controlPanelService.findOne();
+      const globalConfig = await this.controlPanelService.findOne(tenantId);
 
       // Se não estiver ativado, não fazer nada
       if (!globalConfig.autoMessageEnabled) {
@@ -85,6 +96,7 @@ export class AutoMessageService implements OnModuleInit {
       // 3. Cliente não respondeu após a última mensagem do operador
       const conversations = await this.prisma.conversation.findMany({
         where: {
+          tenantId,
           tabulation: null, // Apenas conversas ativas
           userId: { not: null }, // Tem operador atribuído
         },
@@ -119,6 +131,7 @@ export class AutoMessageService implements OnModuleInit {
         // Verificar se o cliente respondeu após a última mensagem do operador
         const hasResponse = await this.prisma.conversation.findFirst({
           where: {
+            tenantId,
             contactPhone: lastMessage.contactPhone,
             userId: lastMessage.userId,
             sender: 'contact',
@@ -134,6 +147,7 @@ export class AutoMessageService implements OnModuleInit {
         // Verificar quantas vezes já foi enviada mensagem automática para este contato
         const autoMessagesSent = await this.prisma.conversation.count({
           where: {
+            tenantId,
             contactPhone: lastMessage.contactPhone,
             userId: lastMessage.userId,
             message: messageText, // Mesma mensagem automática
@@ -152,6 +166,7 @@ export class AutoMessageService implements OnModuleInit {
           where: { id: lastMessage.userId! },
           include: {
             lineOperators: {
+              where: { tenantId },
               include: {
                 line: true,
               },
@@ -186,6 +201,7 @@ export class AutoMessageService implements OnModuleInit {
           // Criar conversa com a mensagem automática
           await this.prisma.conversation.create({
             data: {
+              tenantId,
               contactPhone: lastMessage.contactPhone,
               contactName: lastMessage.contactName,
               segment: lastMessage.segment,
@@ -218,8 +234,8 @@ export class AutoMessageService implements OnModuleInit {
           });
 
           // Buscar o App para obter o accessToken
-          const app = await this.prisma.app.findUnique({
-            where: { id: line.appId },
+          const app = await this.prisma.app.findFirst({
+            where: { id: line.appId, tenantId },
           });
 
           if (!app || !app.accessToken) {
@@ -256,4 +272,3 @@ export class AutoMessageService implements OnModuleInit {
     }
   }
 }
-

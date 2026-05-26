@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { authService, getAuthToken, setAuthToken, type LoginResponse } from '@/services/api';
+import { authService, type LoginResponse } from '@/services/api';
+import { realtimeSocket } from '@/services/websocket';
 
 export type UserRole = 'admin' | 'supervisor' | 'operador' | 'ativador' | 'digital';
 
@@ -64,29 +65,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isLoading: true,
   });
 
-  // Check for existing token on mount
+  // Restore the central session from the HttpOnly refresh cookie on mount.
   useEffect(() => {
-    const token = getAuthToken();
-    if (token) {
-      authService.me()
-        .then((apiUser) => {
+    let active = true;
+    authService.restoreSession()
+      .then((apiUser) => {
+        if (!active) return;
+        if (apiUser) {
           setState({
             user: mapUser(apiUser),
             isAuthenticated: true,
             isLoading: false,
           });
-        })
-        .catch(() => {
-          setAuthToken(null);
+        } else {
           setState({
             user: null,
             isAuthenticated: false,
             isLoading: false,
           });
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setState({
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
         });
-    } else {
-      setState(prev => ({ ...prev, isLoading: false }));
-    }
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
@@ -113,6 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      realtimeSocket.disconnect();
       setState({
         user: null,
         isAuthenticated: false,

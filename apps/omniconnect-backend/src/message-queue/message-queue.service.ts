@@ -112,7 +112,7 @@ export class MessageQueueService {
         });
 
         // Notificar operador via WebSocket sobre nova mensagem na fila
-        this.websocketGateway.emitToUser(operatorId, 'queued-message-processed', {
+        this.websocketGateway.emitToUser(tenantId, operatorId, 'queued-message-processed', {
           messageId: queuedMessage.id,
           contactPhone: queuedMessage.contactPhone,
         });
@@ -216,4 +216,3 @@ export class MessageQueueService {
     }
   }
 }
-

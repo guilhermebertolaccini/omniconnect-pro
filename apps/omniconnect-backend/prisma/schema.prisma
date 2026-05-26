@@ -536,7 +536,7 @@ model ContactRepescagem {
   tenantId       String    @default("default-tenant")
   tenant         Tenant    @relation(fields: [tenantId], references: [id])
 
-  @@unique([contactPhone, operatorId])
+  @@unique([tenantId, contactPhone, operatorId])
   @@index([contactPhone])
   @@index([operatorId])
   @@index([blockedUntil])

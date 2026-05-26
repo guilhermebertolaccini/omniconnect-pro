@@ -3,6 +3,7 @@ import { CrmGateway } from './crm.gateway';
 import { CrmRealtimeService } from './crm-realtime.service';
 
 describe('CrmGateway', () => {
+  const originalNodeEnv = process.env.NODE_ENV;
   let jwtMock: any;
   let prismaMock: any;
   let realtime: CrmRealtimeService;
@@ -37,6 +38,10 @@ describe('CrmGateway', () => {
       to: jest.fn().mockReturnValue({ emit: jest.fn() }),
     };
     (gateway as any).server = serverMock;
+  });
+
+  afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv;
   });
 
   it('onModuleInit wires itself to the realtime service', () => {
@@ -118,6 +123,43 @@ describe('CrmGateway', () => {
     };
     await gateway.handleConnection(client);
     expect(client.disconnect).toHaveBeenCalled();
+  });
+
+  it('handleConnection rejects missing membership in production', async () => {
+    process.env.NODE_ENV = 'production';
+    jwtMock.verify.mockReturnValue({ sub: 1, tenantId: 'tenant-a' });
+    const client: any = {
+      id: 'c6',
+      handshake: { auth: { token: 'good' }, headers: {} },
+      disconnect: jest.fn(),
+      join: jest.fn(),
+      data: {},
+    };
+
+    await gateway.handleConnection(client);
+
+    expect(client.disconnect).toHaveBeenCalled();
+    expect(client.join).not.toHaveBeenCalled();
+  });
+
+  it('handleConnection rejects an inactive tenant membership', async () => {
+    jwtMock.verify.mockReturnValue({ sub: 7, tenantId: 'tenant-a' });
+    prismaMock.userTenant.findFirst.mockResolvedValueOnce({
+      role: 'broker',
+      tenant: { isActive: false },
+    });
+    const client: any = {
+      id: 'c7',
+      handshake: { auth: { token: 'good' }, headers: {} },
+      disconnect: jest.fn(),
+      join: jest.fn(),
+      data: {},
+    };
+
+    await gateway.handleConnection(client);
+
+    expect(client.disconnect).toHaveBeenCalled();
+    expect(client.join).not.toHaveBeenCalled();
   });
 
   it('emitToTenant targets crm:{tenantId} room', () => {

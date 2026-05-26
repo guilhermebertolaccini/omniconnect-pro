@@ -174,13 +174,14 @@ export class WebhooksService {
 
         // Buscar contato
         let contact = await this.prisma.contact.findFirst({
-          where: { phone: from },
+          where: { tenantId, phone: from },
         });
 
         if (!contact) {
           // Criar contato se não existir
           contact = await this.prisma.contact.create({
             data: {
+              tenantId,
               name: message.pushName || from,
               phone: from,
               segment: line.segment,
@@ -189,10 +190,10 @@ export class WebhooksService {
         }
 
         // Registrar resposta do cliente (reseta repescagem)
-        await this.controlPanelService.registerClientResponse(from);
+        await this.controlPanelService.registerClientResponse(tenantId, from);
 
         // Verificar frases de bloqueio automático
-        const isBlockPhrase = await this.controlPanelService.checkBlockPhrases(messageText, line.segment);
+        const isBlockPhrase = await this.controlPanelService.checkBlockPhrases(tenantId, messageText, line.segment);
 
         let blockedByPhrase = false;
         if (isBlockPhrase) {

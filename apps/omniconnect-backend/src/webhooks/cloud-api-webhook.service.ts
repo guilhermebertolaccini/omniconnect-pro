@@ -138,8 +138,8 @@ export class CloudApiWebhookService {
           }
 
           // Buscar App para obter o token (já que o relacionamento não está no include padrão)
-          const app = await this.prisma.app.findUnique({
-            where: { id: line.appId },
+          const app = await this.prisma.app.findFirst({
+            where: { id: line.appId, tenantId: line.tenantId },
           });
 
           if (!app) {
@@ -191,7 +191,7 @@ export class CloudApiWebhookService {
       const timestamp = parseInt(message.timestamp) * 1000; // Converter para milissegundos
       // Resolver tenantId a partir do App vinculado à linha (trusted).
       // Não confiar em campos do payload do WhatsApp.
-      const tenantId: string = (line as any)?.app?.tenantId || 'default-tenant';
+      const tenantId: string = line.tenantId || (line as any)?.app?.tenantId || 'default-tenant';
 
       // Buscar nome do contato
       let contactName = from;
@@ -276,12 +276,13 @@ export class CloudApiWebhookService {
 
       // Buscar ou criar contato
       let contact = await this.prisma.contact.findFirst({
-        where: { phone: from },
+        where: { tenantId, phone: from },
       });
 
       if (!contact) {
         contact = await this.prisma.contact.create({
           data: {
+            tenantId,
             name: contactName,
             phone: from,
             segment: line.segment,
@@ -290,10 +291,10 @@ export class CloudApiWebhookService {
       }
 
       // Registrar resposta do cliente
-      await this.controlPanelService.registerClientResponse(from);
+      await this.controlPanelService.registerClientResponse(tenantId, from);
 
       // Verificar frases de bloqueio
-      const isBlockPhrase = await this.controlPanelService.checkBlockPhrases(messageText, line.segment);
+      const isBlockPhrase = await this.controlPanelService.checkBlockPhrases(tenantId, messageText, line.segment);
       let blockedByPhrase = false;
 
       if (isBlockPhrase) {
@@ -403,7 +404,7 @@ export class CloudApiWebhookService {
 
       // Atualizar TemplateMessage se existir
       const templateMessage = await this.prisma.templateMessage.findFirst({
-        where: { messageId },
+        where: { tenantId: line.tenantId, messageId },
       });
 
       if (templateMessage) {
@@ -430,6 +431,7 @@ export class CloudApiWebhookService {
           // Buscamos ANTES de deletar para conseguir o userId
           const conversation = await this.prisma.conversation.findFirst({
             where: {
+              tenantId: line.tenantId,
               contactPhone: status.recipient_id,
               tabulation: null,
             },
@@ -440,7 +442,7 @@ export class CloudApiWebhookService {
           if (messageId) {
             try {
               await this.prisma.conversation.deleteMany({
-                where: { messageId: messageId }
+                where: { tenantId: line.tenantId, messageId: messageId }
               });
               this.logger.log(`🗑️ Mensagem ${messageId} deletada devida a erro de janela de 24h`);
             } catch (delError) {
@@ -450,7 +452,7 @@ export class CloudApiWebhookService {
 
           if (conversation?.userId) {
             // Notificar operador sobre o erro de 24h
-            this.websocketGateway.emitToUser(conversation.userId, 'message-error', {
+            this.websocketGateway.emitToUser(line.tenantId, conversation.userId, 'message-error', {
               type: '24h_window_expired',
               contactPhone: status.recipient_id,
               message: 'A janela de 24h para enviar mensagens livres expirou. Use um template para reativar a conversa.',
@@ -463,12 +465,12 @@ export class CloudApiWebhookService {
         // Emitir atualização de status para sucesso (sent, delivered, read)
         // Isso permite que o frontend saiba que a mensagem foi processada
         const conversation = await this.prisma.conversation.findFirst({
-          where: { messageId: messageId },
+          where: { tenantId: line.tenantId, messageId: messageId },
           select: { userId: true, contactPhone: true }
         });
 
         if (conversation?.userId) {
-          this.websocketGateway.emitToUser(conversation.userId, 'message-status', {
+          this.websocketGateway.emitToUser(line.tenantId, conversation.userId, 'message-status', {
             messageId,
             status: statusValue,
             contactPhone: conversation.contactPhone,
@@ -483,5 +485,3 @@ export class CloudApiWebhookService {
     }
   }
 }
-
-
