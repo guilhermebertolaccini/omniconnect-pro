@@ -53,13 +53,20 @@ export class RefreshTokenService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
-    @Optional() @Inject(SystemEventsService)
+    @Optional()
+    @Inject(SystemEventsService)
     private readonly systemEvents: SystemEventsService | null,
   ) {
-    this.accessTtlSeconds = this.parseInt('ACCESS_TOKEN_TTL_SECONDS', 15 * 60, 60, 24 * 60 * 60);
+    this.accessTtlSeconds = this.parseInt(
+      'ACCESS_TOKEN_TTL_SECONDS',
+      15 * 60,
+      60,
+      24 * 60 * 60,
+    );
     const refreshDays = this.parseInt('REFRESH_TOKEN_TTL_DAYS', 30, 1, 365);
     this.refreshTtlMs = refreshDays * 24 * 60 * 60 * 1000;
-    this.cookieName = this.config.get<string>('REFRESH_COOKIE_NAME') || 'oc_refresh';
+    this.cookieName =
+      this.config.get<string>('REFRESH_COOKIE_NAME') || 'oc_refresh';
     this.cookiePath = this.config.get<string>('REFRESH_COOKIE_PATH') || '/auth';
   }
 
@@ -87,6 +94,31 @@ export class RefreshTokenService {
   async rotate(
     presentedToken: string | null,
     ctx: IssueContext = {},
+  ): Promise<IssuedSession> {
+    return this.rotateSession(presentedToken, ctx);
+  }
+
+  /**
+   * Rotaciona a sessao para outro tenant previamente autorizado pelo
+   * AuthService. A posse do refresh ainda e validada aqui, impedindo que um
+   * access token seja combinado com o cookie de outro usuario.
+   */
+  async rotateToTenant(
+    presentedToken: string | null,
+    user: { id: number; email: string; role: string },
+    tenantId: string,
+    ctx: IssueContext = {},
+  ): Promise<IssuedSession> {
+    return this.rotateSession(presentedToken, ctx, { user, tenantId });
+  }
+
+  private async rotateSession(
+    presentedToken: string | null,
+    ctx: IssueContext,
+    destination?: {
+      user: { id: number; email: string; role: string };
+      tenantId: string;
+    },
   ): Promise<IssuedSession> {
     if (!presentedToken || presentedToken.length < 32) {
       throw new UnauthorizedException('Missing refresh token');
@@ -122,7 +154,9 @@ export class RefreshTokenService {
         EventSeverity.ERROR,
         { tokenId: existing.id },
       );
-      throw new UnauthorizedException('Refresh token reuse detected — session revoked');
+      throw new UnauthorizedException(
+        'Refresh token reuse detected — session revoked',
+      );
     }
 
     if (existing.expiresAt.getTime() < now.getTime()) {
@@ -130,26 +164,54 @@ export class RefreshTokenService {
     }
 
     if (!existing.user) {
-      throw new UnauthorizedException('Owner of refresh token no longer exists');
+      throw new UnauthorizedException(
+        'Owner of refresh token no longer exists',
+      );
     }
 
-    const issued = await this.create({
-      user: {
-        id: existing.user.id,
-        email: existing.user.email,
-        role: existing.user.role,
-      },
-      tenantId: existing.tenantId,
-      ctx,
-    });
+    if (destination && destination.user.id !== existing.userId) {
+      throw new UnauthorizedException(
+        'Refresh token does not belong to authenticated user',
+      );
+    }
 
-    // Linka old -> new e revoga o velho.
-    await this.prisma.refreshToken.update({
-      where: { id: existing.id },
-      data: { successorId: issued.refreshTokenId, revokedAt: now },
-    });
+    const effectiveRole = destination
+      ? destination.user.role
+      : await this.resolveRoleForTenant(
+          existing.userId,
+          existing.tenantId,
+          existing.user.role,
+        );
+    return this.prisma.$transaction(async (tx) => {
+      const issued = await this.create(
+        {
+          user: destination?.user ?? {
+            id: existing.user.id,
+            email: existing.user.email,
+            role: effectiveRole,
+          },
+          tenantId: destination?.tenantId ?? existing.tenantId,
+          ctx,
+        },
+        tx,
+      );
 
-    return issued;
+      // A condicao evita que dois requests concorrentes mantenham sucessores
+      // ativos; se outro request ganhou a rotacao, a transacao faz rollback.
+      const linked = await tx.refreshToken.updateMany({
+        where: {
+          id: existing.id,
+          revokedAt: null,
+          successorId: null,
+        },
+        data: { successorId: issued.refreshTokenId, revokedAt: now },
+      });
+      if (linked.count !== 1) {
+        throw new UnauthorizedException('Refresh token already rotated');
+      }
+
+      return issued;
+    });
   }
 
   /**
@@ -214,15 +276,18 @@ export class RefreshTokenService {
   // Internals
   // ---------------------------------------------------------------------------
 
-  private async create({
-    user,
-    tenantId,
-    ctx,
-  }: {
-    user: { id: number; email: string; role: string };
-    tenantId: string;
-    ctx: IssueContext;
-  }): Promise<IssuedSession> {
+  private async create(
+    {
+      user,
+      tenantId,
+      ctx,
+    }: {
+      user: { id: number; email: string; role: string };
+      tenantId: string;
+      ctx: IssueContext;
+    },
+    db: Pick<PrismaService, 'refreshToken'> = this.prisma,
+  ): Promise<IssuedSession> {
     if (!tenantId) {
       throw new UnauthorizedException('tenantId missing');
     }
@@ -236,7 +301,7 @@ export class RefreshTokenService {
     const tokenHash = this.hash(refreshToken);
     const refreshExpiresAt = new Date(Date.now() + this.refreshTtlMs);
 
-    const row = await this.prisma.refreshToken.create({
+    const row = await db.refreshToken.create({
       data: {
         tenantId,
         userId: user.id,
@@ -260,7 +325,36 @@ export class RefreshTokenService {
     return createHash('sha256').update(token, 'utf8').digest('hex');
   }
 
-  private parseInt(env: string, fallback: number, min: number, max: number): number {
+  private async resolveRoleForTenant(
+    userId: number,
+    tenantId: string,
+    fallbackRole: string,
+  ): Promise<string> {
+    if (tenantId === 'default-tenant') {
+      if (process.env.NODE_ENV === 'production') {
+        throw new UnauthorizedException('default-tenant is not allowed in production');
+      }
+      return fallbackRole;
+    }
+    const membership = await this.prisma.userTenant.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      include: { tenant: { select: { isActive: true } } },
+    });
+    if (membership?.tenant?.isActive === false) {
+      throw new UnauthorizedException('Requested tenant is inactive');
+    }
+    if (!membership) {
+      throw new UnauthorizedException('User is no longer a member of this tenant');
+    }
+    return membership.role;
+  }
+
+  private parseInt(
+    env: string,
+    fallback: number,
+    min: number,
+    max: number,
+  ): number {
     const raw = this.config.get<string>(env);
     const parsed = raw ? Number(raw) : NaN;
     if (!Number.isFinite(parsed)) return fallback;

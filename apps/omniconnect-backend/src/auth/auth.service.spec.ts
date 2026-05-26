@@ -11,6 +11,12 @@ import { Role } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma.service';
 import { RefreshTokenService } from './refresh-token.service';
+import {
+  EventModule,
+  EventSeverity,
+  EventType,
+  SystemEventsService,
+} from '../system-events/system-events.service';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -22,6 +28,7 @@ describe('AuthService', () => {
     },
     userTenant: {
       findMany: jest.fn(),
+      findUnique: jest.fn(),
     },
     $transaction: jest.fn(),
   };
@@ -38,8 +45,12 @@ describe('AuthService', () => {
   const mockRefresh: jest.Mocked<Partial<RefreshTokenService>> = {
     issue: jest.fn(),
     rotate: jest.fn(),
+    rotateToTenant: jest.fn(),
     revoke: jest.fn(),
     revokeAllForUser: jest.fn(),
+  };
+  const mockSystemEvents = {
+    logEvent: jest.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(async () => {
@@ -50,6 +61,7 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: RefreshTokenService, useValue: mockRefresh },
         { provide: ConfigService, useValue: mockConfig },
+        { provide: SystemEventsService, useValue: mockSystemEvents },
       ],
     }).compile();
 
@@ -200,6 +212,29 @@ describe('AuthService', () => {
       );
     });
 
+    it('does not issue a production session scoped to an inactive tenant', async () => {
+      process.env.NODE_ENV = 'production';
+      mockPrismaService.userTenant.findMany.mockResolvedValue([
+        {
+          tenantId: 'tenant-inactive',
+          role: Role.admin,
+          tenant: { isActive: false },
+        },
+      ]);
+
+      await expect(
+        service.login({
+          id: 1,
+          email: 'admin@example.com',
+          name: 'Admin',
+          role: Role.admin,
+        }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(mockRefresh.issue).not.toHaveBeenCalled();
+    });
+
+
     it('flips operator status to Online on login', async () => {
       mockPrismaService.userTenant.findMany.mockResolvedValue([]);
       mockPrismaService.user.update.mockResolvedValue({});
@@ -249,6 +284,86 @@ describe('AuthService', () => {
     });
   });
 
+  describe('switchTenant', () => {
+    const targetMembership = {
+      tenantId: 'tenant-b',
+      role: Role.digital,
+      tenant: { id: 'tenant-b', isActive: true },
+      user: {
+        id: 3,
+        email: 'multi@example.com',
+        name: 'Multi',
+        role: Role.operator,
+        isActive: true,
+        segment: null,
+        line: null,
+        status: 'Online',
+        oneToOneActive: true,
+      },
+    };
+
+    it('rotates the session into an active membership using its tenant role', async () => {
+      mockPrismaService.userTenant.findUnique.mockResolvedValue(
+        targetMembership,
+      );
+      (mockRefresh.rotateToTenant as jest.Mock).mockResolvedValue({
+        accessToken: 'scoped-access',
+        accessExpiresIn: 900,
+        refreshToken: 'scoped-refresh',
+        refreshExpiresAt: new Date('2030-02-01T00:00:00Z'),
+        refreshTokenId: 'rt-new',
+      });
+
+      const result = await service.switchTenant(
+        3,
+        'tenant-a',
+        'tenant-b',
+        'presented-refresh',
+        { userAgent: 'jest' },
+      );
+
+      expect(mockRefresh.rotateToTenant).toHaveBeenCalledWith(
+        'presented-refresh',
+        { id: 3, email: 'multi@example.com', role: Role.digital },
+        'tenant-b',
+        { userAgent: 'jest' },
+      );
+      expect(result.user).toMatchObject({
+        role: Role.digital,
+        tenantId: 'tenant-b',
+      });
+      expect(mockSystemEvents.logEvent).toHaveBeenCalledWith(
+        EventType.AUTH_TENANT_SWITCHED,
+        EventModule.AUTH,
+        { previousTenantId: 'tenant-a', tenantId: 'tenant-b' },
+        3,
+        EventSeverity.SUCCESS,
+        'tenant-b',
+      );
+    });
+
+    it('rejects a missing or inactive membership before issuing a new session', async () => {
+      mockPrismaService.userTenant.findUnique.mockResolvedValue({
+        ...targetMembership,
+        tenant: { id: 'tenant-b', isActive: false },
+      });
+
+      await expect(
+        service.switchTenant(3, 'tenant-a', 'tenant-b', 'presented-refresh'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(mockRefresh.rotateToTenant).not.toHaveBeenCalled();
+      expect(mockSystemEvents.logEvent).toHaveBeenCalledWith(
+        EventType.AUTH_TENANT_SWITCH_REJECTED,
+        EventModule.AUTH,
+        { requestedTenantId: 'tenant-b' },
+        3,
+        EventSeverity.WARNING,
+        'tenant-a',
+      );
+    });
+  });
+
   describe('logout', () => {
     it('revokes the presented refresh and flips operator to Offline', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue({
@@ -286,7 +401,9 @@ describe('AuthService', () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
       mockPrismaService.$transaction.mockImplementation(async (cb: any) =>
         cb({
-          tenant: { create: jest.fn().mockResolvedValue({ id: 't1', name: 'Acme' }) },
+          tenant: {
+            create: jest.fn().mockResolvedValue({ id: 't1', name: 'Acme' }),
+          },
           user: {
             create: jest.fn().mockResolvedValue({
               id: 11,
@@ -341,11 +458,16 @@ describe('AuthService', () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
       mockPrismaService.$transaction.mockImplementation(async (cb: any) =>
         cb({
-          tenant: { create: jest.fn().mockResolvedValue({ id: 't1', name: 'Acme' }) },
+          tenant: {
+            create: jest.fn().mockResolvedValue({ id: 't1', name: 'Acme' }),
+          },
           user: {
-            create: jest
-              .fn()
-              .mockResolvedValue({ id: 1, email: 'a@a.com', name: 'A', role: Role.admin }),
+            create: jest.fn().mockResolvedValue({
+              id: 1,
+              email: 'a@a.com',
+              name: 'A',
+              role: Role.admin,
+            }),
           },
           userTenant: { create: jest.fn().mockResolvedValue({}) },
         }),

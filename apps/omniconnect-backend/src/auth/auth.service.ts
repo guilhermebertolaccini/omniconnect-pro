@@ -13,6 +13,12 @@ import { PrismaService } from '../prisma.service';
 import * as argon2 from 'argon2';
 import { IssueContext, RefreshTokenService } from './refresh-token.service';
 import { RegisterDto } from './dto/register.dto';
+import {
+  EventModule,
+  EventSeverity,
+  EventType,
+  SystemEventsService,
+} from '../system-events/system-events.service';
 
 @Injectable()
 export class AuthService {
@@ -23,6 +29,7 @@ export class AuthService {
     private jwtService: JwtService,
     private refreshTokens: RefreshTokenService,
     private config: ConfigService,
+    private systemEvents: SystemEventsService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -43,7 +50,10 @@ export class AuthService {
       } catch (error) {
         // Se der erro na verificação, pode ser que a senha não seja um hash válido
         // Em desenvolvimento, pode estar em texto plano
-        if (process.env.NODE_ENV === 'development' && user.password === password) {
+        if (
+          process.env.NODE_ENV === 'development' &&
+          user.password === password
+        ) {
           isPasswordValid = true;
         } else {
           this.logger?.error?.('Erro ao verificar senha:', error);
@@ -66,13 +76,16 @@ export class AuthService {
   async login(user: any, ctx: IssueContext = {}) {
     const userTenants = await this.prisma.userTenant.findMany({
       where: { userId: user.id },
+      include: { tenant: { select: { isActive: true } } },
     });
     const inProd = process.env.NODE_ENV === 'production';
     const activeTenant = inProd
       ? userTenants.find(
-          (membership) => membership.tenantId !== 'default-tenant',
+          (membership) =>
+            membership.tenantId !== 'default-tenant' &&
+            membership.tenant?.isActive !== false,
         )
-      : userTenants[0];
+      : userTenants.find((membership) => membership.tenant?.isActive !== false);
 
     if (inProd && !activeTenant) {
       throw new UnauthorizedException(
@@ -81,6 +94,7 @@ export class AuthService {
     }
 
     const activeTenantId = activeTenant?.tenantId ?? 'default-tenant';
+    const activeRole = activeTenant?.role ?? user.role;
 
     if (user.role === 'operator') {
       await this.prisma.user.update({
@@ -90,7 +104,7 @@ export class AuthService {
     }
 
     const session = await this.refreshTokens.issue(
-      { id: user.id, email: user.email, role: user.role },
+      { id: user.id, email: user.email, role: activeRole },
       activeTenantId,
       ctx,
     );
@@ -104,7 +118,7 @@ export class AuthService {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
+        role: activeRole,
         segment: user.segment,
         line: user.line,
         status: user.role === 'operator' ? 'Online' : user.status,
@@ -126,6 +140,91 @@ export class AuthService {
       access_expires_in: session.accessExpiresIn,
       refresh_token: session.refreshToken,
       refresh_expires_at: session.refreshExpiresAt,
+    };
+  }
+
+  /**
+   * Troca o escopo efetivo da sessao. O tenant solicitado nunca e aceito a
+   * partir do client sem validar UserTenant e o estado ativo do tenant.
+   */
+  async switchTenant(
+    userId: number,
+    currentTenantId: string,
+    requestedTenantId: string,
+    presentedToken: string | null,
+    ctx: IssueContext = {},
+  ) {
+    const membership = await this.prisma.userTenant.findUnique({
+      where: {
+        userId_tenantId: { userId, tenantId: requestedTenantId },
+      },
+      include: { user: true, tenant: true },
+    });
+
+    if (
+      !membership ||
+      !membership.user?.isActive ||
+      !membership.tenant?.isActive
+    ) {
+      await this.auditTenantSwitch(
+        currentTenantId,
+        userId,
+        EventType.AUTH_TENANT_SWITCH_REJECTED,
+        EventSeverity.WARNING,
+        { requestedTenantId },
+      );
+      throw new UnauthorizedException('Tenant unavailable for this user');
+    }
+
+    let session;
+    try {
+      session = await this.refreshTokens.rotateToTenant(
+        presentedToken,
+        {
+          id: membership.user.id,
+          email: membership.user.email,
+          role: membership.role,
+        },
+        membership.tenantId,
+        ctx,
+      );
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        await this.auditTenantSwitch(
+          currentTenantId,
+          userId,
+          EventType.AUTH_TENANT_SWITCH_REJECTED,
+          EventSeverity.WARNING,
+          { requestedTenantId },
+        );
+      }
+      throw error;
+    }
+
+    await this.auditTenantSwitch(
+      membership.tenantId,
+      userId,
+      EventType.AUTH_TENANT_SWITCHED,
+      EventSeverity.SUCCESS,
+      { previousTenantId: currentTenantId, tenantId: membership.tenantId },
+    );
+
+    return {
+      access_token: session.accessToken,
+      access_expires_in: session.accessExpiresIn,
+      refresh_token: session.refreshToken,
+      refresh_expires_at: session.refreshExpiresAt,
+      user: {
+        id: membership.user.id,
+        name: membership.user.name,
+        email: membership.user.email,
+        role: membership.role,
+        segment: membership.user.segment,
+        line: membership.user.line,
+        status: membership.user.status,
+        oneToOneActive: membership.user.oneToOneActive,
+        tenantId: membership.tenantId,
+      },
     };
   }
 
@@ -200,7 +299,11 @@ export class AuthService {
     });
 
     const session = await this.refreshTokens.issue(
-      { id: created.user.id, email: created.user.email, role: created.user.role },
+      {
+        id: created.user.id,
+        email: created.user.email,
+        role: created.user.role,
+      },
       created.tenant.id,
       ctx,
     );
@@ -233,12 +336,28 @@ export class AuthService {
     return normalized === '1' || normalized === 'true' || normalized === 'yes';
   }
 
-
   async hashPassword(password: string): Promise<string> {
     return argon2.hash(password);
   }
 
   async verifyPassword(hash: string, password: string): Promise<boolean> {
     return argon2.verify(hash, password);
+  }
+
+  private async auditTenantSwitch(
+    tenantId: string,
+    userId: number,
+    type: EventType,
+    severity: EventSeverity,
+    data: Record<string, string>,
+  ): Promise<void> {
+    await this.systemEvents.logEvent(
+      type,
+      EventModule.AUTH,
+      data,
+      userId,
+      severity,
+      tenantId || 'default-tenant',
+    );
   }
 }

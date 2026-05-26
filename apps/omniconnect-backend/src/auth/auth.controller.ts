@@ -8,14 +8,26 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { SwitchTenantDto } from './dto/switch-tenant.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RefreshTokenService } from './refresh-token.service';
+
+interface AuthenticatedUser {
+  id: number;
+  tenantId: string;
+}
 
 @ApiTags('auth')
 @Controller('auth')
@@ -50,7 +62,11 @@ export class AuthController {
       }
 
       const result = await this.authService.login(user, this.extractCtx(req));
-      this.setRefreshCookie(res, result.refresh_token, result.refresh_expires_at);
+      this.setRefreshCookie(
+        res,
+        result.refresh_token,
+        result.refresh_expires_at,
+      );
       return this.publicResponse(result);
     } catch (error) {
       if (error instanceof UnauthorizedException) {
@@ -94,9 +110,45 @@ export class AuthController {
       'Rota o par access+refresh a partir do cookie HttpOnly. Detecção de reuse: ' +
       'apresentar um refresh já revogado revoga todas as sessões do usuário.',
   })
-  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const cookie = this.readRefreshCookie(req);
     const result = await this.authService.refresh(cookie, this.extractCtx(req));
+    this.setRefreshCookie(res, result.refresh_token, result.refresh_expires_at);
+    return this.publicResponse(result);
+  }
+
+  @Post('switch-tenant')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary:
+      'Troca a empresa ativa da sessao, validando membership e rotacionando o refresh cookie.',
+  })
+  @ApiBody({ type: SwitchTenantDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Sessao escopada ao tenant solicitado',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Tenant indisponivel ou sessao invalida',
+  })
+  async switchTenant(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: SwitchTenantDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.switchTenant(
+      user.id,
+      user.tenantId,
+      dto.tenantId,
+      this.readRefreshCookie(req),
+      this.extractCtx(req),
+    );
     this.setRefreshCookie(res, result.refresh_token, result.refresh_expires_at);
     return this.publicResponse(result);
   }
@@ -140,7 +192,17 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   async getMe(@CurrentUser() user: any) {
-    return user;
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.tenantRole ?? user.role,
+      segment: user.segment,
+      line: user.line,
+      status: user.status,
+      oneToOneActive: user.oneToOneActive,
+      tenantId: user.tenantId,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -148,12 +210,17 @@ export class AuthController {
   // ---------------------------------------------------------------------------
 
   private readRefreshCookie(req: Request): string | null {
-    const cookies = (req as Request & { cookies?: Record<string, string> }).cookies;
+    const cookies = (req as Request & { cookies?: Record<string, string> })
+      .cookies;
     if (!cookies) return null;
     return cookies[this.refreshTokens.cookieName] ?? null;
   }
 
-  private setRefreshCookie(res: Response, token: string, expiresAt: Date): void {
+  private setRefreshCookie(
+    res: Response,
+    token: string,
+    expiresAt: Date,
+  ): void {
     res.cookie(
       this.refreshTokens.cookieName,
       token,
@@ -172,7 +239,9 @@ export class AuthController {
     return {
       userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
       ipAddress:
-        (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ||
+        (req.headers['x-forwarded-for'] as string | undefined)
+          ?.split(',')[0]
+          ?.trim() ||
         req.ip ||
         null,
     };

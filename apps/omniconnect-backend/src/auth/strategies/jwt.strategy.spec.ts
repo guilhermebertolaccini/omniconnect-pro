@@ -8,7 +8,9 @@ describe('JwtStrategy.validate', () => {
 
   const buildStrategy = (
     user: any,
-    membership: { role: string } | null = { role: 'admin' },
+    membership: { role: string; tenant?: { isActive: boolean } } | null = {
+      role: 'admin',
+    },
   ) => {
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue(user) },
@@ -81,6 +83,17 @@ describe('JwtStrategy.validate', () => {
     await expect(
       strategy.validate({ sub: 1, tenantId: 'tenant-foreign' }),
     ).rejects.toThrow(/not a member of the requested tenant/i);
+  });
+
+  it('rejects a token scoped to an inactive tenant', async () => {
+    process.env.NODE_ENV = 'production';
+    const strategy = buildStrategy(
+      { id: 1, email: 'a@b.com', role: 'admin' },
+      { role: 'admin', tenant: { isActive: false } },
+    );
+    await expect(
+      strategy.validate({ sub: 1, tenantId: 'tenant-inactive' }),
+    ).rejects.toThrow(/inactive/i);
   });
 
   it('allows missing membership in development (warning only)', async () => {

@@ -43,7 +43,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const inProd = process.env.NODE_ENV === 'production';
 
     if (inProd && (!rawTenantId || rawTenantId === 'default-tenant')) {
-      throw new UnauthorizedException('Tenant not explicitly defined in production context');
+      throw new UnauthorizedException(
+        'Tenant not explicitly defined in production context',
+      );
     }
 
     const tenantId = rawTenantId || 'default-tenant';
@@ -52,7 +54,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (rawTenantId && rawTenantId !== 'default-tenant') {
       const membership = await this.prisma.userTenant.findUnique({
         where: { userId_tenantId: { userId: user.id, tenantId } },
-        select: { role: true },
+        include: { tenant: { select: { isActive: true } } },
       });
 
       if (!membership) {
@@ -64,6 +66,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         this.logger.warn(
           `[dev] user ${user.id} has no UserTenant row for tenantId=${tenantId}; allowing in non-production.`,
         );
+      } else if (membership.tenant?.isActive === false) {
+        throw new UnauthorizedException('Requested tenant is inactive');
       } else {
         tenantRole = membership.role;
       }

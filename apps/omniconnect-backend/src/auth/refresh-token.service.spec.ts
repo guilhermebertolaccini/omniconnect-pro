@@ -29,19 +29,22 @@ interface RefreshRow {
   createdAt: Date;
 }
 
-const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+const sha256 = (s: string) =>
+  createHash('sha256').update(s, 'utf8').digest('hex');
 
 describe('RefreshTokenService', () => {
   let service: RefreshTokenService;
   let prisma: any;
   let systemEvents: jest.Mocked<SystemEventsService>;
+  let jwt: { sign: jest.Mock };
 
   let userStore: Map<number, UserRow>;
   let refreshStore: Map<string, RefreshRow>;
   let nextRefreshSerial: number;
 
   const findByHash = (tokenHash: string) =>
-    Array.from(refreshStore.values()).find((r) => r.tokenHash === tokenHash) ?? null;
+    Array.from(refreshStore.values()).find((r) => r.tokenHash === tokenHash) ??
+    null;
 
   beforeEach(async () => {
     userStore = new Map([
@@ -52,6 +55,17 @@ describe('RefreshTokenService', () => {
     nextRefreshSerial = 1;
 
     prisma = {
+      $transaction: jest.fn(async (callback: (tx: any) => Promise<unknown>) =>
+        callback(prisma),
+      ),
+      userTenant: {
+        findUnique: jest.fn(async ({ where }: any) => {
+          if (where.userId_tenantId?.tenantId === 'tenant-a') {
+            return { role: 'broker' };
+          }
+          return null;
+        }),
+      },
       refreshToken: {
         create: jest.fn(async ({ data }: any) => {
           const row: RefreshRow = {
@@ -81,16 +95,23 @@ describe('RefreshTokenService', () => {
           const row = refreshStore.get(where.id);
           if (!row) throw new Error('NOT_FOUND');
           if (data.revokedAt !== undefined) row.revokedAt = data.revokedAt;
-          if (data.successorId !== undefined) row.successorId = data.successorId;
+          if (data.successorId !== undefined)
+            row.successorId = data.successorId;
           return row;
         }),
         updateMany: jest.fn(async ({ where, data }: any) => {
           let count = 0;
           for (const row of refreshStore.values()) {
+            if (where.id && row.id !== where.id) continue;
             if (where.tokenHash && row.tokenHash !== where.tokenHash) continue;
-            if (where.userId !== undefined && row.userId !== where.userId) continue;
+            if (where.userId !== undefined && row.userId !== where.userId)
+              continue;
             if (where.revokedAt === null && row.revokedAt !== null) continue;
+            if (where.successorId === null && row.successorId !== null)
+              continue;
             if (data.revokedAt !== undefined) row.revokedAt = data.revokedAt;
+            if (data.successorId !== undefined)
+              row.successorId = data.successorId;
             count++;
           }
           return { count };
@@ -102,15 +123,15 @@ describe('RefreshTokenService', () => {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<SystemEventsService>;
 
-    const jwt = {
+    jwt = {
       sign: jest.fn().mockReturnValue('mock-jwt'),
-    } as unknown as JwtService;
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RefreshTokenService,
         { provide: PrismaService, useValue: prisma },
-        { provide: JwtService, useValue: jwt },
+        { provide: JwtService, useValue: jwt as unknown as JwtService },
         {
           provide: ConfigService,
           useValue: {
@@ -166,6 +187,73 @@ describe('RefreshTokenService', () => {
     expect(oldRow?.successorId).toBe(newRow?.id);
   });
 
+  it('rotate preserves the effective role from the active tenant membership', async () => {
+    const first = await service.issue(userStore.get(1)!, 'tenant-a');
+    await service.rotate(first.refreshToken);
+
+    expect(jwt.sign).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-a', role: 'broker' }),
+      expect.any(Object),
+    );
+  });
+
+  it('rotate rejects when another request already consumed the presented token', async () => {
+    const first = await service.issue(userStore.get(1)!, 'tenant-a');
+    prisma.refreshToken.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(service.rotate(first.refreshToken)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it('rotate refuses a session scoped to an inactive tenant', async () => {
+    const first = await service.issue(userStore.get(1)!, 'tenant-a');
+    prisma.userTenant.findUnique.mockResolvedValueOnce({
+      role: 'broker',
+      tenant: { isActive: false },
+    });
+
+    await expect(service.rotate(first.refreshToken)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it('rotate refuses a session after tenant membership is removed', async () => {
+    const first = await service.issue(userStore.get(1)!, 'tenant-a');
+    prisma.userTenant.findUnique.mockResolvedValueOnce(null);
+
+    await expect(service.rotate(first.refreshToken)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it('rotateToTenant issues a new session only for the authenticated owner', async () => {
+    const first = await service.issue(userStore.get(1)!, 'tenant-a');
+    const switched = await service.rotateToTenant(
+      first.refreshToken,
+      { ...userStore.get(1)!, role: 'digital' },
+      'tenant-b',
+    );
+
+    expect(findByHash(sha256(switched.refreshToken))?.tenantId).toBe(
+      'tenant-b',
+    );
+    expect(jwt.sign).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-b', role: 'digital' }),
+      expect.any(Object),
+    );
+  });
+
+  it('rotateToTenant refuses a refresh token owned by another user', async () => {
+    const first = await service.issue(userStore.get(1)!, 'tenant-a');
+
+    await expect(
+      service.rotateToTenant(first.refreshToken, userStore.get(2)!, 'tenant-b'),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+
+    expect(Array.from(refreshStore.values())).toHaveLength(1);
+  });
+
   it('rotate detects reuse and revokes the WHOLE chain of that user', async () => {
     const first = await service.issue(userStore.get(1)!, 'tenant-a');
     const second = await service.rotate(first.refreshToken);
@@ -178,7 +266,9 @@ describe('RefreshTokenService', () => {
     );
 
     expect(findByHash(sha256(second.refreshToken))?.revokedAt).not.toBeNull();
-    expect(findByHash(sha256(independent.refreshToken))?.revokedAt).not.toBeNull();
+    expect(
+      findByHash(sha256(independent.refreshToken))?.revokedAt,
+    ).not.toBeNull();
     expect(systemEvents.logEvent).toHaveBeenCalledWith(
       EventType.AUTH_REFRESH_REUSE_DETECTED,
       expect.any(String),
@@ -206,8 +296,12 @@ describe('RefreshTokenService', () => {
   });
 
   it('rotate refuses null / short token', async () => {
-    await expect(service.rotate(null)).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(service.rotate('short')).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(service.rotate(null)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    await expect(service.rotate('short')).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
   });
 
   // ---------- revoke ----------
@@ -225,7 +319,9 @@ describe('RefreshTokenService', () => {
     await service.issue(userStore.get(2)!, 'tenant-a');
     const revoked = await service.revokeAllForUser(1);
     expect(revoked).toBe(2);
-    const stillActive = Array.from(refreshStore.values()).filter((r) => !r.revokedAt);
+    const stillActive = Array.from(refreshStore.values()).filter(
+      (r) => !r.revokedAt,
+    );
     expect(stillActive.map((r) => r.userId)).toEqual([2]);
   });
 
@@ -238,5 +334,18 @@ describe('RefreshTokenService', () => {
     expect(opts.sameSite).toBe('lax');
     expect(opts.path).toBe('/auth');
     expect(opts.expires).toBe(expiresAt);
+    expect(opts).not.toHaveProperty('domain');
+  });
+
+  it('clears the same host-only auth cookie scope used when issuing', () => {
+    const opts = service.buildClearCookieOptions();
+    expect(opts).toEqual(
+      expect.objectContaining({
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/auth',
+      }),
+    );
+    expect(opts).not.toHaveProperty('domain');
   });
 });
