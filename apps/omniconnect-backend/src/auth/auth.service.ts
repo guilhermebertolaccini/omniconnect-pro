@@ -42,23 +42,12 @@ export class AuthService {
         return null;
       }
 
-      // Verificar se a senha está no formato correto (hash do argon2)
-      // Se não for um hash válido, pode ser que a senha esteja em texto plano (desenvolvimento)
       let isPasswordValid = false;
       try {
         isPasswordValid = await argon2.verify(user.password, password);
       } catch (error) {
-        // Se der erro na verificação, pode ser que a senha não seja um hash válido
-        // Em desenvolvimento, pode estar em texto plano
-        if (
-          process.env.NODE_ENV === 'development' &&
-          user.password === password
-        ) {
-          isPasswordValid = true;
-        } else {
-          this.logger?.error?.('Erro ao verificar senha:', error);
-          return null;
-        }
+        this.logger?.error?.('Erro ao verificar senha:', error);
+        return null;
       }
 
       if (!isPasswordValid) {
