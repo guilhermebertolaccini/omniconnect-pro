@@ -7,14 +7,15 @@
 # Coolify config:
 #   - Build context: repo root
 #   - Dockerfile path: Dockerfile.hub
-#   - Service port: 4173 (vite preview default)
+#   - Service port: 4173 (overridable via PORT env)
 #   - Healthcheck: TCP/HTTP on /
 #
-# NOTE: o hub é um app TanStack Start, projetado para Cloudflare Workers em
-# produção (ver `wrangler.jsonc`). Esta imagem usa `vite preview` para servir
-# o build estático/SSR — adequado para **staging** e demo local-mirror, mas
-# o caminho oficial de produção é `wrangler deploy` em Workers. Documentado
-# em `docs/deployment/coolify-staging.md`.
+# NOTE: o hub é um app TanStack Start. O `vite.config.ts` usa `cloudflare: false`,
+# então o build emite um handler fetch-style (`dist/server/server.js`) que rodamos
+# em Node via `server-node.mjs` (wrapper http nativo, sem deps externas). A config
+# Workers (`wrangler.jsonc` + `@cloudflare/vite-plugin`) fica dormente caso queiram
+# migrar pra Cloudflare Workers no futuro. Documentado em
+# `docs/deployment/coolify-staging.md`.
 
 ARG NODE_VERSION=20
 ARG PNPM_VERSION=9.12.0
@@ -63,7 +64,7 @@ FROM base AS runtime
 ENV NODE_ENV=production
 RUN apk add --no-cache wget tini
 WORKDIR /repo
-# Copy full repo (deps + build) — vite preview reads from dist/
+# Copy full repo (deps + build) — server-node.mjs reads dist/ at runtime
 COPY --from=build /repo /repo
 WORKDIR /repo/apps/omniconnect-hub
 
@@ -76,10 +77,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget --quiet --tries=1 --spider http://localhost:4173/ || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--"]
-# `vite preview` não funciona com o build TanStack Start (target Cloudflare
-# Workers via @cloudflare/vite-plugin — emite `dist/server/index.js` em
-# formato Workers, sem `server.js` Node).  Para staging local-mirror, usamos
-# `vite dev` que serve SSR via middleware (mesmo path que Lovable preview).
-# Produção real continua sendo `wrangler deploy` em Workers — docs em
-# `docs/deployment/coolify-staging.md` §1 / Dockerfile.hub topo.
-CMD ["pnpm", "exec", "vite", "dev", "--host", "0.0.0.0", "--port", "4173"]
+# Serve the SSR build via the Node wrapper. PORT/HOST are overridable env vars.
+CMD ["node", "server-node.mjs"]

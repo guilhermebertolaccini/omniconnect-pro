@@ -84,18 +84,20 @@ docker compose -f docker-compose.staging.yml logs -f omniconnect-hub
 
 # Smokes
 curl -s http://localhost:3000/health | jq .       # backend
-curl -s -I http://localhost:4173/                  # hub (vite preview)
+curl -s -I http://localhost:4173/                  # hub (node SSR)
 curl -s -I http://localhost:8080/healthz           # omni-frontend (nginx)
 
 # Teardown (volumes preservados)
 docker compose -f docker-compose.staging.yml down
 ```
 
-> O hub é TanStack Start projetado para Cloudflare Workers em produção
-> (ver `apps/omniconnect-hub/wrangler.jsonc`). O Dockerfile.hub usa
-> `vite preview` — adequado para staging local; em prod Workers o caminho
-> oficial é `wrangler deploy`. Documentar a decisão no PR 7+ se mantiver
-> Coolify também em prod.
+> O hub é TanStack Start. Para o deploy Coolify, o `vite.config.ts` usa
+> `cloudflare: false` — o build emite `dist/server/server.js` (handler
+> fetch-style) que é servido por `apps/omniconnect-hub/server-node.mjs`
+> (wrapper http nativo Node, sem deps externas, porta 4173). A config
+> Workers (`wrangler.jsonc` + `@cloudflare/vite-plugin`) fica dormente
+> e pode ser reativada se algum dia migrarmos para Cloudflare Workers
+> via `wrangler deploy`.
 
 ## 5. Coolify — passo a passo
 

@@ -115,9 +115,9 @@ services:
     depends_on:
       omniconnect-backend:
         condition: service_started
-    # `vite dev` reads VITE_* from process.env at startup (não usa o
-    # bundle pré-buildado). Repassamos os mesmos valores em runtime para
-    # que omniconnectClient acerte `VITE_API_URL` etc.
+    # VITE_* são baked no bundle via build args (ver `build.args` acima). Os
+    # mesmos valores ficam repetidos aqui em runtime apenas como safety net
+    # (no-op para o Node SSR atual, útil se voltarmos a `vite dev` em dev).
     environment:
       NODE_ENV: production
       VITE_API_URL: ${VITE_API_URL:-}
