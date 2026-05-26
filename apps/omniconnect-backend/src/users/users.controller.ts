@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, UseInterceptors, UploadedFile, ForbiddenException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -8,7 +8,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { getEmailDomain } from '../common/utils/email-domain.util';
+import { ensureTenant } from '../common/utils/tenant-context';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -22,50 +22,40 @@ export class UsersController {
     if (currentUser.role === Role.digital) {
       const allowedRoles = ['digital', 'supervisor', 'operator'];
       if (!allowedRoles.includes(createUserDto.role)) {
-        throw new Error('Você não tem permissão para criar usuários com este perfil');
+        throw new ForbiddenException('Você não tem permissão para criar usuários com este perfil');
       }
     }
-    return this.usersService.create(createUserDto);
+    return this.usersService.create(createUserDto, ensureTenant(currentUser));
   }
 
   @Get()
   @Roles(Role.admin, Role.supervisor, Role.digital)
   findAll(@Query() filters: any, @CurrentUser() user: any) {
-    // Admin e Digital veem todos os usuários
-    if (user.role === Role.admin || user.role === Role.digital) {
-      return this.usersService.findAll(filters);
-    }
-
-    // Supervisor vê apenas usuários do mesmo domínio de email
-    const userDomain = getEmailDomain(user.email);
-    return this.usersService.findAllByEmailDomain(filters, userDomain);
+    return this.usersService.findAll(filters, ensureTenant(user));
   }
 
   @Get('online-operators')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  getOnlineOperators(@Query('segment') segment?: string, @CurrentUser() user?: any) {
-    // Admin e Digital veem todos
-    if (user?.role === Role.admin || user?.role === Role.digital) {
-      return this.usersService.getOnlineOperators(segment ? parseInt(segment) : undefined);
-    }
-
-    // Supervisor vê apenas operadores do mesmo domínio
-    const userDomain = getEmailDomain(user.email);
-    return this.usersService.getOnlineOperatorsByEmailDomain(
+  getOnlineOperators(@CurrentUser() user: any, @Query('segment') segment?: string) {
+    return this.usersService.getOnlineOperators(
+      ensureTenant(user),
       segment ? parseInt(segment) : undefined,
-      userDomain
     );
   }
 
   @Get(':id')
   @Roles(Role.admin, Role.supervisor, Role.digital)
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(+id);
+  findOne(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.usersService.findOne(+id, ensureTenant(user));
   }
 
   @Patch(':id')
   @Roles(Role.admin)
-  async update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+  async update(
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+    @CurrentUser() user: any,
+  ) {
     console.log('📝 Dados recebidos para atualizar usuário ID', id, ':', JSON.stringify(updateUserDto, null, 2));
     console.log('📝 Tipos dos campos:', {
       line: typeof updateUserDto.line,
@@ -76,7 +66,7 @@ export class UsersController {
     });
 
     try {
-      const result = await this.usersService.update(+id, updateUserDto);
+      const result = await this.usersService.update(+id, updateUserDto, ensureTenant(user));
       console.log('✅ Usuário atualizado com sucesso');
       return result;
     } catch (error) {
@@ -91,19 +81,22 @@ export class UsersController {
 
   @Delete(':id')
   @Roles(Role.admin)
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(+id);
+  remove(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.usersService.remove(+id, ensureTenant(user));
   }
 
   @Post('upload-csv')
   @Roles(Role.admin)
   @UseInterceptors(FileInterceptor('file'))
-  async uploadCSV(@UploadedFile() file: Express.Multer.File) {
+  async uploadCSV(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: any,
+  ) {
     if (!file) {
       throw new Error('Arquivo CSV não fornecido');
     }
 
-    const result = await this.usersService.importFromCSV(file);
+    const result = await this.usersService.importFromCSV(file, ensureTenant(user));
     return {
       message: `Importação concluída: ${result.success} usuário(s) criado(s)`,
       success: result.success,

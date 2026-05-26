@@ -6,11 +6,33 @@ import * as argon2 from 'argon2';
 import csv from 'csv-parser';
 import { Readable } from 'stream';
 
+const USER_PUBLIC_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  segment: true,
+  line: true,
+  status: true,
+  oneToOneActive: true,
+  createdAt: true,
+  updatedAt: true,
+  // Never select password
+} as const;
+
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createUserDto: CreateUserDto) {
+  /**
+   * Create a user inside the caller's active tenant. If the email is
+   * already registered globally we treat it as a conflict — multi-tenant
+   * membership for existing accounts is a separate flow (UserTenant).
+   *
+   * Membership row for the active tenant is created in the same
+   * transaction so the new user shows up in tenant listings immediately.
+   */
+  async create(createUserDto: CreateUserDto, tenantId: string) {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: createUserDto.email },
     });
@@ -21,100 +43,64 @@ export class UsersService {
 
     const hashedPassword = await argon2.hash(createUserDto.password);
 
-    return this.prisma.user.create({
-      data: {
-        ...createUserDto,
-        password: hashedPassword,
-      },
-    });
-  }
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          ...createUserDto,
+          password: hashedPassword,
+        },
+      });
 
-  async findAll(filters?: any) {
-    // Remover campos inválidos que não existem no schema
-    const { search, ...validFilters } = filters || {};
-    
-    // Se houver busca por texto, aplicar filtros
-    const where = search 
-      ? {
-          ...validFilters,
-          OR: [
-            { name: { contains: search, mode: 'insensitive' } },
-            { email: { contains: search, mode: 'insensitive' } },
-          ],
-        }
-      : validFilters;
+      await tx.userTenant.create({
+        data: {
+          userId: created.id,
+          tenantId,
+          role: created.role,
+        },
+      });
 
-    return this.prisma.user.findMany({
-      where,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        segment: true,
-        line: true,
-        status: true,
-        oneToOneActive: true,
-        createdAt: true,
-        updatedAt: true,
-        // Não retornar password
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      // Re-read without password
+      return tx.user.findUnique({
+        where: { id: created.id },
+        select: USER_PUBLIC_SELECT,
+      });
     });
   }
 
   /**
-   * Buscar usuários filtrando por domínio de email
-   * Usado por admin e supervisor para ver apenas usuários do mesmo domínio
+   * Return users that belong to the caller's tenant via UserTenant.
+   * Replaces the old global findMany + email-domain heuristic for
+   * supervisors. Admin, supervisor and digital all see the same scope
+   * (their tenant) — roles affect what they can do, not who they see.
    */
-  async findAllByEmailDomain(filters: any, emailDomain: string) {
+  async findAll(filters: any, tenantId: string) {
     const { search, ...validFilters } = filters || {};
 
-    const baseWhere = {
-      email: {
-        endsWith: `@${emailDomain}`,
-      },
+    const where: any = {
+      ...validFilters,
+      tenants: { some: { tenantId } },
     };
 
-    const where = search
-      ? {
-          ...validFilters,
-          ...baseWhere,
-          OR: [
-            { name: { contains: search, mode: 'insensitive' } },
-            { email: { contains: search, mode: 'insensitive' } },
-          ],
-        }
-      : {
-          ...validFilters,
-          ...baseWhere,
-        };
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
 
     return this.prisma.user.findMany({
       where,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        segment: true,
-        line: true,
-        status: true,
-        oneToOneActive: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: USER_PUBLIC_SELECT,
       orderBy: {
         createdAt: 'desc',
       },
     });
   }
 
-  async findOne(id: number) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+  async findOne(id: number, tenantId: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, tenants: { some: { tenantId } } },
+      select: USER_PUBLIC_SELECT,
     });
 
     if (!user) {
@@ -124,12 +110,14 @@ export class UsersService {
     return user;
   }
 
-  async update(id: number, updateUserDto: UpdateUserDto) {
-    await this.findOne(id);
+  async update(id: number, updateUserDto: UpdateUserDto, tenantId: string) {
+    // Membership check — refuse to mutate users that are not part of the
+    // caller's tenant even if the JWT role would otherwise allow it.
+    await this.findOne(id, tenantId);
 
     // Limpar campos vazios
     const cleanData: any = { ...updateUserDto };
-    
+
     // Remover password se estiver vazio/undefined
     if (!cleanData.password || cleanData.password === '') {
       delete cleanData.password;
@@ -157,60 +145,71 @@ export class UsersService {
 
     console.log('💾 Dados limpos para atualizar:', cleanData);
 
-    return this.prisma.user.update({
-      where: { id },
+    // updateMany with composite (id, membership) to be defense-in-depth
+    // against any race where membership changes between findOne and update.
+    const result = await this.prisma.user.updateMany({
+      where: { id, tenants: { some: { tenantId } } },
       data: cleanData,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        segment: true,
-        line: true,
-        status: true,
-        oneToOneActive: true,
-        createdAt: true,
-        updatedAt: true,
-        // Não retornar password
-      },
     });
-  }
 
-  async remove(id: number) {
-    await this.findOne(id);
+    if (result.count === 0) {
+      throw new NotFoundException(`Usuário com ID ${id} não encontrado`);
+    }
 
-    return this.prisma.user.delete({
+    return this.prisma.user.findUnique({
       where: { id },
-    });
-  }
-
-  async getOnlineOperators(segment?: number) {
-    return this.prisma.user.findMany({
-      where: {
-        role: 'operator',
-        status: 'Online',
-        ...(segment && { segment }),
-      },
+      select: USER_PUBLIC_SELECT,
     });
   }
 
   /**
-   * Buscar operadores online filtrando por domínio de email
+   * Remove the user's membership in the caller's tenant. Does NOT delete
+   * the global user row — they may be a member of other tenants. If this
+   * was the last membership, the user is then deleted entirely.
    */
-  async getOnlineOperatorsByEmailDomain(segment: number | undefined, emailDomain: string) {
+  async remove(id: number, tenantId: string) {
+    await this.findOne(id, tenantId);
+
+    return this.prisma.$transaction(async (tx) => {
+      // Remove only the membership in the active tenant
+      await tx.userTenant.deleteMany({
+        where: { userId: id, tenantId },
+      });
+
+      // If user has no remaining memberships, delete the user record
+      const remaining = await tx.userTenant.count({
+        where: { userId: id },
+      });
+
+      if (remaining === 0) {
+        await tx.user.delete({ where: { id } });
+        return { id, deleted: true, removedGlobalUser: true };
+      }
+
+      return { id, deleted: true, removedGlobalUser: false };
+    });
+  }
+
+  async getOnlineOperators(tenantId: string, segment?: number) {
     return this.prisma.user.findMany({
       where: {
         role: 'operator',
         status: 'Online',
-        email: {
-          endsWith: `@${emailDomain}`,
-        },
+        tenants: { some: { tenantId } },
         ...(segment && { segment }),
       },
+      select: USER_PUBLIC_SELECT,
     });
   }
 
-  async importFromCSV(file: Express.Multer.File): Promise<{ success: number; errors: string[] }> {
+  /**
+   * Bulk-import users from CSV. Each created user gets a membership row
+   * for the importing tenant so they immediately appear in listings.
+   */
+  async importFromCSV(
+    file: Express.Multer.File,
+    tenantId: string,
+  ): Promise<{ success: number; errors: string[] }> {
     if (!file || !file.buffer) {
       throw new BadRequestException('Arquivo CSV não fornecido');
     }
@@ -221,7 +220,7 @@ export class UsersService {
 
     return new Promise((resolve, reject) => {
       const stream = Readable.from(file.buffer.toString('utf-8'));
-      
+
       stream
         .pipe(csv({ separator: ';' }))
         .on('data', (data) => {
@@ -245,7 +244,7 @@ export class UsersService {
                 continue;
               }
 
-              // Verificar se usuário já existe
+              // Verificar se usuário já existe globalmente
               const existingUser = await this.prisma.user.findUnique({
                 where: { email },
               });
@@ -255,11 +254,12 @@ export class UsersService {
                 continue;
               }
 
-              // Buscar segmento pelo nome
+              // Buscar segmento pelo nome NO TENANT
               let segmentId: number | null = null;
               if (segmentName) {
                 const segment = await this.prisma.segment.findFirst({
                   where: {
+                    tenantId,
                     name: {
                       contains: segmentName,
                       mode: 'insensitive',
@@ -275,18 +275,28 @@ export class UsersService {
                 }
               }
 
-              // Criar usuário (padrão: operador, senha inicial = #Pasch@20.25)
+              // Criar usuário (padrão: operador, senha inicial = @Pasc2025)
               const defaultPassword = '@Pasc2025';
               const hashedPassword = await argon2.hash(defaultPassword);
 
-              await this.prisma.user.create({
-                data: {
-                  name,
-                  email,
-                  password: hashedPassword,
-                  role: 'operator',
-                  segment: segmentId,
-                },
+              await this.prisma.$transaction(async (tx) => {
+                const created = await tx.user.create({
+                  data: {
+                    name,
+                    email,
+                    password: hashedPassword,
+                    role: 'operator',
+                    segment: segmentId,
+                  },
+                });
+
+                await tx.userTenant.create({
+                  data: {
+                    userId: created.id,
+                    tenantId,
+                    role: 'operator',
+                  },
+                });
               });
 
               successCount++;

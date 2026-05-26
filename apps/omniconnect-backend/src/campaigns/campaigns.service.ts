@@ -69,8 +69,11 @@ export class CampaignsService {
       throw new NotFoundException('Campanha não encontrada');
     }
 
-    // Buscar operadores online do segmento
-    const onlineOperators = await this.usersService.getOnlineOperators(campaign.contactSegment);
+    // Buscar operadores online do segmento (escopado ao tenant)
+    const onlineOperators = await this.usersService.getOnlineOperators(
+      tenantId,
+      campaign.contactSegment,
+    );
 
     if (onlineOperators.length === 0) {
       throw new BadRequestException('Nenhum operador online disponível para este segmento');
