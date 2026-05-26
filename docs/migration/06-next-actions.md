@@ -74,11 +74,11 @@ nova aba no MVP. Nao passar JWT ou tenant pela URL.
 
 | Bloco | Entrega | Estado |
 |---|---|---|
-| **H0** | Plano, decisao UX e gates de seguranca/documentacao | ✅ Esta entrega (commit `1185b8b`) |
-| **H1** | Backend emite nova sessao ao trocar tenant ativo (`POST /auth/switch-tenant`) e rejeita tenant inativo | ✅ Comitado local (`36bfd14`); push + smoke publicado pendentes |
-| **H2** | Cookie SSO cross-app (host-only API, path/CORS/runbook) | ✅ Comitado local (`39c55ef`); push + smoke publicado pendentes |
-| **H3** | Hub aplica tenant confirmado antes de habilitar abertura de modulo | ✅ Comitado local (`9ff49b5`); depende de H2/H4 para SSO completo |
-| **H4** | OmniHub migra `vend_token` para sessao Omni por cookie HttpOnly e realtime tenant-scoped | ✅ Comitado local (`9498d88`); push + smoke publicado pendentes |
+| **H0** | Plano, decisao UX e gates de seguranca/documentacao | ✅ Esta entrega (commit `43d7b91`) |
+| **H1** | Backend emite nova sessao ao trocar tenant ativo (`POST /auth/switch-tenant`) e rejeita tenant inativo | ✅ Comitado local (`4bc64ce`); push + smoke publicado pendentes |
+| **H2** | Cookie SSO cross-app (host-only API, path/CORS/runbook) | ✅ Comitado local (`5bc6175`); push + smoke publicado pendentes |
+| **H3** | Hub aplica tenant confirmado antes de habilitar abertura de modulo | ✅ Comitado local (`950c445`); depende de H2/H4 para SSO completo |
+| **H4** | OmniHub migra `vend_token` para sessao Omni por cookie HttpOnly e realtime tenant-scoped | ✅ Comitado local (`1bab9fd`); push + smoke publicado pendentes |
 | **H5** | Matriz de permissoes Ads alinhada entre Hub, SAA e backend | ⬜ Planejado |
 | **H6-H7** | Hardening CRM/Botify, smoke cross-tenant e rollout controlado | ⬜ Planejado |
 
@@ -88,8 +88,8 @@ Junto com H1–H4 entraram fixes complementares também ainda não publicados:
 
 | Item | Commit | Estado |
 |---|---|---|
-| `chore(backend): parse REDIS_URL for coolify managed redis` | `c30dd48` | ✅ Comitado; push pendente |
-| `chore(backend): harden dev seed + add production tenant bootstrap` | `6b3bb17` | ✅ Comitado; push pendente. **Operacional**: a partir desta entrega, qualquer redeploy Coolify com DB vazio exige `SEED_*_PASSWORD` ou `PRODUCTION_BOOTSTRAP_*` — caso contrário `docker-entrypoint.sh` sai com `exit 1`. |
+| `chore(backend): parse REDIS_URL for coolify managed redis` | `04da30c` | ✅ Comitado; push pendente |
+| `fix(auth): bootstrap production tenant membership safely` (seed hardening + production tenant bootstrap) | `49ac69b` | ✅ Já no `origin/main` desde 2026-05-25. **Operacional**: qualquer redeploy Coolify com DB vazio exige `SEED_*_PASSWORD` ou `PRODUCTION_BOOTSTRAP_*` — caso contrário `docker-entrypoint.sh` sai com `exit 1`. |
 
 ### Audit drift fixes — 2026-05-26
 
@@ -97,13 +97,13 @@ Resposta aos cinco itens críticos surfaceados na auditoria de 2026-05-25 (curso
 
 | Drift | Commit | Resumo |
 |---|---|---|
-| Fallback `JWT_SECRET` literal em `auth.module.ts` | `7771deb` | Throw on missing — fail-closed |
-| Fallback `JWT_SECRET` literal em `crm-realtime.module.ts` | `55bd480` | Throw on missing — fail-closed |
-| `auth.service.ts` aceita senha plaintext quando `NODE_ENV=development` | `674562a` | Branch removido — argon2-only |
-| `cloud-api-webhook.controller.ts` lê `WEBHOOK_VERIFY_TOKEN` divergente do `.env.staging` | `d0e5a21` | Alinhado para `WHATSAPP_VERIFY_TOKEN` |
-| `templates/templates.service.ts` sem filtro por tenant | `03acb04` | `ensureTenant` no controller + `tenantId` em toda query Prisma (51 referências) |
-| `tabulations/tabulations.service.ts` sem filtro por tenant | `a136228` | `ensureTenant` no controller + scoping em CSV import + CRUD (16 referências) |
-| `users/users.service.ts` sem filtro por tenant (admin via global; supervisor via email-domain) | `d3b9ddf` | `ensureTenant` + scoping via `UserTenant.some({ tenantId })`; remoção das heurísticas `findAllByEmailDomain`/`getOnlineOperatorsByEmailDomain`; `remove` agora apaga apenas a membership ativa (e o user global só se for a última) |
+| Fallback `JWT_SECRET` literal em `auth.module.ts` | `8701742` | Throw on missing — fail-closed |
+| Fallback `JWT_SECRET` literal em `crm-realtime.module.ts` | `a42a811` | Throw on missing — fail-closed |
+| `auth.service.ts` aceita senha plaintext quando `NODE_ENV=development` | `5cedc4f` | Branch removido — argon2-only |
+| `cloud-api-webhook.controller.ts` lê `WEBHOOK_VERIFY_TOKEN` divergente do `.env.staging` | `aaa490f` | Alinhado para `WHATSAPP_VERIFY_TOKEN` |
+| `templates/templates.service.ts` sem filtro por tenant | `4f48ea2` | `ensureTenant` no controller + `tenantId` em toda query Prisma (51 referências) |
+| `tabulations/tabulations.service.ts` sem filtro por tenant | `bd05961` | `ensureTenant` no controller + scoping em CSV import + CRUD (16 referências) |
+| `users/users.service.ts` sem filtro por tenant (admin via global; supervisor via email-domain) | `64390ce` | `ensureTenant` + scoping via `UserTenant.some({ tenantId })`; remoção das heurísticas `findAllByEmailDomain`/`getOnlineOperatorsByEmailDomain`; `remove` agora apaga apenas a membership ativa (e o user global só se for a última) |
 
 ### Deferred para próxima sessão
 
