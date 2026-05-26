@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MODULES } from "@/lib/mock-data";
 import { resolveModuleDestination } from "@/lib/module-gateway";
+import { useAuth } from "@/lib/auth-context";
 import type { ModuleId } from "@/lib/permissions";
 
 export function ModulePlaceholder({ moduleId }: { moduleId: ModuleId }) {
+  const { tenant, tenantSessionReady, switchingTenant } = useAuth();
   const meta = MODULES.find((m) => m.id === moduleId);
   if (!meta) return null;
   const destination = resolveModuleDestination(moduleId);
@@ -36,8 +38,9 @@ export function ModulePlaceholder({ moduleId }: { moduleId: ModuleId }) {
             Este módulo mantém sua própria interface dedicada. A partir do OmniconnectPRO, você
             acessa todos eles com o mesmo login, empresa ativa e perfil.
           </p>
+          <p className="text-sm font-medium">Empresa ativa: {tenant.name}</p>
           <div className="flex flex-wrap justify-center gap-2">
-            {destination ? (
+            {destination && tenantSessionReady ? (
               <Button asChild>
                 <a
                   href={destination}
@@ -47,6 +50,10 @@ export function ModulePlaceholder({ moduleId }: { moduleId: ModuleId }) {
                 >
                   Abrir módulo <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
                 </a>
+              </Button>
+            ) : destination ? (
+              <Button disabled>
+                {switchingTenant ? "Confirmando empresa..." : "Sessão da empresa indisponível"}
               </Button>
             ) : (
               <Button disabled title="Destino não configurado neste ambiente">
@@ -60,6 +67,11 @@ export function ModulePlaceholder({ moduleId }: { moduleId: ModuleId }) {
           {!destination && (
             <p className="text-xs text-muted-foreground">
               O acesso a este módulo ainda não foi configurado neste ambiente.
+            </p>
+          )}
+          {destination && !tenantSessionReady && !switchingTenant && (
+            <p className="text-xs text-muted-foreground">
+              Selecione uma empresa ativa e confirmada antes de abrir outro módulo.
             </p>
           )}
         </CardContent>

@@ -22,6 +22,7 @@
 import type { BackendRole } from "./roleMapping";
 
 const DEFAULT_BASE_URL = "/api";
+const AUTH_REFRESH_TIMEOUT_MS = 8_000;
 
 const BASE_URL = (
   import.meta.env.VITE_OMNICONNECT_API_URL ??
@@ -55,7 +56,6 @@ function setState(next: AuthState): void {
     try {
       l(state);
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error("[omniconnectClient] auth listener failed:", err);
     }
   }
@@ -115,10 +115,7 @@ async function rawRequest(
   });
 }
 
-export async function request<T>(
-  path: string,
-  options: RequestOptions = {},
-): Promise<T> {
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { skipRefresh, raw, ...init } = options;
   let res = await rawRequest(path, init);
 
@@ -169,21 +166,39 @@ let refreshInFlight: Promise<boolean> | null = null;
 
 async function tryRefresh(): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
+  const stateAtRefreshStart = state;
   refreshInFlight = (async () => {
+    const controller = new AbortController();
+    const timeoutId = globalThis.setTimeout(() => controller.abort(), AUTH_REFRESH_TIMEOUT_MS);
+
     try {
       const data = await request<{ access_token: string; access_expires_in: number }>(
         "/auth/refresh",
-        { method: "POST", skipRefresh: true },
+        { method: "POST", skipRefresh: true, signal: controller.signal },
       );
       if (!data?.access_token) return false;
+
+      // A user action (login/logout) completed while this refresh was pending.
+      // Its resulting session is authoritative and must not be overwritten.
+      if (state !== stateAtRefreshStart) {
+        return state.status === "authenticated";
+      }
+
       setState({
         ...state,
         accessToken: data.access_token,
         status: state.user ? "authenticated" : state.status,
       });
       if (!state.user) {
+        const stateWithRefreshedToken = state;
         try {
-          const me = await request<SessionUser>("/auth/me", { skipRefresh: true });
+          const me = await request<SessionUser>("/auth/me", {
+            skipRefresh: true,
+            signal: controller.signal,
+          });
+          if (state !== stateWithRefreshedToken) {
+            return state.status === "authenticated";
+          }
           setState({ ...state, user: me, status: "authenticated" });
         } catch {
           /* boot sem user — só accessToken até a próxima chamada. */
@@ -191,9 +206,12 @@ async function tryRefresh(): Promise<boolean> {
       }
       return true;
     } catch {
-      clearLocalSession();
-      return false;
+      if (state === stateAtRefreshStart) {
+        clearLocalSession();
+      }
+      return state.status === "authenticated";
     } finally {
+      globalThis.clearTimeout(timeoutId);
       refreshInFlight = null;
     }
   })();
@@ -230,6 +248,16 @@ export async function signUp(payload: RegisterPayload): Promise<SessionUser> {
       skipRefresh: true,
     },
   );
+  setState({ user: data.user, accessToken: data.access_token, status: "authenticated" });
+  return data.user;
+}
+
+export async function switchTenantSession(tenantId: string): Promise<SessionUser> {
+  const data = await request<SessionResponse>("/auth/switch-tenant", {
+    method: "POST",
+    body: JSON.stringify({ tenantId }),
+    skipRefresh: true,
+  });
   setState({ user: data.user, accessToken: data.access_token, status: "authenticated" });
   return data.user;
 }
@@ -295,9 +323,7 @@ export interface PilotOverviewQuery {
   origin?: PilotOverviewOrigin;
 }
 
-export async function getPilotOverview(
-  q: PilotOverviewQuery = {},
-): Promise<PilotOverview> {
+export async function getPilotOverview(q: PilotOverviewQuery = {}): Promise<PilotOverview> {
   const params = new URLSearchParams();
   if (q.days != null) params.set("days", String(q.days));
   if (q.from) params.set("from", q.from);
@@ -338,9 +364,7 @@ export interface InsightWindowQuery {
   segment?: number;
 }
 
-export async function getInsightSummary(
-  q: InsightWindowQuery = {},
-): Promise<InsightSummary> {
+export async function getInsightSummary(q: InsightWindowQuery = {}): Promise<InsightSummary> {
   return request<InsightSummary>(`/insight-ai/dashboard/summary${buildQs(q)}`);
 }
 
@@ -387,9 +411,7 @@ export interface InsightUsageQuery extends InsightWindowQuery {
   offset?: number;
 }
 
-export async function getInsightUsage(
-  q: InsightUsageQuery = {},
-): Promise<InsightUsage> {
+export async function getInsightUsage(q: InsightUsageQuery = {}): Promise<InsightUsage> {
   return request<InsightUsage>(`/insight-ai/dashboard/usage${buildQs(q)}`);
 }
 
@@ -455,13 +477,10 @@ export async function analyzeConversationByPhone(
   opts: { sync?: boolean } = {},
 ): Promise<unknown> {
   const qs = opts.sync ? "?sync=true" : "";
-  return request<unknown>(
-    `/insight-ai/analyze/${encodeURIComponent(phone)}${qs}`,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
-  );
+  return request<unknown>(`/insight-ai/analyze/${encodeURIComponent(phone)}${qs}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 // ─── Message Brokers — Sprint Foundation F1 (ADR-0005) ─────────────────────
@@ -522,10 +541,12 @@ export interface MessageBrokerTestResult {
   status: MessageBrokerStatus;
 }
 
-export async function listMessageBrokers(filters: {
-  channel?: MessageBrokerChannel;
-  status?: MessageBrokerStatus;
-} = {}): Promise<MessageBroker[]> {
+export async function listMessageBrokers(
+  filters: {
+    channel?: MessageBrokerChannel;
+    status?: MessageBrokerStatus;
+  } = {},
+): Promise<MessageBroker[]> {
   return request<MessageBroker[]>(`/message-brokers${buildQs(filters)}`);
 }
 
@@ -557,10 +578,9 @@ export async function deleteMessageBroker(id: string): Promise<{ id: string }> {
 }
 
 export async function testMessageBroker(id: string): Promise<MessageBrokerTestResult> {
-  return request<MessageBrokerTestResult>(
-    `/message-brokers/${encodeURIComponent(id)}/test`,
-    { method: "POST" },
-  );
+  return request<MessageBrokerTestResult>(`/message-brokers/${encodeURIComponent(id)}/test`, {
+    method: "POST",
+  });
 }
 
 // ─── Tenant Wallet — Sprint Foundation F2 (ADR-0005) ───────────────────────
@@ -646,27 +666,25 @@ export async function upsertWalletChannelCost(
   channel: string,
   costCents: number,
 ): Promise<WalletChannelCost> {
-  return request<WalletChannelCost>(
-    `/tenant-wallets/me/channels/${encodeURIComponent(channel)}`,
-    { method: "PUT", body: JSON.stringify({ costCents }) },
-  );
+  return request<WalletChannelCost>(`/tenant-wallets/me/channels/${encodeURIComponent(channel)}`, {
+    method: "PUT",
+    body: JSON.stringify({ costCents }),
+  });
 }
 
 export async function creditMyWallet(
   input: CreditWalletInput,
 ): Promise<{ transactionId: string; remainingCents: number }> {
-  return request<{ transactionId: string; remainingCents: number }>(
-    "/tenant-wallets/me/credits",
-    { method: "POST", body: JSON.stringify(input) },
-  );
+  return request<{ transactionId: string; remainingCents: number }>("/tenant-wallets/me/credits", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function listMyWalletTransactions(
   query: ListWalletTransactionsQuery = {},
 ): Promise<WalletTransactionsPage> {
-  return request<WalletTransactionsPage>(
-    `/tenant-wallets/me/transactions${buildQs(query)}`,
-  );
+  return request<WalletTransactionsPage>(`/tenant-wallets/me/transactions${buildQs(query)}`);
 }
 
 // ─── Anti-fatigue — Sprint Foundation F3 (ADR-0005) ────────────────────────
@@ -735,9 +753,7 @@ export async function upsertMyAntiFatigueRule(
 export async function listAntiFatigueDedupeLog(
   query: ListAntiFatigueDedupeLogQuery = {},
 ): Promise<AntiFatigueDedupeLogPage> {
-  return request<AntiFatigueDedupeLogPage>(
-    `/anti-fatigue/dedupe-log${buildQs(query)}`,
-  );
+  return request<AntiFatigueDedupeLogPage>(`/anti-fatigue/dedupe-log${buildQs(query)}`);
 }
 
 // ─── Leads 360° — Sprint Quick-wins Q1 ─────────────────────────────────────

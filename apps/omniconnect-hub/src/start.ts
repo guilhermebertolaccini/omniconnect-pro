@@ -1,7 +1,8 @@
 import { createStart, createMiddleware } from "@tanstack/react-start";
 
-import { attachSupabaseAuth } from "@/integrations/supabase/auth-attacher";
 import { renderErrorPage } from "./lib/error-page";
+
+const USE_MOCK_AUTH = import.meta.env.VITE_USE_MOCK_AUTH === "true";
 
 const errorMiddleware = createMiddleware().server(async ({ next }) => {
   try {
@@ -18,7 +19,20 @@ const errorMiddleware = createMiddleware().server(async ({ next }) => {
   }
 });
 
+const attachFunctionAuth = createMiddleware({ type: "function" }).client(async ({ next }) => {
+  if (!USE_MOCK_AUTH) {
+    return next();
+  }
+
+  const { supabase } = await import("@/integrations/supabase/client");
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return next({
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+});
+
 export const startInstance = createStart(() => ({
   requestMiddleware: [errorMiddleware],
-  functionMiddleware: [attachSupabaseAuth],
+  functionMiddleware: [attachFunctionAuth],
 }));

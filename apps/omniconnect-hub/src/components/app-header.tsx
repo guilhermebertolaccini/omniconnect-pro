@@ -69,8 +69,18 @@ function SeverityDot({ severity }: { severity: LineHealthAlertSeverity }) {
 
 export function AppHeader() {
   const navigate = useNavigate();
-  const { user, role, tenant, tenants, language, logout, switchTenant, switchRole, setLanguage } =
-    useAuth();
+  const {
+    user,
+    role,
+    tenant,
+    tenants,
+    language,
+    logout,
+    switchTenant,
+    switchingTenant,
+    switchRole,
+    setLanguage,
+  } = useAuth();
 
   const lineAlerts = useMemo(() => (ENABLE_DEMO_NOTIFICATIONS ? getLineHealthAlerts() : []), []);
   const demoNotifications = ENABLE_DEMO_NOTIFICATIONS ? NOTIFICATIONS : [];
@@ -115,6 +125,7 @@ export function AppHeader() {
             size="sm"
             className="h-9 gap-2 pl-1.5 pr-2 sm:pl-2 sm:pr-3"
             aria-label={`Empresa ativa: ${tenant.name}. Trocar empresa`}
+            disabled={switchingTenant}
           >
             <div className="grid h-6 w-6 place-items-center rounded bg-primary/10 text-[10px] font-semibold text-primary">
               {tenant.initials}
@@ -133,11 +144,18 @@ export function AppHeader() {
             return (
               <DropdownMenuItem
                 key={t.id}
-                onClick={() => {
+                onClick={async () => {
                   if (active) return;
-                  switchTenant(t.id);
+                  const result = await switchTenant(t.id);
+                  if (result.error) {
+                    toast.error("Não foi possível trocar a empresa", {
+                      description: result.error,
+                    });
+                    return;
+                  }
                   toast.success(`Empresa ativa: ${t.name}`);
                 }}
+                disabled={switchingTenant}
                 className="gap-2"
               >
                 <div className="grid h-6 w-6 place-items-center rounded bg-muted text-[10px] font-semibold text-muted-foreground">

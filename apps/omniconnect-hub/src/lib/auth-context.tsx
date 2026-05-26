@@ -34,6 +34,7 @@ import {
   subscribe as subscribeAuth,
   restoreSession,
   getMyMemberships,
+  switchTenantSession as backendSwitchTenant,
   type Membership as BackendMembership,
   type SessionUser as BackendUser,
 } from "./omniconnectClient";
@@ -65,14 +66,12 @@ type AuthContextValue = {
   language: Language;
   isAuthenticated: boolean;
   loading: boolean;
+  switchingTenant: boolean;
+  tenantSessionReady: boolean;
   login: (email: string, password: string) => Promise<{ error?: string }>;
-  signup: (
-    email: string,
-    password: string,
-    fullName: string,
-  ) => Promise<{ error?: string }>;
+  signup: (email: string, password: string, fullName: string) => Promise<{ error?: string }>;
   logout: () => Promise<void>;
-  switchTenant: (id: string) => void;
+  switchTenant: (id: string) => Promise<{ error?: string }>;
   switchRole: (role: Role) => void;
   setLanguage: (lang: Language) => void;
 };
@@ -127,6 +126,10 @@ function BackendAuthProvider({ children }: { children: ReactNode }) {
   const [activeTenantId, setActiveTenantIdState] = useState<string>("");
   const [language, setLanguageState] = useState<Language>("pt-BR");
   const [loading, setLoading] = useState(true);
+  const [membershipsResolvedForUserId, setMembershipsResolvedForUserId] = useState<number | null>(
+    null,
+  );
+  const [switchingTenant, setSwitchingTenant] = useState(false);
   const [demoRoleOverride, setDemoRoleOverride] = useState<Role | null>(null);
 
   // Hidratação de preferências locais (browser only — TanStack Start é SSR).
@@ -135,8 +138,6 @@ function BackendAuthProvider({ children }: { children: ReactNode }) {
     try {
       const lang = window.localStorage.getItem(LANGUAGE_KEY) as Language | null;
       if (lang) setLanguageState(lang);
-      const t = window.localStorage.getItem(ACTIVE_TENANT_KEY);
-      if (t) setActiveTenantIdState(t);
     } catch {
       /* noop */
     }
@@ -160,47 +161,51 @@ function BackendAuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     if (!backendUser) {
       setMemberships([]);
+      setMembershipsResolvedForUserId(null);
       return;
     }
     getMyMemberships()
       .then((list) => {
         if (cancelled) return;
         setMemberships(list);
-        if (!activeTenantId && list.length > 0) {
-          // Prefere o tenant do JWT atual; cai para a primeira membership.
-          const preferred =
-            list.find((m) => m.tenantId === backendUser.tenantId) ?? list[0];
+        const preferred = list.find((m) => m.tenantId === backendUser.tenantId);
+        if (preferred) {
+          // O JWT atual e a autoridade; preferencia local nao troca escopo.
           setActiveTenantIdState(preferred.tenantId);
           try {
             window.localStorage.setItem(ACTIVE_TENANT_KEY, preferred.tenantId);
           } catch {
             /* noop */
           }
+        } else {
+          setActiveTenantIdState("");
         }
       })
       .catch(() => {
         if (!cancelled) setMemberships([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMembershipsResolvedForUserId(backendUser.id);
       });
     return () => {
       cancelled = true;
     };
-  }, [backendUser, activeTenantId]);
+  }, [backendUser]);
 
   const tenants = useMemo<Tenant[]>(
     () =>
-      memberships.map((m) => ({
-        id: m.tenantId,
-        name: m.tenantName,
-        initials: deriveInitials(m.tenantName),
-      })),
+      memberships
+        .filter((m) => m.isActive)
+        .map((m) => ({
+          id: m.tenantId,
+          name: m.tenantName,
+          initials: deriveInitials(m.tenantName),
+        })),
     [memberships],
   );
 
   const activeMembership = useMemo<BackendMembership | null>(
-    () =>
-      memberships.find((m) => m.tenantId === activeTenantId) ??
-      memberships[0] ??
-      null,
+    () => memberships.find((m) => m.tenantId === activeTenantId) ?? null,
     [memberships, activeTenantId],
   );
 
@@ -217,7 +222,8 @@ function BackendAuthProvider({ children }: { children: ReactNode }) {
   // Demo override é UX-only e não passa pelo backend.
   const role: Role = useMemo(() => {
     if (demoRoleOverride) return demoRoleOverride;
-    const backendRole = (activeMembership?.role ?? "admin") as BackendRole;
+    // Missing tenant context must never result in elevated UI permissions.
+    const backendRole = (activeMembership?.role ?? "operator") as BackendRole;
     return backendToDisplayRole(backendRole);
   }, [activeMembership, demoRoleOverride]);
 
@@ -231,6 +237,12 @@ function BackendAuthProvider({ children }: { children: ReactNode }) {
     };
   }, [backendUser]);
 
+  const tenantSessionReady =
+    !!backendUser &&
+    !!activeMembership?.isActive &&
+    activeMembership.tenantId === backendUser.tenantId &&
+    !switchingTenant;
+
   const login = useCallback(async (email: string, password: string) => {
     try {
       await backendSignIn(email, password);
@@ -241,20 +253,17 @@ function BackendAuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const signup = useCallback(
-    async (email: string, password: string, fullName: string) => {
-      try {
-        // Backend `/auth/register` exige `tenantName`; derivamos do nome.
-        const tenantName = `${fullName} workspace`;
-        await backendSignUp({ name: fullName, email, password, tenantName });
-        return {};
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Falha ao criar conta";
-        return { error: msg };
-      }
-    },
-    [],
-  );
+  const signup = useCallback(async (email: string, password: string, fullName: string) => {
+    try {
+      // Backend `/auth/register` exige `tenantName`; derivamos do nome.
+      const tenantName = `${fullName} workspace`;
+      await backendSignUp({ name: fullName, email, password, tenantName });
+      return {};
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Falha ao criar conta";
+      return { error: msg };
+    }
+  }, []);
 
   const logout = useCallback(async () => {
     await backendSignOut();
@@ -269,23 +278,32 @@ function BackendAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const switchTenant = useCallback(
-    (id: string) => {
-      if (!memberships.some((m) => m.tenantId === id)) return;
-      setActiveTenantIdState(id);
+    async (id: string) => {
+      const target = memberships.find(
+        (membership) => membership.tenantId === id && membership.isActive,
+      );
+      if (!target) return { error: "Empresa indisponível para esta conta." };
+      if (backendUser?.tenantId === id) return {};
+
+      setSwitchingTenant(true);
       try {
+        const switchedUser = await backendSwitchTenant(id);
+        if (switchedUser.tenantId !== id) {
+          return { error: "Não foi possível confirmar a empresa ativa." };
+        }
+        setActiveTenantIdState(id);
         if (typeof window !== "undefined") {
           window.localStorage.setItem(ACTIVE_TENANT_KEY, id);
         }
-      } catch {
-        /* noop */
+        return {};
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Falha ao trocar empresa";
+        return { error: message };
+      } finally {
+        setSwitchingTenant(false);
       }
-      // NOTA: trocar de tenant deveria pedir um novo access token escopado
-      // ao tenantId selecionado (mesmo padrão da Sprint 2.4 SAA). Hoje o JWT
-      // permanece no tenant da sessão; a UI atualiza menus/labels mas
-      // chamadas de domínio continuam escopadas ao tenant do JWT até um
-      // endpoint de tenant-switch ser exposto no backend. Issue de follow-up.
     },
-    [memberships],
+    [backendUser?.tenantId, memberships],
   );
 
   const switchRole = useCallback((r: Role) => setDemoRoleOverride(r), []);
@@ -308,7 +326,9 @@ function BackendAuthProvider({ children }: { children: ReactNode }) {
     tenants,
     language,
     isAuthenticated: !!backendUser,
-    loading,
+    loading: loading || (!!backendUser && membershipsResolvedForUserId !== backendUser.id),
+    switchingTenant,
+    tenantSessionReady,
     login,
     signup,
     logout,
@@ -365,11 +385,9 @@ function MockSupabaseAuthProvider({ children }: { children: ReactNode }) {
       setSupabaseMod(mod);
       const {
         data: { subscription },
-      } = mod.supabase.auth.onAuthStateChange(
-        (_event: unknown, newSession: MockSession | null) => {
-          setSession(newSession);
-        },
-      );
+      } = mod.supabase.auth.onAuthStateChange((_event: unknown, newSession: MockSession | null) => {
+        setSession(newSession);
+      });
       const { data } = await mod.supabase.auth.getSession();
       if (cancelled) return;
       setSession(data.session as MockSession | null);
@@ -471,8 +489,7 @@ function MockSupabaseAuthProvider({ children }: { children: ReactNode }) {
         email,
         password,
         options: {
-          emailRedirectTo:
-            typeof window !== "undefined" ? `${window.location.origin}/` : undefined,
+          emailRedirectTo: typeof window !== "undefined" ? `${window.location.origin}/` : undefined,
           data: { full_name: fullName },
         },
       });
@@ -493,14 +510,17 @@ function MockSupabaseAuthProvider({ children }: { children: ReactNode }) {
   }, [supabaseMod]);
 
   const switchTenant = useCallback(
-    (id: string) => {
-      if (!memberships.some((m) => m.tenant.id === id)) return;
+    async (id: string) => {
+      if (!memberships.some((m) => m.tenant.id === id)) {
+        return { error: "Empresa indisponível para esta conta." };
+      }
       setActiveTenantIdState(id);
       try {
         window.localStorage.setItem(ACTIVE_TENANT_KEY, id);
       } catch {
         /* noop */
       }
+      return {};
     },
     [memberships],
   );
@@ -524,6 +544,8 @@ function MockSupabaseAuthProvider({ children }: { children: ReactNode }) {
     language,
     isAuthenticated: !!session?.user,
     loading,
+    switchingTenant: false,
+    tenantSessionReady: true,
     login,
     signup,
     logout,

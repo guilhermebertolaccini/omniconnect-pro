@@ -1,4 +1,8 @@
-import "@testing-library/jest-dom/vitest";
+import * as matchers from "@testing-library/jest-dom/matchers";
+import { expect } from "vitest";
+
+// Extend the same Vitest instance imported by test files in this workspace.
+expect.extend(matchers);
 
 // Polyfills required by @xyflow/react under jsdom
 if (typeof globalThis.ResizeObserver === "undefined") {
