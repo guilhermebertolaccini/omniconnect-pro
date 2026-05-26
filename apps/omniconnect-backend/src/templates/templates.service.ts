@@ -15,7 +15,7 @@ export class TemplatesService {
     private phoneValidationService: PhoneValidationService,
   ) { }
 
-  async create(createTemplateDto: CreateTemplateDto) {
+  async create(createTemplateDto: CreateTemplateDto, tenantId: string) {
     // Validar campos obrigatórios
     if (!createTemplateDto.name || !createTemplateDto.name.trim()) {
       throw new BadRequestException('Nome do template é obrigatório');
@@ -25,10 +25,10 @@ export class TemplatesService {
       throw new BadRequestException('Corpo do template (bodyText) é obrigatório');
     }
 
-    // Se um segmento foi fornecido, verificar se existe
+    // Se um segmento foi fornecido, verificar se existe (escopado ao tenant)
     if (createTemplateDto.segmentId) {
-      const segment = await this.prisma.segment.findUnique({
-        where: { id: createTemplateDto.segmentId },
+      const segment = await this.prisma.segment.findFirst({
+        where: { id: createTemplateDto.segmentId, tenantId },
       });
 
       if (!segment) {
@@ -55,14 +55,15 @@ export class TemplatesService {
         buttons,
         variables,
         status: 'APPROVED',  // Templates internos já vêm aprovados
+        tenantId,
       },
     });
   }
 
-  async findAll(filters?: any) {
+  async findAll(tenantId: string, filters?: any) {
     const { search, lineId, segmentId, status, ...validFilters } = filters || {};
 
-    const where: any = { ...validFilters };
+    const where: any = { ...validFilters, tenantId };
 
     if (search) {
       where.OR = [
@@ -105,10 +106,11 @@ export class TemplatesService {
     }));
   }
 
-  async findBySegment(segmentId: number) {
+  async findBySegment(segmentId: number, tenantId: string) {
     // Retornar templates do segmento específico + templates globais (segmentId = null)
     const templates = await this.prisma.template.findMany({
       where: {
+        tenantId,
         OR: [
           { segmentId },
           { segmentId: null },  // Templates globais
@@ -125,10 +127,10 @@ export class TemplatesService {
     }));
   }
 
-  async findByLineAndSegment(lineId: number) {
-    // Buscar a linha para obter o segmento
-    const line = await this.prisma.linesStock.findUnique({
-      where: { id: lineId },
+  async findByLineAndSegment(lineId: number, tenantId: string) {
+    // Buscar a linha para obter o segmento (escopada ao tenant)
+    const line = await this.prisma.linesStock.findFirst({
+      where: { id: lineId, tenantId },
       select: { segment: true },
     });
 
@@ -139,6 +141,7 @@ export class TemplatesService {
     // Retornar templates da linha específica + templates do segmento (sem linha específica) + globais
     const templates = await this.prisma.template.findMany({
       where: {
+        tenantId,
         OR: [
           { lineId: lineId }, // Templates exclusivos da linha
           { segmentId: line.segment, lineId: null }, // Templates do segmento (sem vínculo de linha)
@@ -156,9 +159,9 @@ export class TemplatesService {
     }));
   }
 
-  async findOne(id: number) {
-    const template = await this.prisma.template.findUnique({
-      where: { id },
+  async findOne(id: number, tenantId: string) {
+    const template = await this.prisma.template.findFirst({
+      where: { id, tenantId },
     });
 
     if (!template) {
@@ -172,9 +175,9 @@ export class TemplatesService {
     };
   }
 
-  async findByLine(lineId: number) {
+  async findByLine(lineId: number, tenantId: string) {
     const templates = await this.prisma.template.findMany({
-      where: { lineId },
+      where: { lineId, tenantId },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -185,8 +188,8 @@ export class TemplatesService {
     }));
   }
 
-  async update(id: number, updateTemplateDto: UpdateTemplateDto) {
-    await this.findOne(id);
+  async update(id: number, updateTemplateDto: UpdateTemplateDto, tenantId: string) {
+    await this.findOne(id, tenantId);
 
     const data: any = { ...updateTemplateDto };
 
@@ -198,33 +201,49 @@ export class TemplatesService {
       data.variables = JSON.stringify(updateTemplateDto.variables);
     }
 
-    const updated = await this.prisma.template.update({
-      where: { id },
+    // Use updateMany with composite where to prevent cross-tenant write
+    // even if id collision occurred.
+    const result = await this.prisma.template.updateMany({
+      where: { id, tenantId },
       data,
+    });
+
+    if (result.count === 0) {
+      throw new NotFoundException(`Template com ID ${id} não encontrado`);
+    }
+
+    const updated = await this.prisma.template.findFirst({
+      where: { id, tenantId },
     });
 
     return {
       ...updated,
-      buttons: updated.buttons ? JSON.parse(updated.buttons) : null,
-      variables: updated.variables ? JSON.parse(updated.variables) : null,
+      buttons: updated?.buttons ? JSON.parse(updated.buttons) : null,
+      variables: updated?.variables ? JSON.parse(updated.variables) : null,
     };
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, tenantId: string) {
+    await this.findOne(id, tenantId);
 
-    return this.prisma.template.delete({
-      where: { id },
+    const result = await this.prisma.template.deleteMany({
+      where: { id, tenantId },
     });
+
+    if (result.count === 0) {
+      throw new NotFoundException(`Template com ID ${id} não encontrado`);
+    }
+
+    return { id, deleted: true };
   }
 
   /**
    * Sincroniza template com WhatsApp Cloud API
    */
-  async syncWithCloudApi(id: number) {
-    const template = await this.findOne(id);
-    const line = await this.prisma.linesStock.findUnique({
-      where: { id: template.lineId },
+  async syncWithCloudApi(id: number, tenantId: string) {
+    const template = await this.findOne(id, tenantId);
+    const line = await this.prisma.linesStock.findFirst({
+      where: { id: template.lineId ?? undefined, tenantId },
     });
 
     if (!line || !line.oficial) {
@@ -305,9 +324,9 @@ export class TemplatesService {
         }
       );
 
-      // Atualizar status do template
-      await this.prisma.template.update({
-        where: { id },
+      // Atualizar status do template (escopado ao tenant)
+      await this.prisma.template.updateMany({
+        where: { id, tenantId },
         data: {
           status: 'SUBMITTED',
           namespace: response.data.id,
@@ -322,8 +341,8 @@ export class TemplatesService {
     } catch (error) {
       console.error('Erro ao sincronizar template:', error.response?.data || error.message);
 
-      await this.prisma.template.update({
-        where: { id },
+      await this.prisma.template.updateMany({
+        where: { id, tenantId },
         data: { status: 'REJECTED' },
       });
 
@@ -336,8 +355,8 @@ export class TemplatesService {
   /**
    * Envia template para um contato (1x1)
    */
-  async sendTemplate(dto: SendTemplateDto, user?: any) {
-    const template = await this.findOne(dto.templateId);
+  async sendTemplate(dto: SendTemplateDto, user: any, tenantId: string) {
+    const template = await this.findOne(dto.templateId, tenantId);
 
     // Normalizar telefone (adicionar 55, remover caracteres especiais)
     const normalizedPhone = this.phoneValidationService.normalizePhone(dto.phone);
@@ -356,9 +375,9 @@ export class TemplatesService {
         throw new BadRequestException('Você não tem permissão para iniciar conversas 1x1');
       }
 
-      // Validar que a linha pertence ao segmento do operador
-      const selectedLine = await this.prisma.linesStock.findUnique({
-        where: { id: lineId },
+      // Validar que a linha pertence ao segmento do operador (escopada ao tenant)
+      const selectedLine = await this.prisma.linesStock.findFirst({
+        where: { id: lineId, tenantId },
       });
 
       if (!selectedLine) {
@@ -374,17 +393,17 @@ export class TemplatesService {
       }
     }
 
-    const line = await this.prisma.linesStock.findUnique({
-      where: { id: lineId },
+    const line = await this.prisma.linesStock.findFirst({
+      where: { id: lineId, tenantId },
     });
 
     if (!line) {
       throw new NotFoundException(`Linha com ID ${lineId} não encontrada`);
     }
 
-    // Verificar blocklist (usar telefone normalizado)
+    // Verificar blocklist (escopada ao tenant)
     const isBlocked = await this.prisma.blockList.findFirst({
-      where: { phone: normalizedPhone },
+      where: { phone: normalizedPhone, tenantId },
     });
 
     if (isBlocked) {
@@ -416,6 +435,7 @@ export class TemplatesService {
         messageId: result.messageId,
         variables: variables.length > 0 ? JSON.stringify(variables) : null,
         errorMessage: result.error,
+        tenantId,
       },
     });
 
@@ -428,9 +448,9 @@ export class TemplatesService {
         messageText = messageText.replace(`{{${v.key}}}`, v.value);
       });
 
-      // Buscar contato para obter segmento (usar telefone normalizado)
+      // Buscar contato para obter segmento (usar telefone normalizado, escopado ao tenant)
       const contact = await this.prisma.contact.findFirst({
-        where: { phone: normalizedPhone },
+        where: { phone: normalizedPhone, tenantId },
       });
 
       // Buscar operador se userId foi fornecido
@@ -447,6 +467,7 @@ export class TemplatesService {
           contactPhone: normalizedPhone,
           userLine: lineId,
           tabulation: null,
+          tenantId,
         },
         orderBy: { datetime: 'desc' },
       });
@@ -477,6 +498,7 @@ export class TemplatesService {
             message: `template: ${messageText}`,
             sender: 'operator',
             messageType: 'template',
+            tenantId,
           },
         });
       }
@@ -583,8 +605,8 @@ export class TemplatesService {
   /**
    * Envia template para múltiplos contatos (massivo)
    */
-  async sendTemplateMassive(dto: SendTemplateMassiveDto) {
-    const template = await this.findOne(dto.templateId);
+  async sendTemplateMassive(dto: SendTemplateMassiveDto, user: any, tenantId: string) {
+    const template = await this.findOne(dto.templateId, tenantId);
     const lineId = dto.lineId || template.lineId;
 
     const results: Array<{
@@ -596,13 +618,17 @@ export class TemplatesService {
 
     for (const recipient of dto.recipients) {
       try {
-        const result = await this.sendTemplate({
-          templateId: dto.templateId,
-          phone: recipient.phone,
-          contactName: recipient.contactName,
-          variables: recipient.variables,
-          lineId,
-        });
+        const result = await this.sendTemplate(
+          {
+            templateId: dto.templateId,
+            phone: recipient.phone,
+            contactName: recipient.contactName,
+            variables: recipient.variables,
+            lineId,
+          },
+          user,
+          tenantId,
+        );
 
         results.push({
           phone: recipient.phone,
@@ -634,10 +660,13 @@ export class TemplatesService {
   /**
    * Obtém histórico de envios de um template
    */
-  async getTemplateHistory(templateId: number, filters?: any) {
+  async getTemplateHistory(templateId: number, tenantId: string, filters?: any) {
+    // Confirma que o template pertence ao tenant antes de devolver histórico
+    await this.findOne(templateId, tenantId);
+
     const { startDate, endDate, status } = filters || {};
 
-    const where: any = { templateId };
+    const where: any = { templateId, tenantId };
 
     if (startDate || endDate) {
       where.createdAt = {};
@@ -658,25 +687,28 @@ export class TemplatesService {
   /**
    * Obtém estatísticas de um template
    */
-  async getTemplateStats(templateId: number) {
+  async getTemplateStats(templateId: number, tenantId: string) {
+    // Confirma que o template pertence ao tenant
+    await this.findOne(templateId, tenantId);
+
     const total = await this.prisma.templateMessage.count({
-      where: { templateId },
+      where: { templateId, tenantId },
     });
 
     const sent = await this.prisma.templateMessage.count({
-      where: { templateId, status: 'SENT' },
+      where: { templateId, tenantId, status: 'SENT' },
     });
 
     const delivered = await this.prisma.templateMessage.count({
-      where: { templateId, status: 'DELIVERED' },
+      where: { templateId, tenantId, status: 'DELIVERED' },
     });
 
     const read = await this.prisma.templateMessage.count({
-      where: { templateId, status: 'READ' },
+      where: { templateId, tenantId, status: 'READ' },
     });
 
     const failed = await this.prisma.templateMessage.count({
-      where: { templateId, status: 'FAILED' },
+      where: { templateId, tenantId, status: 'FAILED' },
     });
 
     return {
@@ -693,8 +725,8 @@ export class TemplatesService {
   /**
    * Exporta templates para CSV
    */
-  async exportToCsv(filters?: any): Promise<string> {
-    const where: any = {};
+  async exportToCsv(tenantId: string, filters?: any): Promise<string> {
+    const where: any = { tenantId };
 
     if (filters?.search) {
       const search = filters.search.trim();
@@ -717,10 +749,10 @@ export class TemplatesService {
       orderBy: { createdAt: 'desc' },
     });
 
-    // Buscar nomes dos segmentos
+    // Buscar nomes dos segmentos (escopados ao tenant)
     const segmentIds = [...new Set(templates.map(t => t.segmentId).filter(Boolean))];
     const segments = await this.prisma.segment.findMany({
-      where: { id: { in: segmentIds as number[] } },
+      where: { id: { in: segmentIds as number[] }, tenantId },
     });
     const segmentMap = new Map(segments.map(s => [s.id, s.name]));
 
@@ -813,4 +845,3 @@ export class TemplatesService {
     return field;
   }
 }
-
