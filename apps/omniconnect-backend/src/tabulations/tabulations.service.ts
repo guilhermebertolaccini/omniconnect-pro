@@ -9,29 +9,34 @@ import csv from 'csv-parser';
 export class TabulationsService {
   constructor(private prisma: PrismaService) { }
 
-  async create(createTabulationDto: CreateTabulationDto) {
+  async create(createTabulationDto: CreateTabulationDto, tenantId: string) {
     return this.prisma.tabulation.create({
-      data: createTabulationDto,
+      data: { ...createTabulationDto, tenantId },
     });
   }
 
-  async findAll(search?: string) {
+  async findAll(tenantId: string, search?: string) {
     return this.prisma.tabulation.findMany({
-      where: search ? {
-        name: {
-          contains: search,
-          mode: 'insensitive',
-        },
-      } : undefined,
+      where: {
+        tenantId,
+        ...(search
+          ? {
+              name: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            }
+          : {}),
+      },
       orderBy: {
         name: 'asc',
       },
     });
   }
 
-  async findOne(id: number) {
-    const tabulation = await this.prisma.tabulation.findUnique({
-      where: { id },
+  async findOne(id: number, tenantId: string) {
+    const tabulation = await this.prisma.tabulation.findFirst({
+      where: { id, tenantId },
     });
 
     if (!tabulation) {
@@ -41,24 +46,41 @@ export class TabulationsService {
     return tabulation;
   }
 
-  async update(id: number, updateTabulationDto: UpdateTabulationDto) {
-    await this.findOne(id);
+  async update(id: number, updateTabulationDto: UpdateTabulationDto, tenantId: string) {
+    await this.findOne(id, tenantId);
 
-    return this.prisma.tabulation.update({
-      where: { id },
+    const result = await this.prisma.tabulation.updateMany({
+      where: { id, tenantId },
       data: updateTabulationDto,
     });
-  }
 
-  async remove(id: number) {
-    await this.findOne(id);
+    if (result.count === 0) {
+      throw new NotFoundException(`Tabulação com ID ${id} não encontrada`);
+    }
 
-    return this.prisma.tabulation.delete({
-      where: { id },
+    return this.prisma.tabulation.findFirst({
+      where: { id, tenantId },
     });
   }
 
-  async importFromCSV(file: Express.Multer.File): Promise<{ success: number; errors: string[] }> {
+  async remove(id: number, tenantId: string) {
+    await this.findOne(id, tenantId);
+
+    const result = await this.prisma.tabulation.deleteMany({
+      where: { id, tenantId },
+    });
+
+    if (result.count === 0) {
+      throw new NotFoundException(`Tabulação com ID ${id} não encontrada`);
+    }
+
+    return { id, deleted: true };
+  }
+
+  async importFromCSV(
+    file: Express.Multer.File,
+    tenantId: string,
+  ): Promise<{ success: number; errors: string[] }> {
     if (!file || !file.buffer) {
       throw new BadRequestException('Arquivo CSV não fornecido');
     }
@@ -145,9 +167,10 @@ export class TabulationsService {
 
               processedNames.add(normalizedName);
 
-              // Verificar se tabulação já existe
+              // Verificar se tabulação já existe NO TENANT (não global)
               const existing = await this.prisma.tabulation.findFirst({
                 where: {
+                  tenantId,
                   name: {
                     equals: name,
                     mode: 'insensitive',
@@ -170,7 +193,8 @@ export class TabulationsService {
                   isLido,
                   isRetorno,
                   isCPCProd,
-                  isBoleto
+                  isBoleto,
+                  tenantId,
                 },
               });
 
