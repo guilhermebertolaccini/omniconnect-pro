@@ -26,6 +26,7 @@ Documentação de contexto e plano de migração para unificar 4 produtos num ú
 | 4 | [`sprint-4-bridge-processors.md`](./sprint-4-bridge-processors.md) | Sprint 4 — Bridge processors + emitters |
 | 5 | [`sprint-5-insight-ai-v2.md`](./sprint-5-insight-ai-v2.md) | Sprint 5 — InsightAI v2 (multi-provider + dashboards) |
 | 6 | [`sprint-6-botify-maturity-plan.md`](./sprint-6-botify-maturity-plan.md) | Plano — Botify à paridade CRM/SAA (integração, motor, CI, tenancy) |
+| Hub SSO | [`sprint-hub-module-access-and-sso-plan.md`](./sprint-hub-module-access-and-sso-plan.md) | Plano — acesso único, tenant efetivo e continuidade entre Hub e módulos externos |
 | Pilot | [`pilot-flow-lead-to-recovery.md`](./pilot-flow-lead-to-recovery.md) | Fluxo referência piloto: anúncio → conversa → IA → CRM → recuperação (aceite e runbook) |
 
 ## Como usar

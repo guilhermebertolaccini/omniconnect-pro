@@ -63,6 +63,25 @@ A Sprint Hub corre **em paralelo** com a Sprint 6 Botify — sem disputar priori
 | **PR 7-exec** | Track B (humano): criar app Meta Developer, provisionar WABA + número de teste, configurar webhook + tokens, deployar via Coolify, executar smoke real, fechar `pilot-run-evidence.md` | 🟠 |
 | **PR 8** | Hub mock isolation — Home + `/executive` KPIs wired ao backend real (`/insight-ai/dashboard/summary` + `/dashboards/pilot-overview`); `/leads/*`, `/journeys/*` e `/settings/*` inicialmente gated por `<MockOnlyPage>` (preview Lovable apenas em `VITE_USE_MOCK_DATA=true`); `/settings/*` recebeu cutover real em F1–F3/Q2 abaixo; `useTenantStats` hook compartilhado | ✅ Esta entrega |
 
+### Proximo bloco Hub - acesso unico entre modulos
+
+Plano detalhado: [`sprint-hub-module-access-and-sso-plan.md`](./sprint-hub-module-access-and-sso-plan.md).
+
+Decisao de produto (2026-05-26): manter a pagina intermediaria antes de abrir
+CRM, OmniHub, Ads Manager e Botify. Cada satellite possui linguagem visual
+propria; a etapa contextual orienta o usuario e continua abrindo o modulo em
+nova aba no MVP. Nao passar JWT ou tenant pela URL.
+
+| Bloco | Entrega | Estado |
+|---|---|---|
+| **H0** | Plano, decisao UX e gates de seguranca/documentacao | ✅ Esta entrega |
+| **H1** | Backend emite nova sessao ao trocar tenant ativo (`POST /auth/switch-tenant`) e rejeita tenant inativo | 🟡 Implementado local; deploy/smoke pendentes |
+| **H2** | Cookie SSO cross-app (host-only API, path/CORS/runbook) | 🟡 Implementado localmente; smoke publicado pendente |
+| **H3** | Hub aplica tenant confirmado antes de habilitar abertura de modulo | 🟡 Implementado local; depende de H2/H4 para SSO completo |
+| **H4** | OmniHub migra `vend_token` para sessao Omni por cookie HttpOnly e realtime tenant-scoped | 🟡 Implementado localmente; smoke publicado pendente |
+| **H5** | Matriz de permissoes Ads alinhada entre Hub, SAA e backend | ⬜ Planejado |
+| **H6-H7** | Hardening CRM/Botify, smoke cross-tenant e rollout controlado | ⬜ Planejado |
+
 ---
 
 ## Sprint Foundation — Régua de Acionamento, pré-requisitos
@@ -163,8 +182,8 @@ O roadmap macro aponta **Fase 3 — Botify Triage** em `docs/09-roadmap.md`; o p
 
 Fechou as 4 arestas que separavam a fundação de "production-ready":
 
-| Bloco | Resumo |
-|---|---|
+| Bloco | Resumo | Commit |
+|---|---|---|
 | **A — Bridges** | `IntegrationConnection.secretHash` → `webhookSecretEncrypted` (AES-256-GCM com `BridgeSecretCipher`, versionado `v1.<iv>.<tag>.<ct>`). `IntegrationEvent.idempotencyKey` agora é unique composto `(tenantId, provider, key)` — colisões cross-tenant não são mais silenciadas. |
 | **B — Auth** | `JwtStrategy` valida `UserTenant.findUnique({ userId_tenantId })` a cada request. Em produção, sem membership → 401. `RolesGuard` lê `tenantRole` primeiro (UserTenant.role) com fallback `user.role`. |
 | **C — InsightAI** | `getJobStatus` é estrito: job sem `tenantId` no payload é 404. `enqueueAnalyzeByPhone` passa `jobId` determinístico `iai:<sha256(...)>` com hour-bucket (dedup real, telefone nunca no Redis). `redactPII` agora cobre CPF, CNPJ, CEP, RG, datas, renda/salário, contrato/matrícula/processo/protocolo/reserva, e endereços (número mascarado, rua preservada). |
@@ -218,8 +237,8 @@ Detalhamento e shape final: ver `docs/migration/sprint-2-saa.md`.
 
 Detalhamento completo: ver `docs/migration/sprint-2-4-saa-frontend.md`.
 
-| Bloco | Resumo | Commit |
-|---|---|---|
+| Bloco | Resumo |
+|---|---|
 | **A — Tenant invitations** | Módulo `tenant-invitations` com CRUD admin (`POST/GET/DELETE`), hierarquia de roles (supervisor não pode dar admin), preview público (`GET by-token/:token`) e aceite em 3 cenários (autenticado / existente+password / novo+name+password). Token aparece **só** na resposta do `POST`. TTL configurável via `TENANT_INVITATION_TTL_HOURS` (default 168h). `OptionalJwtAuthGuard` para o aceite. | `34ce77a` |
 | **B.1 — RefreshToken model** | Migration `20260519100000_sprint_2_4_refresh_tokens`: model `RefreshToken` com `tokenHash` único (sha256), `successorId` self-relation (rotation chain), `expiresAt/revokedAt`. | `fdbd5a5` |
 | **B.2 — Refresh rotativo** | `RefreshTokenService` (issue/rotate/revoke/revokeAllForUser). `POST /auth/login` agora retorna `{ accessToken, user }` + seta cookie HttpOnly em `/auth/refresh`. Novos endpoints: `POST /auth/refresh` (reuse detection auditada como `AUTH_REFRESH_REUSE_DETECTED`), `POST /auth/logout`, `POST /auth/logout-all`. `cookie-parser` global. | `ba8039d` |
