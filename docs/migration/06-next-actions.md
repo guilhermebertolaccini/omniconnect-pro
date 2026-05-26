@@ -74,13 +74,44 @@ nova aba no MVP. Nao passar JWT ou tenant pela URL.
 
 | Bloco | Entrega | Estado |
 |---|---|---|
-| **H0** | Plano, decisao UX e gates de seguranca/documentacao | ✅ Esta entrega |
-| **H1** | Backend emite nova sessao ao trocar tenant ativo (`POST /auth/switch-tenant`) e rejeita tenant inativo | 🟡 Implementado local; deploy/smoke pendentes |
-| **H2** | Cookie SSO cross-app (host-only API, path/CORS/runbook) | 🟡 Implementado localmente; smoke publicado pendente |
-| **H3** | Hub aplica tenant confirmado antes de habilitar abertura de modulo | 🟡 Implementado local; depende de H2/H4 para SSO completo |
-| **H4** | OmniHub migra `vend_token` para sessao Omni por cookie HttpOnly e realtime tenant-scoped | 🟡 Implementado localmente; smoke publicado pendente |
+| **H0** | Plano, decisao UX e gates de seguranca/documentacao | ✅ Esta entrega (commit `1185b8b`) |
+| **H1** | Backend emite nova sessao ao trocar tenant ativo (`POST /auth/switch-tenant`) e rejeita tenant inativo | ✅ Comitado local (`36bfd14`); push + smoke publicado pendentes |
+| **H2** | Cookie SSO cross-app (host-only API, path/CORS/runbook) | ✅ Comitado local (`39c55ef`); push + smoke publicado pendentes |
+| **H3** | Hub aplica tenant confirmado antes de habilitar abertura de modulo | ✅ Comitado local (`9ff49b5`); depende de H2/H4 para SSO completo |
+| **H4** | OmniHub migra `vend_token` para sessao Omni por cookie HttpOnly e realtime tenant-scoped | ✅ Comitado local (`9498d88`); push + smoke publicado pendentes |
 | **H5** | Matriz de permissoes Ads alinhada entre Hub, SAA e backend | ⬜ Planejado |
 | **H6-H7** | Hardening CRM/Botify, smoke cross-tenant e rollout controlado | ⬜ Planejado |
+
+### Hardening fora do sprint Hub (2026-05-26)
+
+Junto com H1–H4 entraram fixes complementares também ainda não publicados:
+
+| Item | Commit | Estado |
+|---|---|---|
+| `chore(backend): parse REDIS_URL for coolify managed redis` | `c30dd48` | ✅ Comitado; push pendente |
+| `chore(backend): harden dev seed + add production tenant bootstrap` | `6b3bb17` | ✅ Comitado; push pendente. **Operacional**: a partir desta entrega, qualquer redeploy Coolify com DB vazio exige `SEED_*_PASSWORD` ou `PRODUCTION_BOOTSTRAP_*` — caso contrário `docker-entrypoint.sh` sai com `exit 1`. |
+
+### Audit drift fixes — 2026-05-26
+
+Resposta aos cinco itens críticos surfaceados na auditoria de 2026-05-25 (cursor rules vs codigo). Cada fix em commit isolado para revisão e revert independente:
+
+| Drift | Commit | Resumo |
+|---|---|---|
+| Fallback `JWT_SECRET` literal em `auth.module.ts` | `7771deb` | Throw on missing — fail-closed |
+| Fallback `JWT_SECRET` literal em `crm-realtime.module.ts` | `55bd480` | Throw on missing — fail-closed |
+| `auth.service.ts` aceita senha plaintext quando `NODE_ENV=development` | `674562a` | Branch removido — argon2-only |
+| `cloud-api-webhook.controller.ts` lê `WEBHOOK_VERIFY_TOKEN` divergente do `.env.staging` | `d0e5a21` | Alinhado para `WHATSAPP_VERIFY_TOKEN` |
+| `templates/templates.service.ts` sem filtro por tenant | `03acb04` | `ensureTenant` no controller + `tenantId` em toda query Prisma (51 referências) |
+| `tabulations/tabulations.service.ts` sem filtro por tenant | `a136228` | `ensureTenant` no controller + scoping em CSV import + CRUD (16 referências) |
+| `users/users.service.ts` sem filtro por tenant (admin via global; supervisor via email-domain) | `d3b9ddf` | `ensureTenant` + scoping via `UserTenant.some({ tenantId })`; remoção das heurísticas `findAllByEmailDomain`/`getOnlineOperatorsByEmailDomain`; `remove` agora apaga apenas a membership ativa (e o user global só se for a última) |
+
+### Deferred para próxima sessão
+
+| Pendência | Por quê foi adiada | Esforço estimado |
+|---|---|---|
+| **Response envelope global** (`{ data, meta }` / `{ error: { code, message } }`) per `docs/06-api-standards.md` | Não trivial: exige `ResponseInterceptor` + `ExceptionFilter` em `common/`, com decisão sobre exempção de endpoints existentes vs atualização sincronizada dos cinco clients (Hub, OmniHub, CRM, SAA, Botify) | 1 sessão dedicada |
+| **e2e isolation specs** para templates / tabulations / users (mirror de `test/tenant-isolation.e2e.spec.ts`) | Fix do leak já está no código; specs são scaffolding de regressão. Cada spec ≈ 100–150 linhas com in-memory Prisma | ~3 horas |
+| **Push + deploy** dos 14 commits desta entrega | Gate manual. Antes de redeploy do backend no Coolify, garantir que `SEED_*_PASSWORD` ou `PRODUCTION_BOOTSTRAP_*` estejam configurados (ver §"Hardening fora do sprint Hub") e que nenhum cliente (mobile/scripts) ainda dependa de `refresh_token` no body de `/auth/login` (agora cookie-only) | Janela de manutenção |
 
 ---
 
