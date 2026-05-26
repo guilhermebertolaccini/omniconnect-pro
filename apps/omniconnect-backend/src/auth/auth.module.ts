@@ -16,17 +16,25 @@ import { SystemEventsModule } from '../system-events/system-events.module';
     PassportModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET') || 'dev-secret-key-change-in-production',
-        signOptions: {
-          // Access JWT é curto por padrão — refresh token cuida da persistência
-          // da sessão. Mantemos override via JWT_EXPIRES_IN para retrocompat.
-          expiresIn:
-            configService.get('JWT_EXPIRES_IN') ||
-            configService.get('JWT_EXPIRATION') ||
-            '15m',
-        },
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error(
+            'JWT_SECRET is required. Refusing to boot with a hardcoded fallback — set it in the environment.',
+          );
+        }
+        return {
+          secret,
+          signOptions: {
+            // Access JWT é curto por padrão — refresh token cuida da persistência
+            // da sessão. Mantemos override via JWT_EXPIRES_IN para retrocompat.
+            expiresIn:
+              configService.get('JWT_EXPIRES_IN') ||
+              configService.get('JWT_EXPIRATION') ||
+              '15m',
+          },
+        };
+      },
     }),
     SystemEventsModule,
   ],
