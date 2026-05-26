@@ -32,7 +32,12 @@ Use sempre:
 - Token de reset com expiração curta (15min)
 - Proteção contra brute force (rate limit + lockout temporário) via módulo `rate-limiting/`
 - **`JwtStrategy` recusa tokens sem `tenantId`** (ou com `default-tenant`) em `NODE_ENV=production`. Em dev/test esses valores ainda são aceitos por compatibilidade. Detalhe em `03-multitenancy.md`.
-- **`JwtStrategy` re-valida membership em cada request** via `UserTenant.findUnique({ userId_tenantId })`. Em produção, sem membership → 401, mesmo com token válido (defende contra usuários removidos de um tenant antes do token expirar). Em dev → warning. O role efetivo para `RolesGuard` é `UserTenant.role` (`req.user.tenantRole`), com fallback para `User.role`.
+- **`POST /auth/login` não emite sessão sem membership de tenant real e ativo em produção.** Assim, uma conta sem `UserTenant`, ou ligada apenas a empresa desativada, não entra no Hub com permissões aparentes nem gera uma sessão inválida.
+- **`JwtStrategy` re-valida membership e atividade do tenant em cada request** via `UserTenant.findUnique({ userId_tenantId })`. Em produção, sem membership ou com tenant inativo → 401, mesmo com token válido. Em dev, membership ausente gera warning; tenant explicitamente inativo continua bloqueado. O role efetivo para `RolesGuard` é `UserTenant.role` (`req.user.tenantRole`), com fallback para `User.role`.
+- **`POST /auth/switch-tenant` gira a sessão ao trocar empresa.** O endpoint valida `UserTenant` e `Tenant.isActive` no servidor, usa o role do vínculo, impede combinar access token com refresh cookie de outro usuário e faz vínculo/revogação do refresh em transação condicional contra rotação concorrente. Sucesso/recusa são auditados sem gravar token ou PII. O Hub não envia tenant nem JWT pela URL do módulo.
+- **Refresh cookie de SSO é host-only na API.** O cookie usa `HttpOnly`, `Secure` em HTTPS, `SameSite=Lax` e `Path=/auth`; não configurar `COOKIE_DOMAIN` na topologia atual. Frontends restauram sessão chamando a API com `credentials: include`, mantendo o access token somente em memória.
+- **`POST /auth/refresh` revalida a membership e `GET /auth/me` é sanitizado.** Uma membership removida ou tenant desativado impede continuidade da sessão; a resposta de identidade não retorna senha nem campos internos da linha de usuário.
+- **Realtime operacional respeita tenant ativo.** WebSockets recusam sessão sem membership ativa, entram em sala por tenant e regras de painel/CPC/repescagem/alocação nunca consultam outro tenant. `ContactRepescagem` usa unicidade composta por tenant.
 
 ## Authorization
 

@@ -28,9 +28,10 @@ pilot ponta-a-ponta (PR 7 — Meta webhook em domínio público HTTPS).
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-Todos os apps moram **sob o mesmo parent domain** para que o refresh cookie
-HttpOnly (`Domain=.staging.omniconnectpro.<domain>`) funcione cross-subdomain
-sem trocas server-to-server.
+Todos os apps moram **sob o mesmo parent domain** para que chamadas HTTPS dos
+frontends para a API permaneçam same-site com `SameSite=Lax`. O refresh cookie
+HttpOnly é **host-only no host da API**; cada módulo chama
+`POST https://api.<...>/auth/refresh` com credenciais incluídas.
 
 ## 2. Pré-requisitos
 
@@ -124,7 +125,8 @@ docker compose -f docker-compose.staging.yml down
    - `REDIS_HOST`/`REDIS_PORT` idem.
    - `JWT_SECRET`, `BRIDGE_SECRET_KEY`, `BOTIFY_INTERNAL_SYNC_SECRET` — secrets §3.
    - `CORS_ORIGINS` = todas as URLs HTTPS dos frontends.
-   - `COOKIE_DOMAIN=.staging.omniconnectpro.<domain>`.
+   - Não configurar `COOKIE_DOMAIN`; o refresh cookie deve ficar host-only na API.
+   - `REFRESH_COOKIE_NAME=oc_refresh` e `REFRESH_COOKIE_PATH=/auth`.
    - `COOKIE_SECURE=true` (HTTPS obrigatório).
    - `OPENAI_API_KEY` opcional — sem ele, InsightAI usa heurística.
    - `INSIGHT_AI_ON_BOTIFY_HANDOFF=true`.
@@ -141,6 +143,30 @@ docker compose -f docker-compose.staging.yml down
     # No Coolify "Execute Command on Application":
     pnpm --filter omniconnect-backend exec prisma migrate deploy
     ```
+
+### 5.2.1 Bootstrap de tenant para conta existente
+
+O seed demo usa `default-tenant` e fica desabilitado em produção. Para
+associar uma conta existente a um tenant real durante um deploy controlado,
+adicione temporariamente ao backend:
+
+```env
+PRODUCTION_BOOTSTRAP_ENABLED=true
+PRODUCTION_BOOTSTRAP_TENANT_ID=tatica-marketing
+PRODUCTION_BOOTSTRAP_TENANT_NAME="Tatica Marketing"
+PRODUCTION_BOOTSTRAP_ADMIN_EMAIL=admin@vend.com
+PRODUCTION_BOOTSTRAP_ADMIN_PASSWORD="<senha-nova-segura>"
+```
+
+O bootstrap:
+
+- recusa `default-tenant`;
+- falha se o usuário ainda não existir;
+- cria/ativa somente o tenant informado e sua membership `admin`;
+- se uma senha nova for informada, altera seu hash e revoga sessões refresh.
+
+Após o log de sucesso, remova as variáveis `PRODUCTION_BOOTSTRAP_*` e reinicie
+o backend. Nunca mantenha a senha de bootstrap no ambiente permanente.
 
 ### 5.3 Hub (`omniconnect-hub`)
 
@@ -202,8 +228,9 @@ curl -fsS https://api.staging.<...>/health
 # 2. Hub carrega + redireciona não-autenticado para /login
 curl -sI https://app.staging.<...>/
 
-# 3. Cookie domain correto (após login real no browser)
-# DevTools → Application → Cookies → ver Domain=.staging.<...>
+# 3. Cookie correto (após login real no browser)
+# DevTools → Application → Cookies → api.staging.<...>
+# Esperado: cookie oc_refresh HttpOnly, Secure, Path=/auth, sem Domain compartilhado.
 
 # 4. Scripts de validação local agora apontam para staging
 export OMNICONNECT_BACKEND_URL=https://api.staging.<...>
@@ -249,7 +276,7 @@ at rest.
 
 | Sintoma | Causa provável | Fix |
 |---|---|---|
-| `401 Unauthorized` no Hub após login OK | Cookie domain errado | `COOKIE_DOMAIN=.staging.<…>` (com ponto inicial) |
+| `401 Unauthorized` num módulo após login OK | Cookie da API ausente ou request sem credenciais | Verificar `oc_refresh` host-only em `api.<…>`, `Path=/auth`, CORS e `credentials: include` |
 | `CORS error` no browser | `CORS_ORIGINS` desatualizado | Adicionar a URL do frontend exato |
 | `prisma migrate deploy` falha no boot | `DATABASE_URL` incorreto / FK em conflito | Verificar URL interna e estado da DB |
 | `BullMQ` workers não consomem | Redis inacessível ou senha errada | `REDIS_HOST`/`REDIS_PORT` apontando para serviço Coolify |

@@ -124,13 +124,12 @@ docker compose --env-file .env.staging -f docker-compose.staging.yml down -v
      -d '{"email":"...","password":"..."}'
    ```
 
-4. **Usuários do seed só existem no banco onde o seed rodou.** O entrypoint do staging só roda seed se `User.count = 0`. Se você fez `/auth/register` antes, o seed pula. Pra forçar:
-   ```bash
-   docker exec -e DATABASE_URL='postgresql://omni:local-staging-pw@postgres:5432/omniconnect_staging?schema=public' \
-     omni-staging-backend npx tsx prisma/seed.ts
-   ```
+4. **O seed demo é exclusivo da stack dev.** Ele exige senhas `SEED_*_PASSWORD`
+   e não roda com `NODE_ENV=production`. No staging mirror/real, crie uma
+   conta pelo fluxo controlado ou associe uma conta já existente com o
+   bootstrap descrito em `coolify-staging.md`.
 
-5. **Memberships com `tenantId='default-tenant'` falham em produção.** O `JwtStrategy` em `NODE_ENV=production` rejeita esse valor explícito. Se você seedou e os logins dão 401 depois, é provavelmente isso — repointe para um tenant real via SQL.
+5. **Memberships com `tenantId='default-tenant'` falham em produção.** O `JwtStrategy` em `NODE_ENV=production` rejeita esse valor explícito. Se você seedou e os logins dão 401 depois, execute o bootstrap controlado `prisma:seed:production-tenant` com um tenant real, conforme `docs/deployment/coolify-staging.md`; não faça ajuste SQL manual.
 
 6. **`.env.local` é gerado pelos scripts.** Não edite à mão; o próximo `hub-aim-*.sh` sobrescreve. Se precisar de override pessoal, suba `.env.local.personal` (não vai pro Vite — não tem precedência).
 

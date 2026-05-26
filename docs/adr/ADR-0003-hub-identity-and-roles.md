@@ -88,8 +88,12 @@ Regras não-negociáveis:
 
 - **Nunca** passar JWT em querystring ou hash.
 - **Nunca** armazenar Meta tokens, OpenAI keys, refresh tokens em `localStorage`.
-- Cookie de refresh deve ter **`Domain`** comum ao parent domain de staging/prod (`.omniconnectpro.<dominio>`), `SameSite=Lax` ou `None+Secure` consoante a topologia, e `Path=/auth/refresh`.
-- Cada app satélite, ao receber a navegação, restaura sessão por `POST /auth/refresh` (cookie). Não há SSO baseado em token compartilhado.
+- Cookie de refresh deve ser **host-only no host da API**, `HttpOnly`,
+  `Secure` em ambientes HTTPS, `SameSite=Lax` e `Path=/auth`. Não configurar
+  `COOKIE_DOMAIN` na topologia publicada atual.
+- Cada app satélite, ao receber a navegação, restaura sessão por
+  `POST https://api.<dominio>/auth/refresh` com `credentials: include`.
+  Não há SSO baseado em token compartilhado.
 - Acessos negados no Hub (`hasModuleAccess === false`) são UX-only; a autorização real continua a ser feita no backend por endpoint.
 
 ### 5. Supabase no projeto Lovable original
@@ -123,6 +127,8 @@ Regras não-negociáveis:
 
 - A `app_role` enum no Supabase fica sem uso em produção. Pode ser removido das migrations futuras quando o `apps/omniconnect-hub` for promovido a job bloqueante no CI.
 - O papel `ativador` continua existindo no backend mas sem item próprio no menu Hub. Visível em vistas admin (Settings) quando o caso aparecer.
+- Uma topologia futura em que a API não possa receber o cookie host-only exigirá
+  nova decisão de segurança antes de ampliar `Domain` do cookie.
 
 ## Notes
 

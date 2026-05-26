@@ -50,30 +50,52 @@ Acesso via decorator `@CurrentUser()` (em `common/decorators/current-user.decora
 
 A `JwtStrategy` recusa qualquer token que chegue **sem `tenantId`** ou com `tenantId === 'default-tenant'` quando `NODE_ENV === 'production'`. Em desenvolvimento e teste o valor `default-tenant` continua aceito por compatibilidade — apenas para o ambiente local.
 
-Além disso, a Sprint 1.3 adicionou **re-validação de membership em cada request** via `UserTenant.findUnique({ userId_tenantId })`. Sem isso, um token antigo de um usuário removido do tenant continuava válido até expirar.
+`POST /auth/login` também falha em produção quando o usuário não possui uma membership `UserTenant` com tenant real e ativo. Ele não deve emitir uma sessão que será recusada na primeira requisição autenticada, nem marcar operador como online sem contexto tenant válido.
+
+Além disso, a Sprint 1.3 adicionou **re-validação de membership em cada request** via `UserTenant.findUnique({ userId_tenantId })`. A validação agora também rejeita `Tenant.isActive === false`. Sem isso, um token antigo de um usuário removido de um tenant, ou de um tenant desativado, continuava válido até expirar.
 
 Comportamento atual:
 
-| Ambiente | Sem `tenantId` no JWT | `default-tenant` | Sem `UserTenant` para o par (user, tenant) |
-|---|---|---|---|
-| `production` | 401 | 401 | 401 (`"not a member of the requested tenant"`) |
-| `development` | aceita como `default-tenant` | aceita | warning + aceita |
+| Ambiente | Sem `tenantId` no JWT | `default-tenant` | Sem `UserTenant` para o par (user, tenant) | Tenant inativo |
+|---|---|---|---|---|
+| `production` | 401 | 401 | 401 (`"not a member of the requested tenant"`) | 401 |
+| `development` | aceita como `default-tenant` | aceita | warning + aceita | 401 quando identificado |
 
 ```typescript
 // apps/omniconnect-backend/src/auth/strategies/jwt.strategy.ts (resumo)
 const membership = await this.prisma.userTenant.findUnique({
   where: { userId_tenantId: { userId: user.id, tenantId } },
-  select: { role: true },
+  include: { tenant: { select: { isActive: true } } },
 });
 
 if (!membership && inProd) {
   throw new UnauthorizedException('User is not a member of the requested tenant');
+}
+if (membership?.tenant?.isActive === false) {
+  throw new UnauthorizedException('Requested tenant is inactive');
 }
 
 return { ...user, tenantId, tenantRole: membership?.role ?? null };
 ```
 
 `req.user.tenantRole` é o role **por tenant** (de `UserTenant.role`), que é a fonte de verdade para autorização multi-tenant. `RolesGuard` lê `tenantRole` primeiro e cai para o `user.role` global apenas se ausente.
+
+### Troca de tenant da sessão (Hub)
+
+`POST /auth/switch-tenant` recebe apenas a escolha do tenant no body e exige access token atual mais o cookie HttpOnly de refresh. O backend valida `UserTenant` e `Tenant.isActive`, obtém o papel de `UserTenant.role`, rotaciona a sessão e devolve um novo access token escopado. Tokens e tenant nunca são transportados na URL de abertura de módulos.
+
+Tentativas aceitas e recusadas geram eventos `AUTH_TENANT_SWITCHED` e `AUTH_TENANT_SWITCH_REJECTED`, sem registrar token ou PII. O Hub mantém a tela intermediária dos módulos, mas só libera a abertura quando a empresa exibida coincide com a sessão confirmada.
+
+`POST /auth/refresh` revalida a membership antes de emitir o novo access
+token; remover o usuário de um tenant encerra a continuidade da sessão nesse
+tenant. `GET /auth/me` retorna somente campos públicos e o papel efetivo da
+membership, sem expor a linha bruta de `User`.
+
+No OmniHub operacional, o WebSocket obtém o tenant exclusivamente do JWT,
+revalida `UserTenant`/`Tenant.isActive`, entra em uma sala por tenant e envia
+eventos somente nessa sala. Configurações do painel, CPC, repescagem,
+alocação de linhas e mensagens automáticas também recebem `tenantId`. A chave
+de repescagem é composta por `(tenantId, contactPhone, operatorId)`.
 
 ### Helper `ensureTenant` (Sprint 1.1)
 
@@ -159,11 +181,12 @@ Esses não passam por `IntegrationConnection` — vêm direto do provedor. A reg
 ```typescript
 // apps/omniconnect-backend/src/webhooks/cloud-api-webhook.service.ts
 const line = await prisma.linesStock.findFirst({ where: { numberId: phoneNumberId, oficial: true } });
-const app = await prisma.app.findUnique({ where: { id: line.appId } });
-const tenantId: string = app?.tenantId || 'default-tenant'; // App é trusted
+const app = await prisma.app.findFirst({ where: { id: line.appId, tenantId: line.tenantId } });
+const tenantId: string = line.tenantId; // LinesStock é o vínculo interno trusted
 ```
 
-`(line as any).app.tenantId` nunca depende de campos do payload do WhatsApp.
+`line.tenantId` nunca depende de campos do payload do WhatsApp; o cadastro de
+`phoneNumberId`/linha deve permanecer único e controlado na operação Meta.
 
 ## Background jobs
 
