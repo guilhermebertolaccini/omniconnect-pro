@@ -11,12 +11,20 @@ import { CrmRealtimeService } from './crm-realtime.service';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.get('JWT_SECRET') || 'dev-jwt-secret-change-me',
-        signOptions: {
-          expiresIn: config.get('JWT_EXPIRES_IN') || '24h',
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const secret = config.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error(
+            'JWT_SECRET is required for crm-realtime. Refusing to boot with a hardcoded fallback — set it in the environment.',
+          );
+        }
+        return {
+          secret,
+          signOptions: {
+            expiresIn: config.get('JWT_EXPIRES_IN') || '24h',
+          },
+        };
+      },
     }),
   ],
   providers: [PrismaService, CrmRealtimeService, CrmGateway],
