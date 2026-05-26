@@ -203,8 +203,8 @@ para módulos no `omniconnect-backend`, em padrão Strangler Fig.
 
 Detalhamento e shape final: ver `docs/migration/sprint-2-saa.md`.
 
-| Bloco | Resumo | Commit |
-|---|---|---|
+| Bloco | Resumo |
+|---|---|
 | **A — Schema** | Novo enum `AdPlatform { meta, google_ads, tiktok_ads }` + 7 models tenant-scoped: `TenantInvitation`, `AdvertiserCompany`, `AdvertiserCompanyAccess`, `AdPlatformConnection` (tokens AES-256-GCM), `AdCampaignAIAnalysis`, `OrganicPostExperiment(+Variant)`. Migration única `20260518140000_sprint_2_saa_schema`. |
 | **B — `ad-platform-connections`** | CRUD tenant-scoped com cifra ponta-a-ponta via `BridgeSecretCipher`. Listagem nunca devolve token nem hint. Endpoint `/:id/test` valida só o decrypt. Endpoint `getDecryptedAccessToken` é o único chokepoint de plaintext, usado exclusivamente pelos proxies. |
 | **C — `advertiser-companies` + proxies** | CRUD + proxy `POST /:id/platforms/:platform/proxy`. Envelope por provider (Meta: token em query, Google: `Authorization: Bearer`, TikTok: `Access-Token`). Defesa SSRF: bloqueia URL absoluta / `..` / sem `/`. Audita cada chamada em `SystemEvent` (sem token, sem body). |
@@ -301,7 +301,7 @@ Detalhamento completo: ver `docs/migration/sprint-3-1-crm-frontend.md`.
 | **A — Auth** | `crm-imobiliario` passou a usar `omniconnectClient` com access token em memória + refresh cookie. `AuthContext`, login, signup e reset fallback sem Supabase. |
 | **B — Properties/Units/Clients** | Contexts migrados para `/crm/properties`, `/crm/units`, `/crm/clients`; mapeamento centralizado em `src/lib/api/crm.ts`. |
 | **C — CRM domain** | Leads/interactions/follow-ups, proposals, contracts, payments/commissions e commission config migrados para `/crm/*`; state machines usam `transition`. |
-| **D — Storage/parser/realtime** | Upload PDF via `/crm/storage/upload`; parser via `/crm/pdf-parser`; realtime `/crm` via WebSocket Socket.io minimal client; document audit temporário local quando não há list endpoint. |
+| **D — Storage/parser/realtime** | Upload PDF via `/crm/storage/upload`; parser via `/crm-pdf-parser`; realtime `/crm` via WebSocket Socket.io minimal client; document audit temporário local quando não há list endpoint. |
 | **E — Cleanup** | Removidos imports, package deps e artefatos Supabase/Lovable (`supabase/`, `bun.lock`, `integrations/*`). |
 | **F — Smoke** | `vite build` verde e Vitest `9/9` verde. `tsc --noEmit` ainda esbarra no baseline de tipos `lucide-react`/React, como no SAA. |
 
