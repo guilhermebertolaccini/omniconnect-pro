@@ -24,17 +24,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
 import { ROLE_LABELS, type Role } from "@/lib/permissions";
 import { NOTIFICATIONS } from "@/lib/mock-data";
 import { getLineHealthAlerts, type LineHealthAlertSeverity } from "@/lib/line-health-alerts";
 import { cn } from "@/lib/utils";
+
+const ENABLE_DEMO_ROLE_SWITCHER =
+  import.meta.env.VITE_USE_MOCK_AUTH === "true" || import.meta.env.VITE_USE_MOCK_DATA === "true";
+const ENABLE_DEMO_NOTIFICATIONS = import.meta.env.VITE_USE_MOCK_DATA === "true";
 
 const ROLES: Role[] = [
   "corretor",
@@ -52,7 +52,8 @@ const LANGS = [
 ] as const;
 
 function SeverityDot({ severity }: { severity: LineHealthAlertSeverity }) {
-  const Icon = severity === "critical" ? ShieldAlert : severity === "warning" ? AlertTriangle : Activity;
+  const Icon =
+    severity === "critical" ? ShieldAlert : severity === "warning" ? AlertTriangle : Activity;
   const cls =
     severity === "critical"
       ? "bg-destructive/15 text-destructive"
@@ -68,20 +69,12 @@ function SeverityDot({ severity }: { severity: LineHealthAlertSeverity }) {
 
 export function AppHeader() {
   const navigate = useNavigate();
-  const {
-    user,
-    role,
-    tenant,
-    tenants,
-    language,
-    logout,
-    switchTenant,
-    switchRole,
-    setLanguage,
-  } = useAuth();
+  const { user, role, tenant, tenants, language, logout, switchTenant, switchRole, setLanguage } =
+    useAuth();
 
-  const lineAlerts = useMemo(() => getLineHealthAlerts(), []);
-  const totalNotifications = lineAlerts.length + NOTIFICATIONS.length;
+  const lineAlerts = useMemo(() => (ENABLE_DEMO_NOTIFICATIONS ? getLineHealthAlerts() : []), []);
+  const demoNotifications = ENABLE_DEMO_NOTIFICATIONS ? NOTIFICATIONS : [];
+  const totalNotifications = lineAlerts.length + demoNotifications.length;
 
   // Toast automático na primeira aparição da sessão para cada alerta crítico/warning.
   useEffect(() => {
@@ -161,33 +154,36 @@ export function AppHeader() {
       {/* Global search */}
       <div className="relative ml-2 hidden flex-1 md:block max-w-md">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Buscar leads, conversas, módulos…"
-          className="h-9 pl-9"
-        />
+        <Input placeholder="Buscar leads, conversas, módulos…" className="h-9 pl-9" />
       </div>
       <div className="flex-1 md:hidden" />
 
-      {/* Role switcher (demo) */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-9 gap-2">
-            <Badge variant="secondary" className="font-normal">
-              {ROLE_LABELS[role]}
-            </Badge>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuLabel>Visualizar como (demo)</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {ROLES.map((r) => (
-            <DropdownMenuItem key={r} onClick={() => switchRole(r)}>
-              <span className="flex-1">{ROLE_LABELS[r]}</span>
-              {r === role && <Check className="h-4 w-4 text-primary" />}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {/* Role switcher is available only in explicit demo/preview modes. */}
+      {ENABLE_DEMO_ROLE_SWITCHER ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-9 gap-2">
+              <Badge variant="secondary" className="font-normal">
+                {ROLE_LABELS[role]}
+              </Badge>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Visualizar como (demo)</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {ROLES.map((r) => (
+              <DropdownMenuItem key={r} onClick={() => switchRole(r)}>
+                <span className="flex-1">{ROLE_LABELS[r]}</span>
+                {r === role && <Check className="h-4 w-4 text-primary" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <Badge variant="secondary" className="font-normal">
+          {ROLE_LABELS[role]}
+        </Badge>
+      )}
 
       {/* Language */}
       <DropdownMenu>
@@ -209,7 +205,14 @@ export function AppHeader() {
       {/* Notifications */}
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" className="relative h-9 w-9">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative h-9 w-9"
+            aria-label={
+              totalNotifications > 0 ? `Notificações: ${totalNotifications}` : "Notificações"
+            }
+          >
             <Bell className="h-4 w-4" />
             {totalNotifications > 0 && (
               <span
@@ -245,20 +248,14 @@ export function AppHeader() {
                 >
                   <SeverityDot severity={a.severity} />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium leading-tight">
-                      {a.title}
-                    </p>
-                    <p className="line-clamp-2 text-xs text-muted-foreground">
-                      {a.detail}
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      {a.time}
-                    </p>
+                    <p className="truncate text-sm font-medium leading-tight">{a.title}</p>
+                    <p className="line-clamp-2 text-xs text-muted-foreground">{a.detail}</p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">{a.time}</p>
                   </div>
                 </Link>
               </li>
             ))}
-            {NOTIFICATIONS.map((n, i) => (
+            {demoNotifications.map((n, i) => (
               <li key={`base-${i}`} className="px-4 py-3 hover:bg-muted/50">
                 <p className="text-sm font-medium leading-tight">{n.title}</p>
                 <p className="text-xs text-muted-foreground">{n.time}</p>
@@ -290,9 +287,7 @@ export function AppHeader() {
           <DropdownMenuLabel>
             <div className="flex flex-col">
               <span className="text-sm font-medium">{user.name}</span>
-              <span className="text-xs font-normal text-muted-foreground">
-                {user.email}
-              </span>
+              <span className="text-xs font-normal text-muted-foreground">{user.email}</span>
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />

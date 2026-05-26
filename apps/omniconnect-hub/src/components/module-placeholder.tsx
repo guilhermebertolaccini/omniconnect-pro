@@ -4,11 +4,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MODULES } from "@/lib/mock-data";
+import { resolveModuleDestination } from "@/lib/module-gateway";
 import type { ModuleId } from "@/lib/permissions";
 
 export function ModulePlaceholder({ moduleId }: { moduleId: ModuleId }) {
   const meta = MODULES.find((m) => m.id === moduleId);
   if (!meta) return null;
+  const destination = resolveModuleDestination(moduleId);
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
@@ -31,18 +33,35 @@ export function ModulePlaceholder({ moduleId }: { moduleId: ModuleId }) {
       <Card>
         <CardContent className="space-y-4 p-8 text-center">
           <p className="text-sm text-muted-foreground">
-            Este módulo mantém sua própria interface dedicada. A partir do
-            OmniconnectPRO, você acessa todos eles com o mesmo login, empresa
-            ativa e perfil.
+            Este módulo mantém sua própria interface dedicada. A partir do OmniconnectPRO, você
+            acessa todos eles com o mesmo login, empresa ativa e perfil.
           </p>
           <div className="flex flex-wrap justify-center gap-2">
-            <Button>
-              Abrir módulo <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-            </Button>
+            {destination ? (
+              <Button asChild>
+                <a
+                  href={destination}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Abrir ${meta.name} em nova aba`}
+                >
+                  Abrir módulo <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                </a>
+              </Button>
+            ) : (
+              <Button disabled title="Destino não configurado neste ambiente">
+                Módulo indisponível
+              </Button>
+            )}
             <Button asChild variant="outline">
               <Link to="/modules">Ver todos os módulos</Link>
             </Button>
           </div>
+          {!destination && (
+            <p className="text-xs text-muted-foreground">
+              O acesso a este módulo ainda não foi configurado neste ambiente.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
