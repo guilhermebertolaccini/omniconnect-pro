@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CacheService } from './cache.service';
 import { LoggerModule } from '../logger/logger.module';
 import { redisStore } from 'cache-manager-redis-yet';
+import { getRedisConnectionOptions } from '../common/config/redis-options';
 
 @Global()
 @Module({
@@ -12,19 +13,22 @@ import { redisStore } from 'cache-manager-redis-yet';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const redisHost = configService.get('REDIS_HOST') || 'localhost';
-        const redisPort = configService.get('REDIS_PORT') || 6379;
-        const redisPassword = configService.get('REDIS_PASSWORD');
-        const redisUsername = configService.get('REDIS_USERNAME');
-        const redisDb = configService.get('REDIS_DB') || 0;
+        const redis = getRedisConnectionOptions({
+          REDIS_URL: configService.get('REDIS_URL'),
+          REDIS_HOST: configService.get('REDIS_HOST'),
+          REDIS_PORT: configService.get('REDIS_PORT'),
+          REDIS_USERNAME: configService.get('REDIS_USERNAME'),
+          REDIS_PASSWORD: configService.get('REDIS_PASSWORD'),
+          REDIS_DB: configService.get('REDIS_DB'),
+        });
 
         return {
           store: redisStore,
-          host: redisHost,
-          port: redisPort,
-          password: redisPassword,
-          username: redisUsername,
-          db: redisDb,
+          host: redis.host,
+          port: redis.port,
+          password: redis.password,
+          username: redis.username,
+          db: redis.db ?? 0,
           ttl: 300, // TTL padrão: 5 minutos
           max: 1000, // Máximo de itens no cache
         };
@@ -36,4 +40,3 @@ import { redisStore } from 'cache-manager-redis-yet';
   exports: [CacheService],
 })
 export class CacheModule {}
-

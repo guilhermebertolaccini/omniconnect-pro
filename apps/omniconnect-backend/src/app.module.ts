@@ -56,6 +56,7 @@ import { CrmPdfParserModule } from './crm-pdf-parser/crm-pdf-parser.module';
 import { CrmRealtimeModule } from './crm-realtime/crm-realtime.module';
 import { IntegrationBridgeEmitModule } from './integration-bridge-emit/integration-bridge-emit.module';
 import { BotifyModule } from './botify/botify.module';
+import { getRedisConnectionOptions } from './common/config/redis-options';
 
 @Module({
   imports: [
@@ -70,13 +71,7 @@ import { BotifyModule } from './botify/botify.module';
     ArchivingModule,
     AppsModule,
     BullModule.forRoot({
-      redis: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT) || 6379,
-        username: process.env.REDIS_USERNAME,
-        password: process.env.REDIS_PASSWORD,
-        db: process.env.REDIS_DB ? parseInt(process.env.REDIS_DB) : undefined,
-      },
+      redis: getRedisConnectionOptions(process.env),
     }),
     AuthModule,
     UsersModule,
