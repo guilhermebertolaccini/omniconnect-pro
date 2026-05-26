@@ -26,11 +26,11 @@ export class CloudApiWebhookController {
     @Query('hub.challenge') challenge?: string,
   ) {
     // Buscar token de verificação da variável de ambiente (obrigatório)
-    const expectedToken = process.env.WEBHOOK_VERIFY_TOKEN;
-    
+    const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN;
+
     if (!expectedToken) {
-      console.error('❌ [Webhook] WEBHOOK_VERIFY_TOKEN não configurado no .env');
-      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).type('text/plain').send('WEBHOOK_VERIFY_TOKEN não configurado');
+      console.error('❌ [Webhook] WHATSAPP_VERIFY_TOKEN não configurado no .env');
+      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).type('text/plain').send('WHATSAPP_VERIFY_TOKEN não configurado');
     }
 
     // Validar parâmetros obrigatórios
