@@ -30,7 +30,12 @@ export const Route = createFileRoute("/_app/journeys/builder")({
       <MockOnlyPage
         title="Editor de Jornada"
         description="Canvas drag-and-drop com guarda de orçamento — preview mock."
-        roadmapNote={<>Persistência do grafo + execução real exigem novo módulo backend (Régua).</>}
+        roadmapNote={
+          <>
+            A persistência base e os guards já existem no backend. O canvas continua em preview até
+            a integração da publicação e da execução multicanal da Régua.
+          </>
+        }
       >
         <BuilderPage />
       </MockOnlyPage>
@@ -38,8 +43,7 @@ export const Route = createFileRoute("/_app/journeys/builder")({
   ),
 });
 
-const BRL = (n: number) =>
-  n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const BRL = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 function BuilderPage() {
   const { id } = Route.useSearch();
@@ -55,10 +59,7 @@ function BuilderPage() {
   // Para rascunho sem audiência ainda, assume baseline de 500 leads para sinalização.
   const audience = journey?.audience ?? 500;
   const avgChannelCost = wallet.costPerChannel.whatsapp;
-  const estimatedCost = useMemo(
-    () => audience * avgChannelCost,
-    [audience, avgChannelCost],
-  );
+  const estimatedCost = useMemo(() => audience * avgChannelCost, [audience, avgChannelCost]);
   const insufficient = estimatedCost > remaining;
   const guardBlocks = wallet.blockOnInsufficient && insufficient;
 
@@ -107,7 +108,12 @@ function BuilderPage() {
               Estimativa: <span className="font-medium text-foreground">{BRL(estimatedCost)}</span>
             </div>
             <div>
-              Saldo: <span className={cn("font-medium", insufficient ? "text-destructive" : "text-foreground")}>{BRL(remaining)}</span>
+              Saldo:{" "}
+              <span
+                className={cn("font-medium", insufficient ? "text-destructive" : "text-foreground")}
+              >
+                {BRL(remaining)}
+              </span>
             </div>
           </div>
           <Button
@@ -127,15 +133,16 @@ function BuilderPage() {
           <AlertTitle>Ativação bloqueada — saldo insuficiente</AlertTitle>
           <AlertDescription className="space-y-2">
             <p>
-              Esta jornada precisa de aproximadamente{" "}
-              <strong>{BRL(estimatedCost)}</strong> (audiência de{" "}
-              {audience.toLocaleString("pt-BR")} leads × {BRL(avgChannelCost)}/envio), mas
-              a carteira tem apenas <strong>{BRL(remaining)}</strong> disponíveis.
+              Esta jornada precisa de aproximadamente <strong>{BRL(estimatedCost)}</strong>{" "}
+              (audiência de {audience.toLocaleString("pt-BR")} leads × {BRL(avgChannelCost)}/envio),
+              mas a carteira tem apenas <strong>{BRL(remaining)}</strong> disponíveis.
             </p>
             <p className="text-xs">
               A regra <em>"Bloquear aprovação se saldo insuficiente"</em> está habilitada em{" "}
-              <Link to="/settings/budget" className="underline">Saldo & Budget</Link>.
-              Recarregue a carteira, reduza a audiência ou ajuste o canal para um custo menor.
+              <Link to="/settings/budget" className="underline">
+                Saldo & Budget
+              </Link>
+              . Recarregue a carteira, reduza a audiência ou ajuste o canal para um custo menor.
             </p>
             <div className="flex gap-2 pt-1">
               <Button asChild size="sm" variant="destructive">
@@ -155,9 +162,12 @@ function BuilderPage() {
           <AlertTitle>Atenção: saldo abaixo da estimativa</AlertTitle>
           <AlertDescription>
             Estimativa <strong>{BRL(estimatedCost)}</strong> excede o saldo de{" "}
-            <strong>{BRL(remaining)}</strong>. A jornada pode pausar no meio do disparo.
-            Habilite <em>"Bloquear aprovação se saldo insuficiente"</em> em{" "}
-            <Link to="/settings/budget" className="underline">Saldo & Budget</Link> para prevenir.
+            <strong>{BRL(remaining)}</strong>. A jornada pode pausar no meio do disparo. Habilite{" "}
+            <em>"Bloquear aprovação se saldo insuficiente"</em> em{" "}
+            <Link to="/settings/budget" className="underline">
+              Saldo & Budget
+            </Link>{" "}
+            para prevenir.
           </AlertDescription>
         </Alert>
       )}
@@ -175,7 +185,10 @@ function BuilderPage() {
             <AlertDialogDescription>
               Custo estimado: <strong>{BRL(estimatedCost)}</strong> · Saldo após reserva:{" "}
               <strong>{BRL(remaining - estimatedCost)}</strong>. O débito é{" "}
-              {wallet.realtimeDebit ? "feito em tempo real a cada lote de envios" : "consolidado ao fim do ciclo"}.
+              {wallet.realtimeDebit
+                ? "feito em tempo real a cada lote de envios"
+                : "consolidado ao fim do ciclo"}
+              .
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -200,8 +213,8 @@ function BuilderPage() {
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
               <span className="block">
-                Saldo insuficiente: precisa de <strong>{BRL(estimatedCost)}</strong>,
-                disponível <strong>{BRL(remaining)}</strong>.
+                Saldo insuficiente: precisa de <strong>{BRL(estimatedCost)}</strong>, disponível{" "}
+                <strong>{BRL(remaining)}</strong>.
               </span>
               <span className="block text-xs text-muted-foreground">
                 Guard <em>"Bloquear aprovação se saldo insuficiente"</em> está habilitado.

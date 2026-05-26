@@ -61,13 +61,13 @@ A Sprint Hub corre **em paralelo** com a Sprint 6 Botify — sem disputar priori
 | **PR 6** | Packaging Coolify staging — Dockerfiles, `docker-compose.staging.yml` ou definições Coolify, `.env.staging.example`, healthchecks, runbook de deploy | ✅ Esta entrega |
 | **PR 7-prep** | Track A (Claude): runbook Meta click-by-click, `scripts/meta-staging-preflight.sh` (read-only Graph API checks), template de evidência em `docs/migration/pilot-run-evidence.md` | ✅ Esta entrega |
 | **PR 7-exec** | Track B (humano): criar app Meta Developer, provisionar WABA + número de teste, configurar webhook + tokens, deployar via Coolify, executar smoke real, fechar `pilot-run-evidence.md` | 🟠 |
-| **PR 8** | Hub mock isolation — Home + `/executive` KPIs wired ao backend real (`/insight-ai/dashboard/summary` + `/dashboards/pilot-overview`); `/leads/*`, `/journeys/*`, `/settings/*` gated por `<MockOnlyPage>` (preview Lovable apenas em `VITE_USE_MOCK_DATA=true`); `useTenantStats` hook compartilhado | ✅ Esta entrega |
+| **PR 8** | Hub mock isolation — Home + `/executive` KPIs wired ao backend real (`/insight-ai/dashboard/summary` + `/dashboards/pilot-overview`); `/leads/*`, `/journeys/*` e `/settings/*` inicialmente gated por `<MockOnlyPage>` (preview Lovable apenas em `VITE_USE_MOCK_DATA=true`); `/settings/*` recebeu cutover real em F1–F3/Q2 abaixo; `useTenantStats` hook compartilhado | ✅ Esta entrega |
 
 ---
 
 ## Sprint Foundation — Régua de Acionamento, pré-requisitos
 
-Decisão arquitetural: [ADR-0005](../adr/ADR-0005-regua-as-botify-extension.md) — Régua **estende** o flow engine do Botify ([ADR-0002](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md)) em vez de motor separado. Foundation entrega só os guards de execução (Brokers, Wallet, Anti-fadiga). Engine + sinks ficam pra Sprint Régua-Engine (depende de Botify G2 fechado).
+Decisão arquitetural: [ADR-0005](../adr/ADR-0005-regua-as-botify-extension.md) — Régua **estende** o flow engine do Botify ([ADR-0002](../adr/ADR-0002-botify-wordpress-to-backend-cutover.md)) em vez de motor separado. Foundation entregou os guards de execução (Brokers, Wallet, Anti-fadiga). O motor base foi entregue em G3; sinks multicanal + ligação com guards ficam para Sprint Régua-Engine.
 
 Plano detalhado: [`/Users/tatica/.claude/plans/distributed-tumbling-galaxy.md`](file:///Users/tatica/.claude/plans/distributed-tumbling-galaxy.md).
 
@@ -116,7 +116,7 @@ Paralela à Foundation. Materializa superfícies que já tinham backend (CRM, li
 | `GET /dashboards/pilot-overview` | PR 4 ✅ | `admin`, `supervisor`, `digital` |
 | `GET /leads/360/:id` (opcional, só se piloto exigir) | PR 5+ | `admin`, `supervisor`, `digital`, `broker` (apenas leads próprios) |
 
-Decisão de scope para Leads 360°: **manter mock no Hub** até o piloto provar necessidade real. Não bloquear staging.
+Decisão de scope para Leads 360°: cutover real concluído em Q1; manter novos enriquecimentos fora do escopo até o piloto provar necessidade real. Não bloquear staging.
 
 ### Não fazer nesta sprint
 
@@ -124,7 +124,7 @@ Decisão de scope para Leads 360°: **manter mock no Hub** até o piloto provar 
 - Não criar tabelas de tenant/user no Hub.
 - Não passar JWT em query string.
 - Não permitir IA mudar `CrmLead.status` / `CrmDeal.stage` automaticamente.
-- Não construir backend de Journeys / Régua antes de fechar scope com produto.
+- Não ampliar a execução multicanal de Journeys / Régua antes de fechar scope com produto.
 - Não redesenhar UIs de satélites (CRM/SAA/OmniHub/Botify) agora.
 - Não usar validação Meta local como prova final — Meta real só em staging HTTPS público.
 - Não armazenar Meta tokens em `localStorage`.
@@ -203,8 +203,8 @@ para módulos no `omniconnect-backend`, em padrão Strangler Fig.
 
 Detalhamento e shape final: ver `docs/migration/sprint-2-saa.md`.
 
-| Bloco | Resumo |
-|---|---|
+| Bloco | Resumo | Commit |
+|---|---|---|
 | **A — Schema** | Novo enum `AdPlatform { meta, google_ads, tiktok_ads }` + 7 models tenant-scoped: `TenantInvitation`, `AdvertiserCompany`, `AdvertiserCompanyAccess`, `AdPlatformConnection` (tokens AES-256-GCM), `AdCampaignAIAnalysis`, `OrganicPostExperiment(+Variant)`. Migration única `20260518140000_sprint_2_saa_schema`. |
 | **B — `ad-platform-connections`** | CRUD tenant-scoped com cifra ponta-a-ponta via `BridgeSecretCipher`. Listagem nunca devolve token nem hint. Endpoint `/:id/test` valida só o decrypt. Endpoint `getDecryptedAccessToken` é o único chokepoint de plaintext, usado exclusivamente pelos proxies. |
 | **C — `advertiser-companies` + proxies** | CRUD + proxy `POST /:id/platforms/:platform/proxy`. Envelope por provider (Meta: token em query, Google: `Authorization: Bearer`, TikTok: `Access-Token`). Defesa SSRF: bloqueia URL absoluta / `..` / sem `/`. Audita cada chamada em `SystemEvent` (sem token, sem body). |

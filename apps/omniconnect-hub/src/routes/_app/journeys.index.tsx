@@ -10,8 +10,7 @@ import { JOURNEYS, JOURNEY_KPIS, WALLET_BUDGET_DEFAULT } from "@/lib/leads-data"
 import { Plus, Wallet, Workflow, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const BRL = (n: number) =>
-  n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const BRL = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export const Route = createFileRoute("/_app/journeys/")({
   head: () => ({ meta: [{ title: "Régua de Acionamento — OmniconnectPRO" }] }),
@@ -20,7 +19,12 @@ export const Route = createFileRoute("/_app/journeys/")({
       <MockOnlyPage
         title="Régua de Acionamento"
         description="Construa jornadas automatizadas com blocos arrastáveis."
-        roadmapNote={<>Módulo de domínio no <code>omniconnect-backend</code> ainda não existe — é trabalho multi-sprint (schema, CRUD, publish, wallet, execução).</>}
+        roadmapNote={
+          <>
+            A fundação já existe: Botify runtime, Brokers, Wallet e Anti-fadiga. Restam a integração
+            do editor e a execução multicanal da Régua.
+          </>
+        }
       >
         <JourneysPage />
       </MockOnlyPage>
@@ -53,8 +57,6 @@ function JourneysPage() {
 
       <WalletBanner />
 
-
-
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {JOURNEY_KPIS.map((k) => (
           <KpiCard key={k.label} {...k} />
@@ -69,7 +71,12 @@ function JourneysPage() {
                 <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
                   <Workflow className="h-4.5 w-4.5" />
                 </div>
-                <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", STATUS_COLOR[j.status])}>
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-xs font-medium",
+                    STATUS_COLOR[j.status],
+                  )}
+                >
                   {j.status}
                 </span>
               </div>
@@ -118,10 +125,14 @@ function JourneysPage() {
         <CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
           <Badge variant="secondary">Sugestão</Badge>
           <span className="text-muted-foreground">
-            Comece com o template <strong className="text-foreground">"Reengajamento Formulário 7d"</strong> — ideal para leads que preencheram o formulário mas não responderam.
+            Comece com o template{" "}
+            <strong className="text-foreground">"Reengajamento Formulário 7d"</strong> — ideal para
+            leads que preencheram o formulário mas não responderam.
           </span>
           <Button asChild size="sm" variant="outline" className="ml-auto">
-            <Link to="/journeys/builder" search={{ id: "j1" }}>Abrir template</Link>
+            <Link to="/journeys/builder" search={{ id: "j1" }}>
+              Abrir template
+            </Link>
           </Button>
         </CardContent>
       </Card>
@@ -140,11 +151,7 @@ function WalletBanner() {
     : warning
       ? "border-amber-300 bg-amber-50"
       : "border-primary/30 bg-primary/5";
-  const barClass = critical
-    ? "[&>div]:bg-destructive"
-    : warning
-      ? "[&>div]:bg-amber-500"
-      : "";
+  const barClass = critical ? "[&>div]:bg-destructive" : warning ? "[&>div]:bg-amber-500" : "";
 
   return (
     <Card className={cn("border", tone)}>
@@ -171,11 +178,7 @@ function WalletBanner() {
           <p
             className={cn(
               "mt-1.5 text-xs",
-              critical
-                ? "text-destructive"
-                : warning
-                  ? "text-amber-700"
-                  : "text-muted-foreground",
+              critical ? "text-destructive" : warning ? "text-amber-700" : "text-muted-foreground",
             )}
           >
             {critical

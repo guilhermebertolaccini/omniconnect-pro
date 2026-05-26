@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA === "true";
 
 /**
- * Wrapper para páginas que ainda não têm contraparte no `omniconnect-backend`.
+ * Wrapper para páginas cuja integração real com o backend ainda não foi concluída.
  *
  * - `VITE_USE_MOCK_DATA=true` → renderiza o conteúdo mock (preview Lovable).
  * - `VITE_USE_MOCK_DATA=false` → empty-state "em construção" + nota de
@@ -16,8 +16,8 @@ const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA === "true";
  *
  * Pattern consciente do Sprint Hub: pages com backend real (`/executive`,
  * `/insightai`) mostram dados reais + mocks complementares **gated** dentro
- * de uma seção. Pages 100% mock (Leads 360°, Journeys, Settings.*) usam
- * este wrapper.
+ * de uma seção. Superfícies ainda sem integração completa, como Journeys,
+ * usam este wrapper.
  */
 export function MockOnlyPage({
   title,
@@ -54,18 +54,13 @@ export function MockOnlyPage({
             <Construction className="h-5 w-5" />
           </div>
           <div className="max-w-md space-y-1">
-            <h2 className="text-base font-semibold">
-              Sem backend disponível ainda
-            </h2>
+            <h2 className="text-base font-semibold">Integração ainda em construção</h2>
             <p className="text-sm text-muted-foreground">
-              Esta superfície existe no Hub mas ainda não há endpoint
-              correspondente no <code>omniconnect-backend</code>. Será
-              ligada numa próxima sprint — veja{" "}
+              Esta superfície existe no Hub, mas a integração completa com os endpoints necessários
+              no <code>omniconnect-backend</code> ainda está em desenvolvimento. Veja{" "}
               <code>docs/migration/06-next-actions.md</code>.
             </p>
-            {roadmapNote && (
-              <p className="pt-2 text-xs text-muted-foreground">{roadmapNote}</p>
-            )}
+            {roadmapNote && <p className="pt-2 text-xs text-muted-foreground">{roadmapNote}</p>}
           </div>
           <div className="flex gap-2 pt-2">
             <Button asChild variant="outline" size="sm">
@@ -82,8 +77,7 @@ export function MockOnlyPage({
       </Card>
 
       <p className="text-center text-[11px] text-muted-foreground">
-        Preview mock disponível em desenvolvimento via{" "}
-        <code>VITE_USE_MOCK_DATA=true</code>.
+        Preview mock disponível em desenvolvimento via <code>VITE_USE_MOCK_DATA=true</code>.
       </p>
     </div>
   );
